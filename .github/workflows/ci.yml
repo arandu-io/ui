@@ -1,0 +1,94 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Not go-version-file: go.mod declares the MINIMUM language version
+          # ("go 1.25"), and setup-go installs exactly that -- 1.25.0, whose
+          # standard library carries vulnerabilities fixed later. govulncheck
+          # below is right to fail on it.
+          #
+          # "stable" is the version people actually run, which is what CI should
+          # be testing against.
+          go-version: stable
+
+      # A formatting difference is a failure, not a comment on a pull request.
+      - name: gofmt
+        # `gofmt -l .` skips nothing, and what this module publishes is not all
+        # valid Go on purpose:
+        #
+        #   testdata/    the golden files, which are the published output --
+        #                including .kyse.go views, which gofmt refuses
+        #   *.kyse.go    kyse sources; the compiler excludes them by build tag,
+        #                and gofmt does not read build tags
+        run: |
+          unformatted=$(find . -name '*.go' -not -path '*/testdata/*' \
+                          -not -name '*.kyse.go' -exec gofmt -l {} +)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race ./...
+
+      # The golden files ARE the product: they are the bytes that land in
+      # somebody's project. A change to them has to show up as a diff in review
+      # rather than as a surprise in a checkout, so a run that rewrites them and
+      # leaves the tree dirty is a failure.
+      - name: the golden files are the ones in the tree
+        run: |
+          go test . -update
+          if [ -n "$(git status --porcelain testdata)" ]; then
+            echo "the golden files do not match what the templates produce:"
+            git --no-pager diff --stat testdata
+            exit 1
+          fi
+
+      # This module has to stay dependency-free.
+      #
+      # It is run as `go run github.com/arandu-io/ui@latest auth`, from inside
+      # somebody's project, and every require here is something they download to
+      # publish nine views. The renderer is a copy of the CLI's for exactly this
+      # reason (see publish.go).
+      - name: no dependencies
+        run: |
+          if grep -qE '^\s*require' go.mod; then
+            echo "this module took a dependency:"
+            grep -A20 require go.mod
+            exit 1
+          fi
+
+      - name: no Node
+        run: |
+          found=$(find . -name package.json -o -name node_modules -o -name 'vite.config.*' | grep -v '^./.git' || true)
+          if [ -n "$found" ]; then
+            echo "Node entered the view layer:"
+            echo "$found"
+            exit 1
+          fi
+
+      # Required by doc 24: a known vulnerability blocks the merge rather than
+      # showing up in a report nobody reads.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

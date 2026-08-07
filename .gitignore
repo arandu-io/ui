@@ -1,0 +1,3 @@
+# The built binary. It is `go run`-ed from someone else's project, never
+# committed.
+/ui
