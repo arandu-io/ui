@@ -2,7 +2,11 @@
 
 package views
 
-import authui "example.test/project/app/Http/Controllers/Auth"
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
 
 @go
 // HomeData is what HomeController.Index hands this page.

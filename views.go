@@ -153,6 +153,18 @@ type AuthPage struct {
 
 // Compile-time proof that these screens fit the layout.
 var _ view.Layout = AuthPage{}
+
+// RememberAttribute is the checked attribute of the remember-me box, or nothing.
+//
+// A conditional attribute has no directive of its own, and inventing one would
+// grow the DSL for a single case (RULE 15). What does not fit a directive is
+// written in Go, which is here.
+func (p AuthPage) RememberAttribute() string {
+	if p.Remember {
+		return "checked"
+	}
+	return ""
+}
 `
 
 // authLayoutViewTemplate is the application layout.
@@ -254,7 +266,11 @@ const authHomeViewTemplate = `//go:build kyse
 
 package views
 
-import authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
 
 @go
 // HomeData is what HomeController.Index hands this page.
