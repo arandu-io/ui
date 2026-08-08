@@ -1,6 +1,6 @@
 <h1 align="center">arandu-io/ui</h1>
 
-<p align="center">The Arandu starter kit. It is the `laravel/ui`.</p>
+<p align="center">Authentication screens, published into your project.</p>
 
 <p align="center">
 <a href="https://github.com/arandu-io/ui/actions/workflows/ci.yml"><img src="https://github.com/arandu-io/ui/actions/workflows/ci.yml/badge.svg" alt="Build Status"></a>
@@ -9,35 +9,32 @@
 <a href="LICENSE.md"><img src="https://img.shields.io/github/license/arandu-io/ui" alt="License"></a>
 </p>
 
+
 ## About the starter kit
 
-```
+```sh
 go run github.com/arandu-io/ui@latest auth
 ```
 
-Nine screens — sign in, sign up, e-mail verification, the three password
-screens, the dashboard, the welcome page and the layout — plus the controllers
-and the page struct they render through. Thirteen files, in the Laravel tree,
-yours to edit the moment they land.
+Thirteen files: sign in, sign up, e-mail verification, the three password
+screens, the dashboard, the welcome page, the layout, the controllers behind
+them and the page struct they render through. They land in your tree and they
+are yours — edit them, delete them, rewrite them.
 
-The contract is `laravel/ui`'s, letter for letter:
+**Nothing is added to your `go.mod`.** `go run <module>@latest` runs a published
+module without touching the caller's dependency graph, so there is no package to
+install and none to remove afterwards. That is what makes this a package instead
+of a subcommand: in Go the usual way to consume a repository is `import`, and
+what you import you cannot edit — and editing the sign-in screen is the first
+thing anyone does.
 
-| Laravel | here |
-|---|---|
-| `composer require laravel/ui --dev` | — |
-| `php artisan ui bootstrap --auth` | `go run github.com/arandu-io/ui@latest auth` |
-| `composer remove laravel/ui` | — nothing to remove |
+Five files are replaced without `--force`: the layout, `page.go`, `home`,
+`welcome` and `HomeController`. A page renders with the type of its layout, so
+the layout and everything that extends it are one unit; publishing a new layout
+beside the old pages leaves a project that builds and fails to render.
 
-`go run <module>@latest` runs a published module without adding a line to your
-`go.mod`. That is what makes this a package rather than a command inside the
-CLI: in Go the usual way to consume a repository is `import`, and what you
-import you cannot edit — and editing the sign-in screen is the first thing
-anyone does.
-
-There is no preset. `php artisan ui` takes `bootstrap`, `vue` or `react` because
-Laravel offers three; there is one stack here — kyse, HTMX, Alpine and Tailwind
-v4 — and an argument with a single legal value is a dimension that does not
-exist.
+The stack is HTMX, Alpine and Tailwind v4, with the CSS compiled by a single
+pinned binary. No Node, no bundler, no lockfile.
 
 ## Learning Arandu
 
@@ -46,7 +43,7 @@ The API reference is generated from the doc comments and lives on
 symbol carries one, and that is deliberate: it is the documentation that cannot
 drift from the code, because it sits in the same file.
 
-The CLI documents itself — `aru help` lists every command, and each one explains
+The CLI documents itself. `aru help` lists every command, and each one explains
 what it writes and what to do with it. `aru doctor` explains what it found and
 what breaks, not which rule was violated.
 
