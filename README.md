@@ -1,7 +1,15 @@
-# arandu-io/ui
+<h1 align="center">arandu-io/ui</h1>
 
-The starter kit for [Arandu](https://github.com/arandu-io/framework), published
-into your project.
+<p align="center">The Arandu starter kit. It is the `laravel/ui`.</p>
+
+<p align="center">
+<a href="https://github.com/arandu-io/ui/actions/workflows/ci.yml"><img src="https://github.com/arandu-io/ui/actions/workflows/ci.yml/badge.svg" alt="Build Status"></a>
+<a href="https://pkg.go.dev/github.com/arandu-io/ui"><img src="https://pkg.go.dev/badge/github.com/arandu-io/ui.svg" alt="Go Reference"></a>
+<a href="https://github.com/arandu-io/ui/tags"><img src="https://img.shields.io/github/v/tag/arandu-io/ui?label=version" alt="Latest Version"></a>
+<a href="LICENSE.md"><img src="https://img.shields.io/github/license/arandu-io/ui" alt="License"></a>
+</p>
+
+## About the starter kit
 
 ```
 go run github.com/arandu-io/ui@latest auth
@@ -12,61 +20,51 @@ screens, the dashboard, the welcome page and the layout — plus the controllers
 and the page struct they render through. Thirteen files, in the Laravel tree,
 yours to edit the moment they land.
 
-## What this mirrors
+The contract is `laravel/ui`'s, letter for letter:
 
-`laravel/ui`, and the contract is the same one letter for letter:
-
-```
-composer require laravel/ui --dev      →   (nothing)
-php artisan ui bootstrap --auth        →   go run github.com/arandu-io/ui@latest auth
-composer remove laravel/ui             →   (nothing to remove)
-```
+| Laravel | here |
+|---|---|
+| `composer require laravel/ui --dev` | — |
+| `php artisan ui bootstrap --auth` | `go run github.com/arandu-io/ui@latest auth` |
+| `composer remove laravel/ui` | — nothing to remove |
 
 `go run <module>@latest` runs a published module without adding a line to your
-`go.mod`. That is the property that makes this a package rather than a command
-inside the CLI: in Go the usual way to consume a repository is `import`, and
-what you import you cannot edit — and editing the sign-in screen is the first
-thing anyone does.
+`go.mod`. That is what makes this a package rather than a command inside the
+CLI: in Go the usual way to consume a repository is `import`, and what you
+import you cannot edit — and editing the sign-in screen is the first thing
+anyone does.
 
-The `aru` CLI has no `make:auth`, the same way `artisan` has had no `make:auth`
-since Laravel 6.
+There is no preset. `php artisan ui` takes `bootstrap`, `vue` or `react` because
+Laravel offers three; there is one stack here — kyse, HTMX, Alpine and Tailwind
+v4 — and an argument with a single legal value is a dimension that does not
+exist.
 
-## Why there is no preset
+## Learning Arandu
 
-`php artisan ui` takes one — `bootstrap`, `vue`, `react` — because Laravel
-offers three. Arandu has one stack: kyse, HTMX, Alpine and Tailwind v4. A preset
-argument with a single legal value is a dimension that does not exist, so the
-verb is what varies.
+The API reference is generated from the doc comments and lives on
+[pkg.go.dev](https://pkg.go.dev/github.com/arandu-io/framework). Every exported
+symbol carries one, and that is deliberate: it is the documentation that cannot
+drift from the code, because it sits in the same file.
 
-## After publishing
+The CLI documents itself — `aru help` lists every command, and each one explains
+what it writes and what to do with it. `aru doctor` explains what it found and
+what breaks, not which rule was violated.
 
-Two lines in `bootstrap/app.go`, which the command prints, and then:
+A guide and a website do not exist yet, and that is a decision rather than a
+gap: a guide written against an API that still moves is work done twice, and the
+second time is worse — there is wrong documentation published. The site is the
+next phase, and it will be an Arandu application.
 
-```
-aru view:build
-```
+## Contributing
 
-Six of the nine views have no route, and that is the shape of the kit rather
-than something missing. It publishes the screens; the handlers behind
-registration, e-mail verification and password reset are your application's,
-because they write to your users table, send through your mailer and decide your
-rules. Their route lines go in the custom block of `Routes()` and survive a
-`--force`.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a pull request, the three
+commands at the top of that file have to pass, and CI runs exactly them.
 
-## Flags
+## Security Vulnerabilities
 
-```
---force     overwrite files that already exist
---dry-run   print what would be written, and write nothing
-```
-
-Five files are replaced without `--force`: the layout, `page.go`, `home`,
-`welcome` and `HomeController`. In kyse a page renders with the type of its
-layout, so the layout and everything that extends it are one unit — publishing a
-new layout beside the old pages leaves a project that builds and fails to
-render. `php artisan ui bootstrap --auth` overwrites `home.blade.php` for the
-same reason.
+Please review [our security policy](SECURITY.md) on how to report a
+vulnerability. Never open a public issue for one.
 
 ## License
 
-MIT. See [LICENSE.md](LICENSE.md).
+Open-sourced software licensed under the [MIT license](LICENSE.md).
