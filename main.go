@@ -1,32 +1,27 @@
 // Command ui publishes the sign-in screens into an Arandu project.
 //
-// It is `laravel/ui`, and the contract is the same one, letter for letter:
-// publish views, controllers and routes into the project, then get out of the
-// way. Nothing here is a runtime dependency, and every file is the project's
-// from the moment it lands.
+// It publishes views, controllers and routes into the project and then gets out
+// of the way. Nothing here is a runtime dependency, and every file is the
+// project's from the moment it lands.
 //
 //	go run github.com/arandu-io/ui@latest auth
 //
-// which mirrors
+// Nothing is added to the caller's go.mod: `go run <module>@latest` runs a
+// published module without touching the dependency graph, so there is no
+// package to install and none to remove afterwards.
 //
-//	composer require laravel/ui --dev
-//	php artisan ui bootstrap --auth
-//	composer remove laravel/ui
+// That property is what makes a package the right shape here, and it is what
+// made a subcommand look like the only shape. In Go the usual way to consume a
+// repository is `import`, and what you import you cannot edit -- and editing
+// the sign-in screen is the first thing anyone does. Publishing is not
+// importing.
 //
-// with nothing to remove: `go run <module>@latest` runs a published module
-// without adding a line to the project's go.mod. That is the property that
-// makes a package the right shape here and made a command look like the only
-// one -- in Go the usual way to consume a repository is `import`, and what you
-// import you cannot edit. Editing the sign-in screen is the first thing anyone
-// does.
+// # Why there is no preset
 //
-// # Why bootstrap is not a preset here
-//
-// `php artisan ui` takes a preset -- bootstrap, vue, react -- because Laravel
-// offers three. Arandu has one stack: kyse, HTMX, Alpine and Tailwind v4
-// (ADR 0022, RULE 9). A preset argument with one legal value is a dimension
-// that does not exist, so the verb is what varies: `auth` today, and whatever
-// scaffolding earns its place later.
+// Arandu has one stack: kyse, HTMX, Alpine and Tailwind v4 (ADR 0022, RULE 9).
+// An argument with a single legal value is a dimension that does not exist, so
+// the verb is what varies: `auth` today, and whatever scaffolding earns its
+// place later.
 package main
 
 import (
@@ -73,7 +68,7 @@ func usage() {
 usage:
   go run github.com/arandu-io/ui@latest auth [--force]
 
-  auth       the nine screens of `+"`php artisan ui bootstrap --auth`"+`, in kyse
+  auth       the nine authentication screens, in kyse
   version    which kit this is
   help       this
 

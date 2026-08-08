@@ -4,25 +4,26 @@ import (
 	"path/filepath"
 )
 
-// The nine screens of `laravel/ui`, translated to kyse.
+// The nine screens of the starter kit.
 //
-// They are the ones a Laravel developer already knows by path: the layout, the
-// dashboard, the welcome page, sign in, sign up, email verification, and the
-// three password screens. Keeping the names and the tree is the whole point --
-// somebody who has published Laravel's auth scaffolding opens
-// `resources/views/auth/passwords/reset.kyse.go` and finds what they expect.
+// They are the ones every application has, at the paths people look for: the
+// layout, the dashboard, the welcome page, sign in, sign up, email
+// verification, and the three password screens. Keeping the names and the tree
+// is the whole point -- somebody looking for the password reset form opens
+// `resources/views/auth/passwords/reset.kyse.go` and finds it there.
 //
 // What changed is everything underneath. Bootstrap became Tailwind utilities,
-// `@vite` became the embedded assets the binary already serves, and the helpers
-// Blade reaches for -- `config()`, `route()`, `auth()`, `__()` -- became fields
-// of one typed struct. A view here cannot reach for request state on its own,
-// so a link that drifts is a compile error rather than a dead anchor.
+// `@vite` became the embedded assets the binary already serves, and the
+// helpers a template usually reaches for -- config, route, the signed-in user
+// -- became fields of one typed struct. A view here cannot reach for request
+// state on its own, so a link that drifts is a compile error rather than a
+// dead anchor.
 //
 // # One struct, declared once
 //
 // Only the layout carries an `@go` block. A page that extends a layout and
 // declares no type of its own renders with the struct the layout declares,
-// which is the same contract Blade has: the page hands the layout what the
+// which is the contract a layout needs: the page hands the layout what the
 // layout asks for. So `AuthPage` holds everything the nine screens read, and a
 // page that uses three of its fields leaves the rest at the zero value.
 //
@@ -35,12 +36,13 @@ import (
 //
 // No `@auth`, no `@error`, no `@can`, no `<x-component>`: kyse's directive set
 // is closed (RULE 15). The guest branch of the navigation bar is
-// `@if(!d.Authenticated)`, and a validation message is `@if(.EmailError != "")`
-// followed by the field itself. That is more characters and one less language.
+// `@if(!d.Authenticated)`, and a validation message is `@if(.EmailError !=
+// "")` followed by the field itself. That is more characters and one less
+// language.
 
 // AuthViews returns the nine views, ready to be written into a project.
 //
-// The sources keep Laravel's tree under `resources/views`; `aru view:build`
+// The sources keep the conventional tree under `resources/views`; `aru view:build`
 // emits the generated Go flat in that directory, because Go has one package per
 // directory and a nested layout would otherwise be invisible to the page that
 // extends it.
@@ -60,7 +62,7 @@ func AuthViews() []File {
 	}
 }
 
-// authLayoutViewTemplate is `layouts/app.blade.php`.
+// authLayoutViewTemplate is the application layout.
 //
 // It declares two types. `Layout` is the interface it renders with, repeated
 // verbatim from the skeleton because this file replaces the skeleton's -- the
@@ -141,7 +143,7 @@ type Layout interface {
 type AuthPage struct {
 	Page
 
-	// HasPasswordReset is Laravel's Route::has check, moved to the data: an
+	// HasPasswordReset moves the "is this route registered" question to the data: an
 	// application that did not register that route hides the link rather than
 	// linking to a 404.
 	HasPasswordReset bool
@@ -235,7 +237,7 @@ func (p AuthPage) RememberAttribute() string {
 </html>
 `
 
-// authHomeViewTemplate is `home.blade.php`, the screen you land on after
+// authHomeViewTemplate is the dashboard, the screen you land on after
 // signing in.
 const authHomeViewTemplate = `//go:build kyse
 
@@ -258,9 +260,9 @@ package views
 @endsection
 `
 
-// authWelcomeViewTemplate is `welcome.blade.php`.
+// authWelcomeViewTemplate is the landing page.
 //
-// Laravel's is a standalone document with its own <html> and an inlined
+// The usual landing page is a standalone document with its own <html> and an inlined
 // stylesheet. This one extends the layout like every other page: a second page
 // shell would be a second way to draw a page, and the shell is where the CSRF
 // wiring lives.
@@ -289,7 +291,7 @@ package views
 @endsection
 `
 
-// authLoginViewTemplate is `auth/login.blade.php`.
+// authLoginViewTemplate is the sign-in screen.
 //
 // The remember-me box is the one place a conditional attribute is needed, and
 // there is no directive for that. It is a method on AuthPage instead, which is
@@ -340,7 +342,7 @@ package views
 @endsection
 `
 
-// authRegisterViewTemplate is `auth/register.blade.php`.
+// authRegisterViewTemplate is the sign-up screen.
 const authRegisterViewTemplate = `//go:build kyse
 
 package views
@@ -391,7 +393,7 @@ package views
 @endsection
 `
 
-// authVerifyViewTemplate is `auth/verify.blade.php`.
+// authVerifyViewTemplate is the e-mail verification notice.
 const authVerifyViewTemplate = `//go:build kyse
 
 package views
@@ -417,7 +419,7 @@ package views
 @endsection
 `
 
-// authPasswordConfirmViewTemplate is `auth/passwords/confirm.blade.php`, the
+// authPasswordConfirmViewTemplate is the password confirmation screen, the
 // re-authentication prompt in front of a sensitive action.
 const authPasswordConfirmViewTemplate = `//go:build kyse
 
@@ -451,7 +453,7 @@ package views
 @endsection
 `
 
-// authPasswordEmailViewTemplate is `auth/passwords/email.blade.php`, where the
+// authPasswordEmailViewTemplate is the password reset request, where the
 // reset link is requested.
 const authPasswordEmailViewTemplate = `//go:build kyse
 
@@ -484,7 +486,7 @@ package views
 @endsection
 `
 
-// authPasswordResetViewTemplate is `auth/passwords/reset.blade.php`, reached
+// authPasswordResetViewTemplate is the password reset form, reached
 // from the link in the email. The one-time token rides in a hidden field.
 const authPasswordResetViewTemplate = `//go:build kyse
 

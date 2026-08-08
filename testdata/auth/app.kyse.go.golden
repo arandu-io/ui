@@ -57,7 +57,7 @@ type Layout interface {
 type AuthPage struct {
 	Page
 
-	// HasPasswordReset is Laravel's Route::has check, moved to the data: an
+	// HasPasswordReset moves the "is this route registered" question to the data: an
 	// application that did not register that route hides the link rather than
 	// linking to a 404.
 	HasPasswordReset bool

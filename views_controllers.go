@@ -21,8 +21,7 @@ func GenerateAuth(m Module) ([]File, error) {
 		return nil, errModulePath
 	}
 
-	// The controllers, in the Laravel tree. `php artisan ui bootstrap --auth`
-	// puts them under app/Http/Controllers/Auth, and so do we.
+	// The controllers, at the conventional path: app/Http/Controllers/Auth.
 	var out []File
 	for _, t := range []struct {
 		path string
@@ -30,8 +29,7 @@ func GenerateAuth(m Module) ([]File, error) {
 	}{
 		{filepath.Join("app", "Http", "Controllers", "Auth", "LoginController.go"), authModuleTemplate},
 		{filepath.Join("app", "Http", "Controllers", "Auth", "LoginController_handlers.go"), authHandlersTemplate},
-		// HomeController comes with the kit, exactly as `php artisan ui
-		// bootstrap --auth` generates it.
+		// HomeController comes with the kit, and it is not optional.
 		//
 		// It is not optional here. A page renders with its layout's type, so
 		// replacing the layout replaces what home passes -- and the skeleton's
@@ -47,10 +45,9 @@ func GenerateAuth(m Module) ([]File, error) {
 		out = append(out, File{Path: t.path, Content: content})
 	}
 
-	// And the nine views, which are the point of the command: the same nine
-	// `laravel/ui` generates, at the same paths, with the same job. What
-	// changes is what is inside them -- kyse instead of Blade, Tailwind instead
-	// of Bootstrap, HTMX instead of jQuery (ADR 0022).
+	// And the nine views, which are the point of the command: the screens every
+	// application has, at the paths people look for. Inside them it is kyse,
+	// Tailwind and HTMX -- typed markup, utilities and hypermedia (ADR 0022).
 	out = append(out, AuthViews()...)
 	return out, nil
 }
@@ -314,10 +311,10 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 `
 
 // The views are no longer here. `aru make:auth` writes the nine of
-// `laravel/ui` in resources/views, as kyse — see authviews.go and ADR 0022.
+// the starter kit in resources/views, as kyse — see views.go and ADR 0022.
 
 // authHomeControllerTemplate is the HomeController the kit publishes, the same
-// file `php artisan ui bootstrap --auth` generates.
+// file the starter kit generates.
 //
 // The constructor takes the session store and the CSRF issuer, which the
 // skeleton's did not: the layout this command installs draws a sign-out form and
