@@ -112,40 +112,40 @@ func (p AuthPage) RememberAttribute() string {
 
 <!doctype html>
 <html lang="en" class="h-full">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ .PageTitle() }}</title>
-<link rel="icon" href="/favicon.ico">
-<link rel="stylesheet" href="{{ view.URL("app.css") }}">
-<script src="{{ view.URL("htmx.min.js") }}" defer></script>
-<script src="{{ view.URL("alpine.min.js") }}" defer></script>
-</head>
-<body hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}' class="h-full bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
-<div class="flex min-h-full flex-col">
-<header class="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-<nav class="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-6">
-<a href="{{ .HomeLink() }}" class="text-sm font-semibold tracking-tight text-slate-900 hover:text-slate-600 dark:text-slate-100 dark:hover:text-slate-300">{{ .BrandName() }}</a>
-<div class="flex items-center gap-1 text-sm">
-@if(!d.SignedIn())
-<a href="{{ .LoginLink() }}" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Login</a>
-@if(d.RegisterLink() != "")
-<a href="{{ .RegisterLink() }}" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Register</a>
-@endif
-@endif
-@if(d.SignedIn())
-<span class="px-3 py-2 font-medium text-slate-600 dark:text-slate-300">{{ .SignedInName() }}</span>
-<form method="post" action="{{ .LogoutLink() }}">
-@csrf
-<button type="submit" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Logout</button>
-</form>
-@endif
-</div>
-</nav>
-</header>
-<main class="mx-auto w-full max-w-5xl grow px-6 py-10">
-@yield('content')
-</main>
-</div>
-</body>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>{{ .PageTitle() }}</title>
+		<link rel="icon" href="/favicon.ico">
+		<link rel="stylesheet" href="{{ view.URL("app.css") }}">
+		<script src="{{ view.URL("htmx.min.js") }}" defer></script>
+		<script src="{{ view.URL("alpine.min.js") }}" defer></script>
+	</head>
+	<body hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}' class="h-full bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
+		<div class="flex min-h-full flex-col">
+			<header class="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+				<nav class="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-6">
+					<a href="{{ .HomeLink() }}" class="text-sm font-semibold tracking-tight text-slate-900 hover:text-slate-600 dark:text-slate-100 dark:hover:text-slate-300">{{ .BrandName() }}</a>
+					<div class="flex items-center gap-1 text-sm">
+						@if(!d.SignedIn())
+							<a href="{{ .LoginLink() }}" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Login</a>
+							@if(d.RegisterLink() != "")
+								<a href="{{ .RegisterLink() }}" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Register</a>
+							@endif
+						@endif
+						@if(d.SignedIn())
+							<span class="px-3 py-2 font-medium text-slate-600 dark:text-slate-300">{{ .SignedInName() }}</span>
+							<form method="post" action="{{ .LogoutLink() }}">
+								@csrf
+								<button type="submit" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Logout</button>
+							</form>
+						@endif
+					</div>
+				</nav>
+			</header>
+			<main class="mx-auto w-full max-w-5xl grow px-6 py-10">
+				@yield('content')
+			</main>
+		</div>
+	</body>
 </html>
