@@ -12,144 +12,115 @@ import (
 // is the whole point -- somebody looking for the password reset form opens
 // `resources/views/auth/passwords/reset.kyse.go` and finds it there.
 //
-// What changed is everything underneath. Bootstrap became Tailwind utilities,
-// `@vite` became the embedded assets the binary already serves, and the
-// helpers a template usually reaches for -- config, route, the signed-in user
-// -- became fields of one typed struct. A view here cannot reach for request
-// state on its own, so a link that drifts is a compile error rather than a
-// dead anchor.
+// What changed is everything underneath. Bootstrap became Basecoat's component
+// classes, `@vite` became the embedded assets the binary already serves, and the
+// helpers a template usually reaches for -- config, route, the signed-in user --
+// became fields of one typed struct. A view here cannot reach for request state
+// on its own, so a link that drifts is a compile error rather than a dead anchor.
 //
-// # One struct, declared once
+// # Where the struct lives
 //
-// Only the layout carries an `@go` block. A page that extends a layout and
-// declares no type of its own renders with the struct the layout declares,
-// which is the contract a layout needs: the page hands the layout what the
-// layout asks for. So `AuthPage` holds everything the nine screens read, and a
-// page that uses three of its fields leaves the rest at the zero value.
+// In the controller package, not in the views. `AuthPage` is declared in
+// app/Http/Controllers/Auth, which is where its fields are filled in, and each
+// screen names it in one line:
 //
-// The layout itself renders with `Layout`, the interface the skeleton declares
-// -- not with `AuthPage`. That distinction is the whole reason this kit can be
-// installed in a project that already has pages: a layout typed by one page's
-// struct renders that page and answers 500 for every other one.
+//	@go
+//	type LoginData = authui.AuthPage
+//	@endgo
+//
+// One shape, one declaration. The alternative -- the layout declaring it and
+// the pages inheriting -- meant the type of every screen changed when the layout
+// was replaced, and a page and its controller are one unit that has to move
+// together.
+//
+// Each screen gets its own name for it because a directory of views is one Go
+// package, and three files in `auth/` cannot all declare `AuthPage`.
 //
 // # What is deliberately absent
 //
 // No `@auth`, no `@error`, no `@can`, no `<x-component>`: kyse's directive set
 // is closed (RULE 15). The guest branch of the navigation bar is
-// `@if(!d.Authenticated)`, and a validation message is `@if(.EmailError !=
-// "")` followed by the field itself. That is more characters and one less
-// language.
+// `@if(!.SignedIn())`, and a validation message is a field of the Field
+// component. That is more characters and one less language.
 
-// AuthViews returns the nine views, ready to be written into a project.
+// AuthViews returns the nine views plus the struct they render, ready to be
+// written into a project.
 //
-// The sources keep the conventional tree under `resources/views`; `aru view:build`
-// emits the generated Go flat in that directory, because Go has one package per
-// directory and a nested layout would otherwise be invisible to the page that
-// extends it.
-func AuthViews() []File {
+// The sources keep the conventional tree under `resources/views`, and
+// `aru view:build` writes the generated Go beside each one -- so `auth/` holds
+// the four files of `auth/` and nothing else. Each directory is its own package,
+// which costs one blank import per directory in bootstrap and is the same
+// registration the whole design is built on.
+func AuthViews(m Module) ([]File, error) {
 	dir := filepath.Join("resources", "views")
-	return []File{
-		{Path: filepath.Join(dir, "layouts", "app.kyse.go"), Content: []byte(authLayoutViewTemplate)},
-		{Path: filepath.Join(dir, "page.go"), Content: []byte(authPageTemplate)},
-		{Path: filepath.Join(dir, "home.kyse.go"), Content: []byte(authHomeViewTemplate)},
-		{Path: filepath.Join(dir, "welcome.kyse.go"), Content: []byte(authWelcomeViewTemplate)},
-		{Path: filepath.Join(dir, "auth", "login.kyse.go"), Content: []byte(authLoginViewTemplate)},
-		{Path: filepath.Join(dir, "auth", "register.kyse.go"), Content: []byte(authRegisterViewTemplate)},
-		{Path: filepath.Join(dir, "auth", "verify.kyse.go"), Content: []byte(authVerifyViewTemplate)},
-		{Path: filepath.Join(dir, "auth", "passwords", "confirm.kyse.go"), Content: []byte(authPasswordConfirmViewTemplate)},
-		{Path: filepath.Join(dir, "auth", "passwords", "email.kyse.go"), Content: []byte(authPasswordEmailViewTemplate)},
-		{Path: filepath.Join(dir, "auth", "passwords", "reset.kyse.go"), Content: []byte(authPasswordResetViewTemplate)},
+
+	sources := []struct {
+		path string
+		tmpl string
+	}{
+		{filepath.Join("app", "Http", "Controllers", "Auth", "page.go"), authPageTemplate},
+		{filepath.Join(dir, "layouts", "app.kyse.go"), authLayoutViewTemplate},
+		{filepath.Join(dir, "home.kyse.go"), authHomeViewTemplate},
+		{filepath.Join(dir, "welcome.kyse.go"), authWelcomeViewTemplate},
+		{filepath.Join(dir, "auth", "login.kyse.go"), authLoginViewTemplate},
+		{filepath.Join(dir, "auth", "register.kyse.go"), authRegisterViewTemplate},
+		{filepath.Join(dir, "auth", "verify.kyse.go"), authVerifyViewTemplate},
+		{filepath.Join(dir, "auth", "passwords", "confirm.kyse.go"), authPasswordConfirmViewTemplate},
+		{filepath.Join(dir, "auth", "passwords", "email.kyse.go"), authPasswordEmailViewTemplate},
+		{filepath.Join(dir, "auth", "passwords", "reset.kyse.go"), authPasswordResetViewTemplate},
 	}
+
+	var out []File
+	for _, s := range sources {
+		content, err := render(filepath.Base(s.path), s.tmpl, m)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, File{Path: s.path, Content: content})
+	}
+	return out, nil
 }
 
-// authLayoutViewTemplate is the application layout.
+// authPageTemplate is the struct the nine screens render from.
 //
-// It declares two types. `Layout` is the interface it renders with, repeated
-// verbatim from the skeleton because this file replaces the skeleton's -- the
-// pages already in the project are not touched by make:auth, so the contract
-// they were written against has to survive the replacement. `AuthPage` is what
-// the eight screens below render from, and it fits by embedding views.Page,
-// exactly as any other page in the project does.
+// It is Go, not kyse, and it lives with the controller rather than with the
+// views. That is where the fields are set, so a field that is added and never
+// filled in is visible in one file, and a screen that reads one that does not
+// exist is a compile error at the line of the `.kyse.go` that read it.
 //
-// Three things here are load-bearing and easy to delete by accident. The first
-// is hx-headers on <body>: without it every hx-post fails the CSRF check, and
-// the failure reads like a broken session rather than a missing attribute. The
-// second is the asset trio -- the stylesheet and the two scripts come from
-// view.URL, which is content-addressed and same-origin, because the CSP is
-// script-src 'self' and a CDN would mean loosening it. The third is the icon:
-// this file replaces the skeleton's layout outright, so an element only the
-// skeleton had is an element the project loses without a word -- and a favicon
-// silently back to the browser default is not something anybody notices, since
-// /favicon.ico keeps answering 200 whether the layout links it or not.
-//
-// The head here is checked against the skeleton's, element by element, in
-// TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries.
-const authLayoutViewTemplate = `//go:build kyse
+// It embeds view.Page, which is what makes it fit the layout: the title, the
+// description, the token and the navigation come from there, declared once in
+// the framework instead of once per project.
+const authPageTemplate = `package authui
 
-package views
-
-@go
-// Layout is what every page hands the application layout.
-//
-// An interface rather than a struct, and that is the whole design: a page keeps
-// its own typed data -- one struct per page, so a typo in a field name is a
-// compile error -- and still fits the frame, because it embeds Page and Page
-// implements this. Pages carrying different data therefore share one layout,
-// which is what RULE 9 asks for: one layout, not one per shape of data.
-//
-// This is the skeleton's declaration, repeated because make:auth replaces the
-// file it lived in. It has to stay identical: views.Page asserts against it, so
-// a method dropped here stops the build in resources/views/page.go, in one
-// place, rather than in every page of the project at once.
-type Layout interface {
-	// PageTitle is what the browser tab shows.
-	PageTitle() string
-	// BrandName is the application name in the navigation bar.
-	BrandName() string
-	// CSRFToken is the token every write of this session carries.
-	CSRFToken() string
-	// SignedIn decides which half of the navigation bar is drawn.
-	SignedIn() bool
-	// SignedInName is who that half greets.
-	SignedInName() string
-	// HomeLink is where the brand points.
-	HomeLink() string
-	// LoginLink is the sign-in screen.
-	LoginLink() string
-	// LogoutLink is what the sign-out form posts to.
-	LogoutLink() string
-	// RegisterLink is the sign-up screen, or empty when registration is not
-	// open -- and the link is not drawn then.
-	RegisterLink() string
-}
+import "github.com/arandu-io/framework/view"
 
 // AuthPage is what every screen of the starter kit renders from.
 //
-// One struct for the eight screens rather than one per page: they share a
-// layout, and a page that extends a layout and declares nothing renders with
-// the struct the layout declares. A field a given page does not use stays at
-// its zero value and is never read -- which is cheaper than eight structs that
-// repeat the same form state.
+// One struct for the nine screens rather than one per page: they share a layout
+// and a shape, and a field a given screen does not use stays at its zero value
+// and is never read. That is cheaper than nine structs repeating the same form
+// state, and it is why each view names this one in a single line.
 //
-// The chrome is not repeated here at all: the embedded Page carries the title,
-// the brand, the token and the navigation, and is what makes this struct fit
-// the layout. What is left below is what a sign-in screen has and a listing
-// does not.
+// The chrome is not repeated here at all: the embedded view.Page carries the
+// title, the description, the canonical URL, the token and the navigation, and
+// is what makes this struct satisfy view.Layout.
 //
-// Nothing here is a helper the view reaches for on its own. There is no
-// route(), no config() and no auth(): a URL, the application name and the
-// signed-in user are fields the handler filled in, so a name that drifts is a
-// compile error instead of a blank link.
+// Nothing here is a helper a view reaches for on its own. There is no route(),
+// no config() and no auth(): a URL, the application name and the signed-in
+// person are fields the handler filled in, so a name that drifts is a compile
+// error instead of a blank link -- and a form can never carry another session's
+// token under load.
 type AuthPage struct {
-	Page
+	view.Page
 
-	// HasPasswordReset moves the "is this route registered" question to the data: an
-	// application that did not register that route hides the link rather than
-	// linking to a 404.
+	// HasPasswordReset moves the "is this route registered" question to the
+	// data: an application that did not register that route hides the link
+	// rather than linking to a 404.
 	HasPasswordReset bool
 
 	// The addresses these screens post to and link to, beyond the navigation
-	// Page already carries. They come from the router, through the handler.
+	// view.Page already carries. They come from the router, through the handler.
 	DashboardURL          string
 	PasswordRequestURL    string
 	PasswordEmailURL      string
@@ -163,8 +134,8 @@ type AuthPage struct {
 	// Resent says a fresh verification link just went out.
 	Resent bool
 
-	// Name, Email and Remember are what the person typed on the attempt that was
-	// rejected. The password is deliberately absent: it is never sent back.
+	// Name, Email and Remember are what the person typed on the attempt that
+	// was rejected. The password is deliberately absent: it is never sent back.
 	Name     string
 	Email    string
 	Remember bool
@@ -180,80 +151,131 @@ type AuthPage struct {
 	PasswordConfirmationError string
 }
 
-// Compile-time proof that these screens fit the layout above.
-var _ Layout = AuthPage{}
+// Compile-time proof that these screens fit the layout.
+var _ view.Layout = AuthPage{}
+`
 
-// RememberAttribute is the checked attribute of the remember-me box, or nothing.
+// authLayoutViewTemplate is the application layout.
 //
-// A conditional attribute has no directive of its own, and inventing one would
-// grow the DSL for a single case. What does not fit a directive is written in
-// Go, which is here.
-func (p AuthPage) RememberAttribute() string {
-	if p.Remember {
-		return "checked"
-	}
-	return ""
-}
-@endgo
+// It declares nothing. The contract it renders with is view.Layout, published by
+// the framework, and the chrome is view.Page -- so replacing this file replaces
+// a frame and not a type, and the pages already in the project keep compiling.
+// That is the whole reason the kit can be installed in a project that has pages.
+//
+// Four things here are load-bearing and easy to delete by accident:
+//
+//   - hx-headers on <body>: without it every hx-post fails the CSRF check, and
+//     the failure reads like a broken session rather than a missing attribute;
+//   - hx-boost on <body>: without it every link is a full page load;
+//   - the asset list, which is content-addressed and same-origin, because the
+//     CSP is script-src 'self' and a CDN would mean loosening it;
+//   - the icon. This file replaces the skeleton's layout outright, so an element
+//     only the skeleton had is one the project loses without a word -- and a
+//     favicon silently back to the browser default is not something anybody
+//     notices, since /favicon.ico keeps answering 200 either way.
+//
+// The head here is checked against the skeleton's, element by element, in
+// TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries.
+const authLayoutViewTemplate = `//go:build kyse
+
+package layouts
+
+import "github.com/arandu-io/kyse/components"
 
 <!doctype html>
 <html lang="en" class="h-full">
-	<head>
-		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>{{ .PageTitle() }}</title>
-		<link rel="icon" href="/favicon.ico">
-		<link rel="stylesheet" href="{{ view.URL("app.css") }}">
-		<script src="{{ view.URL("htmx.min.js") }}" defer></script>
-		<script src="{{ view.URL("alpine.min.js") }}" defer></script>
-	</head>
-	<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}' class="h-full bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
-		<div class="flex min-h-full flex-col">
-			<header class="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-				<nav class="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-6">
-					<a href="{{ .HomeLink() }}" class="text-sm font-semibold tracking-tight text-slate-900 hover:text-slate-600 dark:text-slate-100 dark:hover:text-slate-300">{{ .BrandName() }}</a>
-					<div class="flex items-center gap-1 text-sm">
-						@if(!d.SignedIn())
-							<a href="{{ .LoginLink() }}" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Login</a>
-							@if(d.RegisterLink() != "")
-								<a href="{{ .RegisterLink() }}" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Register</a>
-							@endif
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>{{ .PageTitle() }}</title>
+	<link rel="icon" href="/favicon.ico">
+
+	{{-- What a page says about itself, written only when the page filled it in.
+	     An empty description is worse than none: a search engine that finds one
+	     stops looking for a better sentence in the body. --}}
+	@if(.PageDescription() != "")
+		<meta name="description" content="{{ .PageDescription() }}">
+		<meta property="og:description" content="{{ .PageDescription() }}">
+	@endif
+	@if(.CanonicalURL() != "")
+		<link rel="canonical" href="{{ .CanonicalURL() }}">
+		<meta property="og:url" content="{{ .CanonicalURL() }}">
+	@endif
+	<meta property="og:title" content="{{ .PageTitle() }}">
+	<meta property="og:site_name" content="{{ .BrandName() }}">
+	<meta property="og:type" content="website">
+	<meta name="twitter:card" content="summary_large_image">
+
+	<link rel="stylesheet" href="{{ view.URL("app.css") }}">
+	<script src="{{ view.URL("htmx.min.js") }}" defer></script>
+	<script src="{{ view.URL("alpine.min.js") }}" defer></script>
+	<script src="{{ view.URL("basecoat.bundle.js") }}" defer></script>
+	<script src="{{ view.URL("theme.js") }}"></script>
+</head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}' class="bg-background text-foreground min-h-full antialiased">
+	<div class="flex min-h-full flex-col">
+		<header class="border-b">
+			<nav class="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-6">
+				<a href="{{ .HomeLink() }}" class="text-sm font-semibold tracking-tight">{{ .BrandName() }}</a>
+				<div class="flex items-center gap-2 text-sm">
+					{!! components.ThemeToggle() !!}
+					@if(!.SignedIn())
+						<a href="{{ .LoginLink() }}" class="btn" data-variant="ghost" data-size="sm">Login</a>
+						@if(.RegisterLink() != "")
+							<a href="{{ .RegisterLink() }}" class="btn" data-size="sm">Register</a>
 						@endif
-						@if(d.SignedIn())
-							<span class="px-3 py-2 font-medium text-slate-600 dark:text-slate-300">{{ .SignedInName() }}</span>
-							<form method="post" action="{{ .LogoutLink() }}">
-								@csrf
-								<button type="submit" class="rounded-md px-3 py-2 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100">Logout</button>
-							</form>
-						@endif
-					</div>
-				</nav>
-			</header>
-			<main class="mx-auto w-full max-w-5xl grow px-6 py-10">
-				@yield('content')
-			</main>
-		</div>
-	</body>
+					@endif
+					@if(.SignedIn())
+						<span class="text-muted-foreground">{{ .SignedInName() }}</span>
+						<form method="post" action="{{ .LogoutLink() }}">
+							@csrf
+							<button type="submit" class="btn" data-variant="ghost" data-size="sm">Logout</button>
+						</form>
+					@endif
+				</div>
+			</nav>
+		</header>
+
+		<main class="mx-auto w-full max-w-5xl grow px-6 py-10">
+			@yield('content')
+		</main>
+
+		{{-- The tray flash messages land in. An endpoint that saves something
+		     answers with a toast fragment and hx-swap="beforeend" on this
+		     element; the vendored script arms whatever appears inside it. --}}
+		<div id="toaster" class="toaster" aria-live="polite"></div>
+	</div>
+</body>
 </html>
 `
 
-// authHomeViewTemplate is the dashboard, the screen you land on after
-// signing in.
+// authHomeViewTemplate is the dashboard, the screen you land on after signing in.
 const authHomeViewTemplate = `//go:build kyse
 
 package views
+
+import authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+
+@go
+// HomeData is what HomeController.Index hands this page.
+type HomeData = authui.AuthPage
+@endgo
 
 @extends('layouts.app')
 
 @section('content')
 	<div class="mx-auto w-full max-w-2xl">
-		<section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-			<h1 class="border-b border-slate-200 px-6 py-4 text-base font-semibold tracking-tight dark:border-slate-800">Dashboard</h1>
-			<div class="px-6 py-6 text-sm text-slate-600 dark:text-slate-300">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Dashboard</h1>
+			</header>
+			<div class="px-6 py-6 text-sm">
 				@if(.Status != "")
-					<p role="status" class="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">{{ .Status }}</p>
+					<div class="mb-4">
+						{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+					</div>
 				@endif
-				<p>You are logged in.</p>
+				<p class="text-muted-foreground">You are logged in.</p>
 			</div>
 		</section>
 	</div>
@@ -262,28 +284,35 @@ package views
 
 // authWelcomeViewTemplate is the landing page.
 //
-// The usual landing page is a standalone document with its own <html> and an inlined
-// stylesheet. This one extends the layout like every other page: a second page
-// shell would be a second way to draw a page, and the shell is where the CSRF
-// wiring lives.
+// The usual landing page is a standalone document with its own <html> and an
+// inlined stylesheet. This one extends the layout like every other page: a
+// second page shell would be a second way to draw a page, and the shell is where
+// the CSRF wiring lives.
 const authWelcomeViewTemplate = `//go:build kyse
 
 package views
+
+import authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+
+@go
+// WelcomeData is what the landing page draws.
+type WelcomeData = authui.AuthPage
+@endgo
 
 @extends('layouts.app')
 
 @section('content')
 	<div class="mx-auto flex w-full max-w-2xl flex-col items-start gap-6 py-12">
-		<h1 class="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">{{ .AppName }}</h1>
-		<p class="text-base text-slate-600 dark:text-slate-300">The routing, the controllers and the markup are on the server. There is no API layer in between and no router in the browser, and what travels on an interaction is a fragment of HTML.</p>
+		<h1 class="text-3xl font-semibold tracking-tight">{{ .AppName }}</h1>
+		<p class="text-muted-foreground text-base">The routing, the controllers and the markup are on the server. There is no API layer in between and no router in the browser, and what travels on an interaction is a fragment of HTML.</p>
 		<div class="flex flex-wrap items-center gap-3">
 			@if(.Authenticated)
-				<a href="{{ .DashboardURL }}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">Dashboard</a>
+				<a href="{{ .DashboardURL }}" class="btn">Dashboard</a>
 			@endif
-			@if(!d.Authenticated)
-				<a href="{{ .LoginURL }}" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">Login</a>
+			@if(!.Authenticated)
+				<a href="{{ .LoginURL }}" class="btn">Login</a>
 				@if(.RegisterURL != "")
-					<a href="{{ .RegisterURL }}" class="inline-flex items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Register</a>
+					<a href="{{ .RegisterURL }}" class="btn" data-variant="outline">Register</a>
 				@endif
 			@endif
 		</div>
@@ -292,48 +321,58 @@ package views
 `
 
 // authLoginViewTemplate is the sign-in screen.
-//
-// The remember-me box is the one place a conditional attribute is needed, and
-// there is no directive for that. It is a method on AuthPage instead, which is
-// what `@go` is for.
 const authLoginViewTemplate = `//go:build kyse
 
-package views
+package auth
+
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+// LoginData is what the sign-in screen draws.
+type LoginData = authui.AuthPage
+@endgo
 
 @extends('layouts.app')
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
-		<section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-			<h1 class="border-b border-slate-200 px-6 py-4 text-base font-semibold tracking-tight dark:border-slate-800">Login</h1>
-			<!-- hx-target and hx-swap on the form itself: a rejected login answers 422 with
-			this same fragment, and it has to replace itself. Swapping it in anywhere
-			else would leave the old form on the page, with the token that was just
-			spent -- and the second attempt fails a CSRF check nobody can see. -->
-			<form method="post" action="{{ .LoginURL }}" hx-post="{{ .LoginURL }}" hx-target="this" hx-swap="outerHTML" class="space-y-5 px-6 py-6">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Login</h1>
+			</header>
+
+			{{-- hx-target and hx-swap on the form itself: a rejected login answers
+			     422 with this form and its messages, and the swap puts it back
+			     where it was without a page load. --}}
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}"
+				hx-post="{{ .LoginURL }}" hx-target="this" hx-swap="outerHTML">
 				@csrf
-				<div>
-					<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Email address</label>
-					<input id="email" name="email" type="email" value="{{ .Email }}" required autofocus autocomplete="email" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.EmailError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .EmailError }}</p>
-					@endif
-				</div>
-				<div>
-					<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Password</label>
-					<input id="password" name="password" type="password" required autocomplete="current-password" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.PasswordError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .PasswordError }}</p>
-					@endif
-				</div>
-				<div class="flex items-center gap-2">
-					<input id="remember" name="remember" type="checkbox" value="1" {{ d.RememberAttribute() }} class="size-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-900/20 dark:border-slate-700 dark:bg-slate-950">
-					<label for="remember" class="text-sm text-slate-600 dark:text-slate-300">Remember me</label>
-				</div>
-				<div class="flex items-center justify-between gap-4 pt-1">
-					<button type="submit" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">Login</button>
+
+				{!! components.Field(components.FieldProps{
+					Name: "email", Label: "Email", Type: "email",
+					Value: .Email, Error: .EmailError,
+					Autocomplete: "username", Required: true, Autofocus: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
+					Name: "password", Label: "Password", Type: "password",
+					Error: .PasswordError,
+					Autocomplete: "current-password", Required: true,
+				}) !!}
+
+				<label class="flex items-center gap-2 text-sm">
+					<input class="input" type="checkbox" name="remember" value="1" {{ .RememberAttribute() }}>
+					Remember me
+				</label>
+
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" class="btn">Login</button>
 					@if(.HasPasswordReset)
-						<a href="{{ .PasswordRequestURL }}" class="text-sm font-medium text-slate-600 underline underline-offset-4 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100">Forgot your password?</a>
+						<a class="text-muted-foreground text-sm hover:underline" href="{{ .PasswordRequestURL }}">Forgot your password?</a>
 					@endif
 				</div>
 			</form>
@@ -345,47 +384,59 @@ package views
 // authRegisterViewTemplate is the sign-up screen.
 const authRegisterViewTemplate = `//go:build kyse
 
-package views
+package auth
+
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+// RegisterData is what the sign-up screen draws.
+type RegisterData = authui.AuthPage
+@endgo
 
 @extends('layouts.app')
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
-		<section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-			<h1 class="border-b border-slate-200 px-6 py-4 text-base font-semibold tracking-tight dark:border-slate-800">Register</h1>
-			<form method="post" action="{{ .RegisterURL }}" class="space-y-5 px-6 py-6">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Register</h1>
+			</header>
+
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .RegisterURL }}">
 				@csrf
-				<div>
-					<label for="name" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Name</label>
-					<input id="name" name="name" type="text" value="{{ .Name }}" required autofocus autocomplete="name" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.NameError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .NameError }}</p>
-					@endif
-				</div>
-				<div>
-					<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Email address</label>
-					<input id="email" name="email" type="email" value="{{ .Email }}" required autocomplete="email" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.EmailError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .EmailError }}</p>
-					@endif
-				</div>
-				<div>
-					<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Password</label>
-					<input id="password" name="password" type="password" required autocomplete="new-password" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.PasswordError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .PasswordError }}</p>
-					@endif
-				</div>
-				<div>
-					<label for="password-confirm" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Confirm password</label>
-					<input id="password-confirm" name="password_confirmation" type="password" required autocomplete="new-password" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.PasswordConfirmationError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .PasswordConfirmationError }}</p>
-					@endif
-				</div>
-				<div class="flex items-center justify-between gap-4 pt-1">
-					<button type="submit" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">Register</button>
-					<a href="{{ .LoginURL }}" class="text-sm font-medium text-slate-600 underline underline-offset-4 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100">Already registered?</a>
+
+				{!! components.Field(components.FieldProps{
+					Name: "name", Label: "Name",
+					Value: .Name, Error: .NameError,
+					Autocomplete: "name", Required: true, Autofocus: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
+					Name: "email", Label: "Email", Type: "email",
+					Value: .Email, Error: .EmailError,
+					Autocomplete: "email", Required: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
+					Name: "password", Label: "Password", Type: "password",
+					Error: .PasswordError,
+					Hint: "At least twelve characters.",
+					Autocomplete: "new-password", Required: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
+					Name: "password_confirmation", Label: "Confirm password", Type: "password",
+					Error: .PasswordConfirmationError,
+					Autocomplete: "new-password", Required: true,
+				}) !!}
+
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" class="btn">Register</button>
+					<a class="text-muted-foreground text-sm hover:underline" href="{{ .LoginURL }}">Already registered?</a>
 				</div>
 			</form>
 		</section>
@@ -393,25 +444,44 @@ package views
 @endsection
 `
 
-// authVerifyViewTemplate is the e-mail verification notice.
+// authVerifyViewTemplate is the "check your email" screen.
 const authVerifyViewTemplate = `//go:build kyse
 
-package views
+package auth
+
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+// VerifyData is what the verification notice draws.
+type VerifyData = authui.AuthPage
+@endgo
 
 @extends('layouts.app')
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
-		<section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-			<h1 class="border-b border-slate-200 px-6 py-4 text-base font-semibold tracking-tight dark:border-slate-800">Verify your email address</h1>
-			<div class="space-y-4 px-6 py-6 text-sm text-slate-600 dark:text-slate-300">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Verify your email</h1>
+			</header>
+
+			<div class="flex flex-col gap-4 px-6 py-6 text-sm">
 				@if(.Resent)
-					<p role="status" class="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">A fresh verification link has been sent to your email address.</p>
+					{!! components.Alert(components.AlertProps{
+						Title: "A fresh link is on its way",
+						Message: "Check the address you registered with.",
+					}) !!}
 				@endif
-				<p>Before proceeding, please check your email for a verification link.</p>
+
+				<p class="text-muted-foreground">Before going on, follow the link we sent you. If it did not arrive, ask for another.</p>
+
 				<form method="post" action="{{ .VerificationResendURL }}">
 					@csrf
-					<p>If you did not receive the email, <button type="submit" class="font-medium text-slate-900 underline underline-offset-4 hover:text-slate-600 dark:text-slate-100 dark:hover:text-slate-300">click here to request another</button>.</p>
+					<button type="submit" class="btn">Send it again</button>
 				</form>
 			</div>
 		</section>
@@ -419,66 +489,47 @@ package views
 @endsection
 `
 
-// authPasswordConfirmViewTemplate is the password confirmation screen, the
-// re-authentication prompt in front of a sensitive action.
-const authPasswordConfirmViewTemplate = `//go:build kyse
-
-package views
-
-@extends('layouts.app')
-
-@section('content')
-	<div class="mx-auto w-full max-w-md">
-		<section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-			<h1 class="border-b border-slate-200 px-6 py-4 text-base font-semibold tracking-tight dark:border-slate-800">Confirm password</h1>
-			<form method="post" action="{{ .PasswordConfirmURL }}" class="space-y-5 px-6 py-6">
-				@csrf
-				<p class="text-sm text-slate-600 dark:text-slate-300">Please confirm your password before continuing.</p>
-				<div>
-					<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Password</label>
-					<input id="password" name="password" type="password" required autofocus autocomplete="current-password" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.PasswordError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .PasswordError }}</p>
-					@endif
-				</div>
-				<div class="flex items-center justify-between gap-4 pt-1">
-					<button type="submit" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">Confirm password</button>
-					@if(.HasPasswordReset)
-						<a href="{{ .PasswordRequestURL }}" class="text-sm font-medium text-slate-600 underline underline-offset-4 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100">Forgot your password?</a>
-					@endif
-				</div>
-			</form>
-		</section>
-	</div>
-@endsection
-`
-
-// authPasswordEmailViewTemplate is the password reset request, where the
-// reset link is requested.
+// authPasswordEmailViewTemplate asks for the address to send the reset link to.
 const authPasswordEmailViewTemplate = `//go:build kyse
 
-package views
+package passwords
+
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+// EmailData is what the "send me a link" screen draws.
+type EmailData = authui.AuthPage
+@endgo
 
 @extends('layouts.app')
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
-		<section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-			<h1 class="border-b border-slate-200 px-6 py-4 text-base font-semibold tracking-tight dark:border-slate-800">Reset password</h1>
-			<form method="post" action="{{ .PasswordEmailURL }}" class="space-y-5 px-6 py-6">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Reset your password</h1>
+			</header>
+
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordEmailURL }}">
 				@csrf
+
 				@if(.Status != "")
-					<p role="status" class="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">{{ .Status }}</p>
+					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
 				@endif
+
+				{!! components.Field(components.FieldProps{
+					Name: "email", Label: "Email", Type: "email",
+					Value: .Email, Error: .EmailError,
+					Hint: "We will send a link if the address is registered.",
+					Autocomplete: "email", Required: true, Autofocus: true,
+				}) !!}
+
 				<div>
-					<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Email address</label>
-					<input id="email" name="email" type="email" value="{{ .Email }}" required autofocus autocomplete="email" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.EmailError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .EmailError }}</p>
-					@endif
-				</div>
-				<div class="pt-1">
-					<button type="submit" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">Send password reset link</button>
+					<button type="submit" class="btn">Send the link</button>
 				</div>
 			</form>
 		</section>
@@ -486,44 +537,59 @@ package views
 @endsection
 `
 
-// authPasswordResetViewTemplate is the password reset form, reached
-// from the link in the email. The one-time token rides in a hidden field.
+// authPasswordResetViewTemplate is the form the link in the email leads to.
 const authPasswordResetViewTemplate = `//go:build kyse
 
-package views
+package passwords
+
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+// ResetData is what the new-password screen draws.
+type ResetData = authui.AuthPage
+@endgo
 
 @extends('layouts.app')
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
-		<section class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-			<h1 class="border-b border-slate-200 px-6 py-4 text-base font-semibold tracking-tight dark:border-slate-800">Reset password</h1>
-			<form method="post" action="{{ .PasswordUpdateURL }}" class="space-y-5 px-6 py-6">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Choose a new password</h1>
+			</header>
+
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordUpdateURL }}">
 				@csrf
+				{{-- The one-time token from the link. It is a hidden field rather
+				     than a query string so it stays out of the referer header and
+				     out of the browser history. --}}
 				<input type="hidden" name="token" value="{{ .ResetToken }}">
+
+				{!! components.Field(components.FieldProps{
+					Name: "email", Label: "Email", Type: "email",
+					Value: .Email, Error: .EmailError,
+					Autocomplete: "email", Required: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
+					Name: "password", Label: "New password", Type: "password",
+					Error: .PasswordError,
+					Hint: "At least twelve characters.",
+					Autocomplete: "new-password", Required: true, Autofocus: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
+					Name: "password_confirmation", Label: "Confirm the new password", Type: "password",
+					Error: .PasswordConfirmationError,
+					Autocomplete: "new-password", Required: true,
+				}) !!}
+
 				<div>
-					<label for="email" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Email address</label>
-					<input id="email" name="email" type="email" value="{{ .Email }}" required autofocus autocomplete="email" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.EmailError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .EmailError }}</p>
-					@endif
-				</div>
-				<div>
-					<label for="password" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Password</label>
-					<input id="password" name="password" type="password" required autocomplete="new-password" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.PasswordError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .PasswordError }}</p>
-					@endif
-				</div>
-				<div>
-					<label for="password-confirm" class="block text-sm font-medium text-slate-700 dark:text-slate-200">Confirm password</label>
-					<input id="password-confirm" name="password_confirmation" type="password" required autocomplete="new-password" class="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-slate-100">
-					@if(.PasswordConfirmationError != "")
-						<p role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ .PasswordConfirmationError }}</p>
-					@endif
-				</div>
-				<div class="pt-1">
-					<button type="submit" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/20 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">Reset password</button>
+					<button type="submit" class="btn">Change it</button>
 				</div>
 			</form>
 		</section>
@@ -531,94 +597,48 @@ package views
 @endsection
 `
 
-// authPageTemplate is resources/views/page.go, the struct every page embeds.
-//
-// The kit publishes it rather than relying on the skeleton having it, and that
-// is not redundancy: `aru make:auth` runs on projects generated by any version
-// of `aru new`, and one that predates the layout contract has no Page at all.
-// A starter kit whose output compiles only against a recent skeleton is a
-// starter kit that fails for the person least equipped to diagnose it.
-//
-// It is plain Go, not kyse. Nothing here renders -- it is the data a page
-// carries, and the methods the layout reads it through.
-const authPageTemplate = `package views
+// authPasswordConfirmViewTemplate asks for the password again before something
+// that matters.
+const authPasswordConfirmViewTemplate = `//go:build kyse
 
-// Page is the part of every page the layout draws.
-//
-// A page struct embeds it and satisfies Layout for free:
-//
-//	type InvoicesIndexData struct {
-//	    Page                 // the chrome: brand, session, CSRF, navigation
-//	    Invoices []Invoice   // what only this page has
-//	}
-//
-// One struct per page still exists, and that is what makes a typo a compile
-// error. What it stops repeating is the state the layout needs.
-//
-// The fields are exported and the methods are what the layout reads. The
-// indirection buys the thing that was missing: a layout typed by an interface
-// renders any page that fits it, and a layout typed by one page's struct
-// renders that page and answers 500 for every other -- with a green build,
-// because the disagreement is a type assertion at run time.
-type Page struct {
-	// Title is the document title, already including the application name.
-	Title string
-	// AppName is the brand in the navigation bar.
-	AppName string
+package passwords
 
-	// Token is the CSRF token issued for this session. It reaches the markup
-	// twice: as the hidden field @csrf writes, and as the hx-headers attribute
-	// on <body> that makes every HTMX request carry it.
-	Token string
+import (
+	"github.com/arandu-io/kyse/components"
 
-	// Authenticated decides which half of the navigation is drawn.
-	Authenticated bool
-	// UserName is the signed-in person's display name.
-	UserName string
-	// HasRegister draws the sign-up link only where something answers it.
-	HasRegister bool
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
 
-	// The navigation targets. Fields rather than a route() helper the view
-	// reaches for on its own: a name that drifts is then a compile error
-	// instead of a blank link.
-	HomeURL     string
-	LoginURL    string
-	LogoutURL   string
-	RegisterURL string
-}
+@go
+// ConfirmData is what the password-confirmation screen draws.
+type ConfirmData = authui.AuthPage
+@endgo
 
-// Compile-time proof that this satisfies what the layout renders with. If the
-// layout asks for something new, the build stops here, in one file, naming the
-// method -- instead of at the type assertion of whichever page rendered first.
-var _ Layout = Page{}
+@extends('layouts.app')
 
-// PageTitle is the document title.
-func (p Page) PageTitle() string { return p.Title }
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Confirm your password</h1>
+			</header>
 
-// BrandName is the application name in the navigation bar.
-func (p Page) BrandName() string { return p.AppName }
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordConfirmURL }}">
+				@csrf
 
-// CSRFToken is the token for this session.
-func (p Page) CSRFToken() string { return p.Token }
+				<p class="text-muted-foreground text-sm">This is a protected area. Confirm your password before going on.</p>
 
-// SignedIn reports whether there is a session.
-func (p Page) SignedIn() bool { return p.Authenticated }
+				{!! components.Field(components.FieldProps{
+					Name: "password", Label: "Password", Type: "password",
+					Error: .PasswordError,
+					Autocomplete: "current-password", Required: true, Autofocus: true,
+				}) !!}
 
-// SignedInName is the display name of the signed-in person.
-func (p Page) SignedInName() string { return p.UserName }
-
-// ShowRegister reports whether the sign-up link is drawn.
-func (p Page) ShowRegister() bool { return p.HasRegister }
-
-// HomeLink is the landing page.
-func (p Page) HomeLink() string { return p.HomeURL }
-
-// LoginLink is the sign-in screen.
-func (p Page) LoginLink() string { return p.LoginURL }
-
-// LogoutLink is where the sign-out form posts.
-func (p Page) LogoutLink() string { return p.LogoutURL }
-
-// RegisterLink is the sign-up screen.
-func (p Page) RegisterLink() string { return p.RegisterURL }
+				<div>
+					<button type="submit" class="btn">Confirm</button>
+				</div>
+			</form>
+		</section>
+	</div>
+@endsection
 `

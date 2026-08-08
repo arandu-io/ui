@@ -37,7 +37,7 @@ func kyseOnly(files []File) []File {
 func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 	// Only the .kyse.go. AuthViews also publishes resources/views/page.go, which
 	// is plain Go -- the struct the layout is read through, not a view.
-	views := kyseOnly(AuthViews())
+	views := kyseOnly(mustAuthViews(t))
 	if len(views) != 9 {
 		t.Fatalf("generated %d views, want the nine of laravel/ui", len(views))
 	}
@@ -59,25 +59,43 @@ func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 		if !strings.HasPrefix(body, "//go:build kyse\n") {
 			t.Errorf("%s does not open with the build tag: the Go compiler would read the markup as Go", f.Path)
 		}
-		if !strings.Contains(body, "\npackage views\n") {
-			t.Errorf("%s has no package clause: it stops compiling the moment a generated file lands beside it", f.Path)
+		// The package is the directory's, because the generated Go sits beside
+		// the source and one directory is one Go package. `auth/login.kyse.go`
+		// is `package auth`, and a file that says `package views` there stops
+		// compiling the moment `aru view:build` writes `auth/login.go`.
+		want := "\npackage " + filepath.Base(filepath.Dir(f.Path)) + "\n"
+		if strings.HasSuffix(filepath.ToSlash(f.Path), "resources/views/"+filepath.Base(f.Path)) {
+			want = "\npackage views\n"
+		}
+		if !strings.Contains(body, want) {
+			t.Errorf("%s does not declare %q: the package has to be the directory's", f.Path, strings.TrimSpace(want))
 		}
 	}
 }
 
-// TestOnlyTheLayoutDeclaresTheData: nine copies of one struct is nine places to
-// forget a field. The layout declares it and the pages inherit it, which is also
-// what makes @extends type-check.
-func TestOnlyTheLayoutDeclaresTheData(t *testing.T) {
-	for _, f := range kyseOnly(AuthViews()) {
-		declares := strings.Contains(string(f.Content), "@go")
+// TestEveryPageNamesItsDataAndTheLayoutNamesNone.
+//
+// The struct lives with the controller that fills it, and each screen names it
+// in one line. The layout names nothing: it renders with view.Layout, published
+// by the framework, so replacing this file replaces a frame and not a type --
+// which is what lets the kit be installed in a project that already has pages.
+//
+// It used to be the other way round, and the cost was that every page in the
+// project changed type when the layout was replaced.
+func TestEveryPageNamesItsDataAndTheLayoutNamesNone(t *testing.T) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
+		body := string(f.Content)
+		declares := strings.Contains(body, "@go")
 		isLayout := strings.Contains(filepath.ToSlash(f.Path), "/layouts/")
 
 		switch {
-		case isLayout && !declares:
-			t.Errorf("%s declares no data: the pages that extend it have nothing to render from", f.Path)
-		case !isLayout && declares:
-			t.Errorf("%s declares its own data: it should inherit the layout's", f.Path)
+		case isLayout && declares:
+			t.Errorf("%s declares a type: the layout renders with view.Layout, and declaring one here "+
+				"types the layout by one page and answers 500 for every other", f.Path)
+		case !isLayout && !declares:
+			t.Errorf("%s names no data type: {{ .Email }} has nothing to read from", f.Path)
+		case !isLayout && !strings.Contains(body, "= authui.AuthPage"):
+			t.Errorf("%s declares a struct of its own rather than naming the one the controller owns", f.Path)
 		}
 	}
 }
@@ -99,7 +117,7 @@ func TestTheLayoutWiresTheTokenIntoHTMX(t *testing.T) {
 // TestTheFormsCarryTheToken: a form without the hidden field is rejected by the
 // CSRF middleware, and the screens are what people copy.
 func TestTheFormsCarryTheToken(t *testing.T) {
-	for _, f := range kyseOnly(AuthViews()) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
 		body := markup(f)
 		if !strings.Contains(body, "<form") {
 			continue
@@ -118,7 +136,7 @@ func TestTheAuthViewsInventNoDirective(t *testing.T) {
 		"@vite", "@auth", "@guest", "@error", "@can", "@props",
 		"@stack", "@push", "@forelse", "@switch", "@fonts", "<x-",
 	}
-	for _, f := range kyseOnly(AuthViews()) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
 		body := markup(f)
 		for _, d := range absent {
 			if strings.Contains(body, d) {
@@ -136,7 +154,7 @@ func TestTheAuthViewsCarryNoBootstrap(t *testing.T) {
 		"form-control", "btn btn-", "btn-primary", "card-body", "card-header",
 		"navbar-nav", "col-md-", "invalid-feedback", "alert-success",
 	}
-	for _, f := range kyseOnly(AuthViews()) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
 		body := markup(f)
 		for _, class := range bootstrap {
 			if strings.Contains(body, class) {
@@ -150,7 +168,7 @@ func TestTheAuthViewsCarryNoBootstrap(t *testing.T) {
 // and no __(). Everything a screen shows came from the handler, in the struct.
 func TestTheAuthViewsReachForNoHelper(t *testing.T) {
 	helpers := []string{"config(", "route(", "auth()", "__(", "old(", "session(", "Route::has"}
-	for _, f := range kyseOnly(AuthViews()) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
 		body := markup(f)
 		for _, h := range helpers {
 			if strings.Contains(body, h) {
@@ -183,7 +201,7 @@ func markupOf(body string) string {
 // authView returns one of the nine by its path under resources/views.
 func authView(t *testing.T, want string) string {
 	t.Helper()
-	for _, f := range kyseOnly(AuthViews()) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
 		if strings.HasSuffix(filepath.ToSlash(f.Path), want) {
 			return string(f.Content)
 		}
@@ -206,26 +224,27 @@ func authView(t *testing.T, want string) string {
 func TestTheLayoutRendersEveryPageAndNotOnlyItsOwn(t *testing.T) {
 	layout := authView(t, "layouts/app.kyse.go")
 
-	// The layout has to declare BOTH: an interface, which is what it renders
-	// with, and a struct, which is what it publishes to the pages that extend
-	// it. `aru view:build` reads the first `type X interface` for the first
-	// question and the first `type X struct` for the second, so a layout that
-	// declares only the struct renders with it -- and then every page in the
-	// project that is not this one answers
+	// A layout renders with an interface, so any page satisfying it can be drawn
+	// inside. It used to declare that interface itself, and reading the first
+	// `type X struct` for the same question made the layout render typed by the
+	// sign-in struct -- from then on every page `aru make:module` generated
+	// answered
 	//
 	//	view "layouts.app" takes AuthPage and got views.InvoicesIndexData
 	//
 	// on every request, with a green build, because the disagreement is a type
-	// assertion. That is the defect this test exists for, and it cost a cycle.
-	if !strings.Contains(layout, "type "+layoutType+" interface {") {
-		t.Errorf("the layout declares no %s interface: it would render with one page's struct and answer 500 for every other page", layoutType)
+	// assertion. That cost a cycle.
+	//
+	// The interface is view.Layout now, published by the framework, and the way
+	// this cannot come back is that the layout declares nothing at all: with no
+	// @go block there is no type here for the compiler to pick the wrong one of.
+	if strings.Contains(layout, "@go") {
+		t.Error("the layout declares a type: it renders with view.Layout, and a type here is one the " +
+			"view compiler can pick instead -- which is how the layout ends up typed by a single page")
 	}
-	if !strings.Contains(layout, "type "+dataType+" struct {") {
-		t.Errorf("the layout declares no %s struct: the pages that extend it have nothing to inherit", dataType)
-	}
-	// And the interface first, because that is the one `RenderType` picks.
-	if i, j := strings.Index(layout, "type "+layoutType+" interface {"), strings.Index(layout, "type "+dataType+" struct {"); i >= 0 && j >= 0 && i > j {
-		t.Errorf("the struct is declared before the interface; the render type is read as %s", dataType)
+	if strings.Contains(layout, "type Layout interface") {
+		t.Error("the layout declares its own Layout interface: the framework publishes it, and two " +
+			"declarations of one contract drift")
 	}
 
 	// That it BEHAVES this way is checked where the real compiler runs:
@@ -233,30 +252,36 @@ func TestTheLayoutRendersEveryPageAndNotOnlyItsOwn(t *testing.T) {
 	// through this layout, over HTTP, in a generated project.
 }
 
-// TestTheKitsPageEmbedsTheSkeletonsPage: AuthPage is not a second answer to
-// "what does the layout draw". It embeds views.Page like every other page in the
-// project, which is what keeps the chrome declared once.
-func TestTheKitsPageEmbedsTheSkeletonsPage(t *testing.T) {
-	layout := authView(t, "layouts/app.kyse.go")
+// TestTheKitsPageEmbedsTheFrameworksPage: AuthPage is not a second answer to
+// "what does the layout draw". It embeds view.Page, which is what keeps the
+// chrome declared once, in the framework, for every project.
+//
+// It lives with the controller that fills it rather than in the views, because
+// that is where its fields are set.
+func TestTheKitsPageEmbedsTheFrameworksPage(t *testing.T) {
+	page := authFile(t, "page.go")
 
-	i := strings.Index(layout, "type AuthPage struct {")
+	i := strings.Index(page, "type AuthPage struct {")
 	if i < 0 {
-		t.Fatal("the layout declares no AuthPage")
+		t.Fatal("app/Http/Controllers/Auth/page.go declares no AuthPage")
 	}
-	body := layout[i:]
+	body := page[i:]
 	if end := strings.Index(body, "\n}"); end > 0 {
 		body = body[:end]
 	}
-	if !strings.Contains(body, "\n\tPage\n") {
-		t.Errorf("AuthPage does not embed Page, so it repeats the chrome the layout draws:\n%s", body)
+	if !strings.Contains(body, "\n\tview.Page\n") {
+		t.Errorf("AuthPage does not embed view.Page: the chrome would be declared twice\n%s", body)
 	}
+	if !strings.Contains(page, "var _ view.Layout = AuthPage{}") {
+		t.Error("nothing proves AuthPage fits the layout at compile time")
+	}
+}
 
-	// And the fields Page carries are not declared a second time here: two
-	// AppName fields would not compile, and one shadowing the other silently is
-	// worse.
-	for _, field := range []string{"AppName string", "Title string", "Token string", "UserName string"} {
-		if strings.Contains(body, "\n\t"+field) {
-			t.Errorf("AuthPage declares %q, which views.Page already carries", field)
-		}
+func mustAuthViews(t *testing.T) []File {
+	t.Helper()
+	files, err := AuthViews(Module{ModulePath: "example.com/app"})
+	if err != nil {
+		t.Fatal(err)
 	}
+	return files
 }

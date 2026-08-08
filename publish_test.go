@@ -344,7 +344,7 @@ func TestTheStarterKitLandsInTheLaravelTree(t *testing.T) {
 //
 // The layout the kit installs draws two halves of a navigation bar and picks by
 // SignedIn(), and it puts the token in hx-headers on <body>. Both come from
-// views.Page, and the controller that renders home is the only thing that fills
+// view.Page, and the controller that renders home is the only thing that fills
 // them. It filled neither: the login succeeded, the cookie was set, and the page
 // still said Login -- with hx-headers carrying an empty token, so the next write
 // from that page was refused with 419 for a reason nothing on screen explained.
@@ -359,10 +359,10 @@ func TestTheLandingPageDrawsTheSignedInHalf(t *testing.T) {
 		t.Fatalf("the generated controller does not parse: %v", err)
 	}
 
-	filled := compositeKeys(t, file, "Index", "views.Page")
+	filled := compositeKeys(t, file, "Index", "view.Page")
 	for _, want := range []string{"Token", "Authenticated", "UserName"} {
 		if _, ok := filled[want]; !ok {
-			t.Errorf("the landing page leaves views.Page.%s at its zero value; it fills %v", want, keysOf(filled))
+			t.Errorf("the landing page leaves view.Page.%s at its zero value; it fills %v", want, keysOf(filled))
 		}
 	}
 

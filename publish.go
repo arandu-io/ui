@@ -137,10 +137,10 @@ func readModulePath(root string) (string, error) {
 // quietly.
 var replaced = map[string]bool{
 	filepath.Join("resources", "views", "layouts", "app.kyse.go"):    true,
-	filepath.Join("resources", "views", "page.go"):                   true,
 	filepath.Join("resources", "views", "home.kyse.go"):              true,
 	filepath.Join("resources", "views", "welcome.kyse.go"):           true,
 	filepath.Join("app", "Http", "Controllers", "HomeController.go"): true,
+	filepath.Join("app", "Http", "Controllers", "Auth", "page.go"):   true,
 }
 
 func write(root string, files []File, force bool, out *os.File) error {

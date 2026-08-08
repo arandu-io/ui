@@ -48,7 +48,11 @@ func GenerateAuth(m Module) ([]File, error) {
 	// And the nine views, which are the point of the command: the screens every
 	// application has, at the paths people look for. Inside them it is kyse,
 	// Tailwind and HTMX -- typed markup, utilities and hypermedia (ADR 0022).
-	out = append(out, AuthViews()...)
+	views, err := AuthViews(m)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, views...)
 	return out, nil
 }
 
@@ -172,7 +176,6 @@ import (
 	"github.com/arandu-io/framework/validation"
 	"github.com/arandu-io/framework/view"
 
-	"{{.ModulePath}}/resources/views"
 )
 
 // Handlers are thin on purpose: extract the input, delegate to the service,
@@ -192,8 +195,8 @@ func (m *Module) showLogin(w http.ResponseWriter, r *http.Request) {
 	// puts the render on the request timeline. Calling Render directly leaves
 	// the template column at zero, which says the view is free when nobody
 	// measured it.
-	data := views.AuthPage{
-		Page: views.Page{
+	data := AuthPage{
+		Page: view.Page{
 			AppName:  "{{.ModulePath}}",
 			Title:    "Sign in",
 			Token:    token,
@@ -290,8 +293,8 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 	// The status is explicit: HTMX swaps the body of a 422 and of a 200 alike,
 	// so answering 200 for a rejection would make the browser, the logs and
 	// every metric agree that it worked.
-	form := views.AuthPage{
-		Page: views.Page{
+	form := AuthPage{
+		Page: view.Page{
 			AppName:  "{{.ModulePath}}",
 			Title:    "Sign in",
 			Token:    token,
@@ -328,16 +331,16 @@ const authHomeControllerTemplate = `package controllers
 import (
 	"github.com/arandu-io/framework/httpx"
 	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/framework/view"
 
-	"{{ .ModulePath }}/resources/views"
+	authui "{{ .ModulePath }}/app/Http/Controllers/Auth"
 )
 
 // HomeController answers the landing page.
 //
-// It renders with views.AuthPage, the struct layouts/app declares: a page that
-// declares no data of its own renders with its layout's struct, so every screen
-// of the kit shares this one. A field this page does not use stays at its zero
-// value.
+// It renders with authui.AuthPage, the struct the auth controllers own. Every
+// screen of the kit names that one type, in a single line, so a field this page
+// does not use stays at its zero value rather than being a struct of its own.
 type HomeController struct {
 	Controller
 
@@ -388,13 +391,13 @@ func (c *HomeController) Index(ctx *httpx.Context) error {
 	}
 
 	// arandu:begin custom
-	return ctx.View("home", views.AuthPage{
-		// views.Page is the state the layout draws, embedded rather than
+	return ctx.View("home", authui.AuthPage{
+		// view.Page is the chrome the layout draws, embedded rather than
 		// repeated. The navigation draws a link only for what answers: the kit
 		// ships the sign-in handler and nothing else, so RegisterURL stays
 		// empty and the link is not drawn -- a link to a route nobody
 		// registered is a 404 the layout put there.
-		Page: views.Page{
+		Page: view.Page{
 			AppName:       c.appName,
 			Title:         c.appName,
 			Token:         token,

@@ -9,8 +9,6 @@ import (
 	"github.com/arandu-io/framework/observability"
 	"github.com/arandu-io/framework/validation"
 	"github.com/arandu-io/framework/view"
-
-	"example.test/project/resources/views"
 )
 
 // Handlers are thin on purpose: extract the input, delegate to the service,
@@ -30,8 +28,8 @@ func (m *Module) showLogin(w http.ResponseWriter, r *http.Request) {
 	// puts the render on the request timeline. Calling Render directly leaves
 	// the template column at zero, which says the view is free when nobody
 	// measured it.
-	data := views.AuthPage{
-		Page: views.Page{
+	data := AuthPage{
+		Page: view.Page{
 			AppName:  "example.test/project",
 			Title:    "Sign in",
 			Token:    token,
@@ -128,8 +126,8 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 	// The status is explicit: HTMX swaps the body of a 422 and of a 200 alike,
 	// so answering 200 for a rejection would make the browser, the logs and
 	// every metric agree that it worked.
-	form := views.AuthPage{
-		Page: views.Page{
+	form := AuthPage{
+		Page: view.Page{
 			AppName:  "example.test/project",
 			Title:    "Sign in",
 			Token:    token,
