@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/logo.png" alt="Arandu" width="140" height="140">
+</p>
+
 <h1 align="center">arandu-io/ui</h1>
 
 <p align="center">Authentication screens, published into your project.</p>
