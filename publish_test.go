@@ -29,9 +29,16 @@ func TestAuthGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAuth: %v", err)
 	}
-	// Three controllers, page.go, and the nine views.
-	if len(files) != 13 {
-		t.Fatalf("generated %d files, want 13", len(files))
+	// The count is here so that adding a file is a decision somebody made rather
+	// than one that arrived: six controllers and page.go, two mailables, the
+	// nine screens and the four message bodies.
+	//
+	// It was thirteen, and the missing nine were the ones that made the kit a
+	// flow: register.kyse.go and verify.kyse.go posted to addresses nobody
+	// registered, and the password reset stopped one step short of writing the
+	// password.
+	if len(files) != 22 {
+		t.Fatalf("generated %d files, want 22", len(files))
 	}
 
 	for _, f := range files {
@@ -133,11 +140,20 @@ func TestTheFailureMessageDoesNotEnumerateAccounts(t *testing.T) {
 // has to bring a usable CSRF token, or the second attempt fails the check for
 // reasons nobody can see from the browser.
 func TestTheFormCarriesAFreshToken(t *testing.T) {
-	handlers := authFile(t, "LoginController_handlers.go")
 	views := authFile(t, "auth/login.kyse.go")
 
-	if !strings.Contains(handlers, "csrf.Issue(") {
-		t.Error("the rejection path does not issue a token")
+	// The token is issued in render.go now, which is the one place every screen
+	// of the kit goes through. It used to be issued in each handler, and the
+	// duplication is what let showLogin drift: it built its own view.Page,
+	// skipped the wiring, and shipped a sign-in screen with no way to register
+	// and no way to recover a password.
+	if !strings.Contains(authFile(t, "render.go"), "csrf.Issue(") {
+		t.Error("no screen of the kit issues a token")
+	}
+	for _, handler := range []string{"LoginController_handlers.go", "RegisterController.go", "PasswordController.go"} {
+		if strings.Contains(authFile(t, handler), "csrf.Issue(") {
+			t.Errorf("%s issues its own token: that is the duplication render.go exists to remove", handler)
+		}
 	}
 	// @csrf is the directive; it compiles to the hidden input with the token.
 	if !strings.Contains(views, "@csrf") {

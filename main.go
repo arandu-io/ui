@@ -28,11 +28,53 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // version is stamped by the release build. It is printed with the file list so
 // a project can record which kit produced its screens.
 var version = "dev"
+
+// viewImports is the blank-import block for the packages this kit publishes
+// views into.
+//
+// It is computed from what AuthViews actually writes rather than typed out, so
+// a view added to the kit cannot ship with an instruction that does not mention
+// it -- which is how a project ends up answering 500 with "no view named
+// auth.verify" on a screen the kit just installed.
+func viewImports(modulePath string) string {
+	files, err := AuthViews(Module{ModulePath: modulePath})
+	if err != nil {
+		return ""
+	}
+
+	seen := map[string]bool{}
+	var packages []string
+	for _, f := range files {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		// resources/views/auth/passwords/x.kyse.go compiles to
+		// storage/framework/views/auth/passwords/x.go, and it is that directory
+		// the application imports.
+		dir := filepath.ToSlash(filepath.Dir(path))
+		dir = strings.Replace(dir, "resources/views", "storage/framework/views", 1)
+		if !seen[dir] {
+			seen[dir] = true
+			packages = append(packages, dir)
+		}
+	}
+	sort.Strings(packages)
+
+	var b strings.Builder
+	for _, p := range packages {
+		fmt.Fprintf(&b, "    _ \"%s/%s\"\n", modulePath, p)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -124,23 +166,38 @@ the framework's. The import:
 
 and, in the k.Register(...) list, in place of auth.New:
 
-    authui.New(authService, sessions, csrf, auth.FixedTenant(cfg.Auth.Tenant)),
+    authui.New(authService, sessions, csrf, mailer, fw.AppKey,
+        cfg.App.Name, cfg.App.URL, auth.FixedTenant(cfg.Auth.Tenant)),
 
 Register one or the other, never both: they answer the same path. The
 framework's has the minimum markup that exists so authentication could be
 tested at all; this one has a page.
 
+Every view is its own Go package, and a package nobody imports registers
+nothing -- so bootstrap/app.go needs these beside the ones already there. The
+blank import is what runs the init() that calls view.Register:
+
+%s
+
 Then:
 
     aru view:build
+    aru migrate
 
-Six of the nine views have no route, and that is the shape of the kit rather
-than something missing. It publishes the screens; the handlers behind
-registration, e-mail verification and password reset are the application's,
-because they write to your users table, send through your mailer and decide
-your rules. Their route lines go in the custom block of Routes(), in
-app/Http/Controllers/Auth/LoginController.go, and survive a --force. See ADR
-0022.
-`, modulePath)
+Every screen has a route and every route has a handler. Registration, e-mail
+verification and the password reset are wired -- the reset writes the password
+rather than stopping one step short of it, and the verification link is signed
+rather than stored, so it survives a restart and a second replica.
+
+What this kit does NOT decide is your rules. The handlers are yours from the
+moment they are written: the minimum password length, whether registration is
+open, what a confirmed address is allowed to do. Every one of those is a line
+you can read, in app/Http/Controllers/Auth/, inside a custom block that
+survives a --force. See ADR 0022.
+
+The two messages go out through your mailer. In development that is
+MAIL_URL=log://, so the links land in the output of aru dev and the flow works
+with nothing installed.
+`, modulePath, viewImports(modulePath))
 	return nil
 }

@@ -37,9 +37,27 @@ func kyseOnly(files []File) []File {
 func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 	// Only the .kyse.go. AuthViews also publishes resources/views/page.go, which
 	// is plain Go -- the struct the layout is read through, not a view.
+	//
+	// Nine SCREENS, which is what laravel/ui publishes, plus the four message
+	// bodies -- two messages, an HTML part and a text part each. A mail body is
+	// not a screen: it has no layout, no navigation and no token, and counting
+	// them together would make the number meaningless.
 	views := kyseOnly(mustAuthViews(t))
-	if len(views) != 9 {
-		t.Fatalf("generated %d views, want the nine of laravel/ui", len(views))
+
+	var screens, bodies []File
+	for _, v := range views {
+		if strings.Contains(filepath.ToSlash(v.Path), "/mail/") {
+			bodies = append(bodies, v)
+			continue
+		}
+		screens = append(screens, v)
+	}
+
+	if len(screens) != 9 {
+		t.Fatalf("generated %d screens, want the nine of laravel/ui", len(screens))
+	}
+	if len(bodies) != 4 {
+		t.Fatalf("generated %d message bodies, want 4: two messages, both parts each", len(bodies))
 	}
 
 	// Whether they COMPILE is not asked here, and that is deliberate. The kyse
@@ -87,6 +105,19 @@ func TestEveryPageNamesItsDataAndTheLayoutNamesNone(t *testing.T) {
 		body := string(f.Content)
 		declares := strings.Contains(body, "@go")
 		isLayout := strings.Contains(filepath.ToSlash(f.Path), "/layouts/")
+
+		// A message body renders from a mailable, not from AuthPage: it has no
+		// layout, no navigation and no token. It still names its type, and the
+		// check below is the same one -- against the other struct.
+		if strings.Contains(filepath.ToSlash(f.Path), "/mail/") {
+			if !declares {
+				t.Errorf("%s names no data type: {{ .Link }} has nothing to read from", f.Path)
+			}
+			if !strings.Contains(body, "= appmail.") {
+				t.Errorf("%s declares a struct of its own rather than naming the mailable that owns it", f.Path)
+			}
+			continue
+		}
 
 		switch {
 		case isLayout && declares:

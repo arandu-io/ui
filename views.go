@@ -68,6 +68,14 @@ func AuthViews(m Module) ([]File, error) {
 		{filepath.Join(dir, "auth", "passwords", "confirm.kyse.go"), authPasswordConfirmViewTemplate},
 		{filepath.Join(dir, "auth", "passwords", "email.kyse.go"), authPasswordEmailViewTemplate},
 		{filepath.Join(dir, "auth", "passwords", "reset.kyse.go"), authPasswordResetViewTemplate},
+
+		// The message bodies. Both parts of both messages: a mail with no
+		// plain-text part is filed as spam more often, and shows nothing at all
+		// in a client that cannot render HTML.
+		{filepath.Join(dir, "mail", "verify-email.kyse.go"), verifyMailViewTemplate},
+		{filepath.Join(dir, "mail", "verify-email-text.kyse.go"), verifyMailTextTemplate},
+		{filepath.Join(dir, "mail", "password-reset.kyse.go"), passwordMailViewTemplate},
+		{filepath.Join(dir, "mail", "password-reset-text.kyse.go"), passwordMailTextTemplate},
 	}
 
 	var out []File
