@@ -9,6 +9,18 @@ import "github.com/arandu-io/kyse/components"
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
+
+	{{-- What a rejected form means.
+	     htmx swaps a response only when its table of response handling says to,
+	     and the default in the copy this framework embeds ends with
+	     {"code":"[45]..","swap":false} -- so a 422 is fetched, is correct, and is
+	     thrown away. The person sees the form they submitted, unchanged, with no
+	     message on it, and concludes the button does nothing. Every screen this
+	     kit publishes is a form, so without this line none of them can say why
+	     they refused anything.
+	     422 comes before the catch-all because htmx takes the first entry that
+	     matches. See framework/httpx/context.go. --}}
+	<meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"422","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
 	<title>{{ .PageTitle() }}</title>
 	<link rel="icon" href="/favicon.ico">
 
