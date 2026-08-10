@@ -375,10 +375,13 @@ func TestTheLandingPageDrawsTheSignedInHalf(t *testing.T) {
 		t.Fatalf("the generated controller does not parse: %v", err)
 	}
 
-	filled := compositeKeys(t, file, "Index", "view.Page")
+	// Through authui.ChromeProps, which is the header this kit's own screens
+	// draw. It used to be a view.Page literal written here, and the two drifted:
+	// the one place that fills a header is the only way not to forget a field.
+	filled := compositeKeys(t, file, "Index", "authui.ChromeProps")
 	for _, want := range []string{"Token", "Authenticated", "UserName"} {
 		if _, ok := filled[want]; !ok {
-			t.Errorf("the landing page leaves view.Page.%s at its zero value; it fills %v", want, keysOf(filled))
+			t.Errorf("the landing page leaves the header's %s at its zero value; it fills %v", want, keysOf(filled))
 		}
 	}
 
@@ -386,6 +389,12 @@ func TestTheLandingPageDrawsTheSignedInHalf(t *testing.T) {
 	// that hardcodes Authenticated is a page that is wrong half the time.
 	if got := filled["Authenticated"]; got == "true" || got == "false" {
 		t.Errorf("Authenticated is the constant %s rather than the state of the session", got)
+	}
+	// The name is looked up and not taken from the session: a session carries an
+	// id, and a page that greets somebody with the UUID out of their own cookie
+	// is a page that has never been read by the person it greets.
+	if got := filled["UserName"]; got == "subject.ID" {
+		t.Error("the landing page greets people with the id in their session rather than with their name")
 	}
 	for _, want := range []string{"c.sessions.Load(", "c.csrf.Issue("} {
 		if !strings.Contains(source, want) {
@@ -418,9 +427,148 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 				t.Errorf("NewHomeController does not take %s, so the page cannot read the session or issue a token; it takes %v", want, params)
 			}
 		}
+		// And the service the id in a session is turned into a name with. Without
+		// it the header greets somebody who has just signed in with the UUID out
+		// of their own session cookie.
+		if !slices.Contains(params, "*auth.Service") {
+			t.Errorf("NewHomeController does not take *auth.Service, so the landing page cannot resolve the id in the "+
+				"session into a name to greet; it takes %v", params)
+		}
 		return
 	}
 	t.Fatal("the generated controller declares no NewHomeController")
+}
+
+// constructorNames returns the parameter list of one top-level function of a
+// generated file, one entry per parameter.
+//
+// Per parameter and not per field: `appName, base string` is one field with two
+// names, and counting fields is how a check on the number of arguments passes
+// while the call it is checking has one too few.
+func constructorNames(t *testing.T, source, function string) []string {
+	t.Helper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), function+".go", source, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("the generated file does not parse: %v", err)
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Name.Name != function {
+			continue
+		}
+		var out []string
+		for _, field := range fn.Type.Params.List {
+			for range max(len(field.Names), 1) {
+				out = append(out, types.ExprString(field.Type))
+			}
+		}
+		return out
+	}
+	t.Fatalf("the generated file declares no %s", function)
+	return nil
+}
+
+// callFromWiring is one call out of the instructions the command prints, parsed.
+//
+// The instructions are Go the person is told to paste into bootstrap/app.go, so
+// they are read as Go here rather than matched as text: an argument added to a
+// constructor and not to the instruction is a difference of one comma, and
+// nobody reviewing a paragraph of prose sees it.
+func callFromWiring(t *testing.T, name string) *ast.CallExpr {
+	t.Helper()
+
+	at := strings.Index(wiring, name+"(")
+	if at < 0 {
+		t.Fatalf("the wiring this command prints never mentions %s, so nobody is told to build it", name)
+	}
+
+	depth, end := 0, -1
+	for i := at + len(name); i < len(wiring) && end < 0; i++ {
+		switch wiring[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				end = i + 1
+			}
+		}
+	}
+	if end < 0 {
+		t.Fatalf("the call to %s in the printed wiring is never closed", name)
+	}
+
+	expr, err := parser.ParseExpr(wiring[at:end])
+	if err != nil {
+		t.Fatalf("the wiring this command prints is not Go: %v\n%s", err, wiring[at:end])
+	}
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("%s in the printed wiring is not a call", name)
+	}
+	return call
+}
+
+// TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes.
+//
+// HomeController.go is in `replaced`: publishing overwrites it with no flag at
+// all. So the constructor the kit emits and the call the person is told to write
+// in bootstrap/app.go are one fact stated twice, and they shipped disagreeing --
+// three parameters emitted, five passed by the project this kit was proved
+// against. Running the publisher there broke the build, which is the one thing a
+// command whose promise is "run it again" must not do.
+//
+// The same check covers authui.New, because that instruction has been wrong
+// before too.
+func TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes(t *testing.T) {
+	for _, c := range []struct {
+		call, file, constructor string
+	}{
+		{"controllers.NewHomeController", "HomeController.go", "NewHomeController"},
+		{"authui.New", "LoginController.go", "New"},
+	} {
+		want := constructorNames(t, authFile(t, c.file), c.constructor)
+		got := callFromWiring(t, c.call).Args
+
+		if len(got) != len(want) {
+			t.Errorf("the printed wiring passes %d arguments to %s and the published constructor takes %d %v: "+
+				"somebody following the instruction gets a project that does not compile",
+				len(got), c.call, len(want), want)
+		}
+	}
+}
+
+// TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes.
+//
+// The drift this catches survived because nobody ran the publisher against the
+// projects it publishes into. HomeController.go is replaced without a flag, so
+// the moment the kit's constructor stops matching the one a project's
+// bootstrap/app.go calls, publishing into that project breaks its build -- and
+// nothing in either repository noticed, because each one compiles on its own.
+//
+// Both siblings are checked: the skeleton, which every new project is a copy of,
+// and the showcase, which is where the whole flow is proved end to end. Each is
+// skipped when it is not checked out beside this module, because this module is
+// released on its own and its CI has only itself.
+func TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes(t *testing.T) {
+	want := constructorNames(t, authFile(t, "HomeController.go"), "NewHomeController")
+
+	for _, project := range []string{"arandu", "examples"} {
+		t.Run(project, func(t *testing.T) {
+			path := filepath.Join("..", project, "app", "Http", "Controllers", "HomeController.go")
+			source, err := os.ReadFile(path)
+			if err != nil {
+				t.Skipf("%s is not checked out beside this module, so nothing here proves the kit still fits it", project)
+			}
+
+			got := constructorNames(t, string(source), "NewHomeController")
+			if !slices.Equal(got, want) {
+				t.Errorf("%s builds its landing page with NewHomeController%v and this kit publishes NewHomeController%v.\n"+
+					"Publishing into that project replaces the file and leaves bootstrap/app.go calling a constructor "+
+					"that no longer exists: the build breaks, with no flag having been passed.", project, got, want)
+			}
+		})
+	}
 }
 
 // TestTheRedirectSurvivesWithoutJavaScript is the regression test for a login
@@ -432,25 +580,29 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 // a header only HTMX reads, so a plain form post that succeeded got 200, no
 // body, and a blank page.
 //
-// httpx.Context.Redirect is where the branch lives: HX-Redirect under HTMX, a
-// 303 with a Location otherwise. The handler has to go through it, and the two
-// exits -- login and logout -- both have to.
+// httpx.Redirect is where the branch lives: HX-Redirect under HTMX, a 303 with
+// a Location otherwise. The handler has to go through it, and the two exits --
+// login and logout -- both have to.
 func TestTheRedirectSurvivesWithoutJavaScript(t *testing.T) {
 	source := authFile(t, "LoginController_handlers.go")
 
 	if strings.Contains(source, `"HX-Redirect"`) {
 		t.Error("the handler sets HX-Redirect itself: a form post from a browser without HTMX gets 200 and an empty body")
 	}
-	if !strings.Contains(source, "httpx.Context{Response: w, Request: r}).Redirect(") {
-		t.Error("the redirect does not go through httpx.Context, which is what answers 303 to a request that is not HTMX")
+	if !strings.Contains(source, "httpx.Redirect(w, r, to)") {
+		t.Error("the redirect does not go through httpx.Redirect, which is what answers 303 to a request that is not HTMX")
 	}
 
 	file, err := parser.ParseFile(token.NewFileSet(), "LoginController_handlers.go", source, parser.AllErrors)
 	if err != nil {
 		t.Fatalf("the generated handlers do not parse: %v", err)
 	}
+	// The destination of the sign-in is an expression and not a literal, and
+	// TestSigningInLandsOnThePageTheGuardTurnedAwayFrom is what holds that half.
+	// Here it is written out so this test still proves what it is named for: that
+	// the exit goes through the shared helper whatever it is exiting to.
 	for _, handler := range []struct{ name, to string }{
-		{"doLogin", `"/"`},
+		{"doLogin", `m.sessions.TakeIntended(w, r, "/")`},
 		{"doLogout", `"/auth/login"`},
 	} {
 		if !callsRedirect(t, file, handler.name, handler.to) {

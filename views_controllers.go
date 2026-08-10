@@ -70,23 +70,19 @@ func GenerateAuth(m Module) ([]File, error) {
 	return out, nil
 }
 
-const authManifestTemplate = `# What this module declares about itself.
-#
-# ` + "`aru doctor`" + ` checks these against the code. The sign-in screens talk to
-# the auth service and to the session store, and nothing else: no outbound call,
-# no file, no subprocess, and no table of their own -- the users table belongs to
-# the framework's auth module.
-
-name = "your-org/authui"
-framework = ">= 0.6"
-profiles = ["conventional"]
-
-[permissions]
-network = false
-filesystem = false
-exec = false
-migrations = false
-`
+// There is no manifest template here, and that is deliberate.
+//
+// One stood in this file declaring `[permissions] network = false, filesystem =
+// false, exec = false, migrations = false` for the published module. It was
+// referenced by nothing: GenerateAuth never wrote it, so no project ever had it,
+// so `aru doctor` never read it -- a permissions declaration that looked
+// load-bearing in review and enforced nothing anywhere.
+//
+// It is deleted rather than wired because there is nowhere honest to write it.
+// The kit publishes into a project that already has its own arandu.toml, and a
+// second manifest arriving beside it is a second place that declares what this
+// application may do (RULE 9). The screens' permissions are the project's, and
+// the project already states them.
 
 const authModuleTemplate = `// Package authui holds the sign-in screens.
 //
@@ -106,6 +102,7 @@ package authui
 
 import (
 	"github.com/arandu-io/framework/httpx"
+	"github.com/arandu-io/framework/httpx/middleware"
 	"github.com/arandu-io/framework/kernel"
 	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/modules/auth"
@@ -193,9 +190,26 @@ func (m *Module) Name() string { return "authui" }
 //
 // This is the one method the kit overrides. The embedded module still declares
 // the users table; it just no longer answers /auth/login, because this does.
+//
+// guest is the guard on the two screens that exist to bring somebody in. It is
+// on the route rather than at the top of each handler because there are two
+// handlers today and there is a third the day somebody adds one -- and the
+// third is the one that would render the sign-in form to a person who is
+// already signed in, which reads to them as having been signed out.
+//
+// The framework's auth module guards its own minimal sign-in screen the same
+// way, and this method replaces that one. The guard was missing here while it
+// was already there, so publishing the kit TOOK A GUARD AWAY from the project
+// it was published into -- and publishing again over a project that had added
+// one by hand took it away a second time.
 func (m *Module) Routes(r *httpx.Router) {
 	g := r.Group("/auth")
-	g.Get("/login", m.showLogin)
+
+	// Where somebody already signed in is sent instead. The front page, which
+	// is where signing in lands them too, so the two agree.
+	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
+
+	g.Get("/login", m.showLogin, guest)
 	g.Post("/login", m.doLogin)
 	g.Post("/logout", m.doLogout)
 
@@ -208,6 +222,20 @@ func (m *Module) Routes(r *httpx.Router) {
 	g.Get("/password/reset", m.showPasswordReset)
 	g.Post("/password/update", m.updatePassword)
 
+	// Typing the password again on a session that is already open. The screen
+	// was published from the beginning with no route, no handler and nothing
+	// assigning PasswordConfirmURL -- so it rendered action="" and posted to
+	// itself, on a kit whose own instructions say every screen has a route.
+	//
+	// Behind the session guard, because there is nothing to confirm without one:
+	// a post here from a guest would otherwise reach a handler that has to
+	// invent an answer. The address is middleware.PasswordConfirmPath, which is
+	// where middleware.RequireConfirmedPassword sends people -- mount that on
+	// your own sensitive routes and this is the screen they land on.
+	signedIn := middleware.RequireAuth(m.sessions)
+	g.Get("/password/confirm", m.showPasswordConfirm, signedIn)
+	g.Post("/password/confirm", m.confirmPassword, signedIn)
+
 	// Registration and address verification, in RegisterController.go.
 	//
 	// /verify is the notice and /verify/confirm is the link. Two addresses and
@@ -215,7 +243,7 @@ func (m *Module) Routes(r *httpx.Router) {
 	// registering, and the link arrives from a mail client -- and a GET that
 	// sometimes changes state and sometimes does not is one nobody can cache,
 	// log or reason about.
-	g.Get("/register", m.showRegister)
+	g.Get("/register", m.showRegister, guest)
 	g.Post("/register", m.doRegister)
 	g.Get("/verify", m.showVerifyNotice)
 	g.Get("/verify/confirm", m.verify)
@@ -228,11 +256,15 @@ const authHandlersTemplate = `package authui
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/arandu-io/framework/httpx"
+	"github.com/arandu-io/framework/httpx/middleware"
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
+	"github.com/arandu-io/framework/security"
 	"github.com/arandu-io/framework/validation"
 )
 
@@ -261,21 +293,49 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 		Email:    r.PostFormValue("email"),
 		Password: r.PostFormValue("password"),
 	}
+
+	// The box on the form, read here and nowhere else. The screen has drawn it
+	// since the first version of this kit and nothing read it: AuthPage.Remember
+	// was never assigned, so RememberAttribute() always answered "" and the box
+	// did not even survive a rejected sign-in -- somebody who mistyped their
+	// password had to tick it again, having no way to know it had been ignored
+	// the first time.
+	remember := r.PostFormValue("remember") != ""
+
 	if errs := in.Validate(); errs.Any() {
-		m.rejected(w, r, in.Email, errs, http.StatusUnprocessableEntity)
+		m.rejected(w, r, in.Email, remember, errs, http.StatusUnprocessableEntity)
 		return
 	}
 
 	// The tenant comes from the application, never from the request: a form
 	// field here would let anyone pick which tenant to authenticate against.
-	u, err := m.auth.Authenticate(r.Context(), m.tenant(r), in.Email, in.Password)
+	//
+	// The last argument is where the attempt came from, and it is what the
+	// framework keys the sign-in throttle on. Read from the socket and never
+	// from X-Forwarded-For: that header is written by whoever is calling, so an
+	// attacker keyed on it resets their own counter every request.
+	u, err := m.auth.Authenticate(r.Context(), m.tenant(r), in.Email, in.Password, middleware.KeyByIP(r))
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			// One message for both halves. Saying which one was wrong turns this
 			// endpoint into an account enumeration oracle.
-			m.rejected(w, r, in.Email, validation.Errors{
+			m.rejected(w, r, in.Email, remember, validation.Errors{
 				"email": {"invalid email or password"},
 			}, http.StatusUnauthorized)
+			return
+		}
+		// Too many failures for this address and this account. The counting
+		// happens in the framework's auth service, not here -- this file is
+		// yours to edit and to delete, and a lockout that a redesign of the
+		// screen can remove is not a lockout. What is left for the screen is
+		// saying how long, which is the part that stops somebody pressing the
+		// button four more times.
+		var locked auth.TooManyAttemptsError
+		if errors.As(err, &locked) {
+			w.Header().Set("Retry-After", strconv.Itoa(locked.Seconds()))
+			m.rejected(w, r, in.Email, remember, validation.Errors{
+				"email": {fmt.Sprintf("too many attempts, try again in %d seconds", locked.Seconds())},
+			}, http.StatusTooManyRequests)
 			return
 		}
 		observability.Log(r.Context()).Error("login failed", "error", err)
@@ -285,14 +345,34 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Rotating the id is mandatory here: keeping the pre-login session is
 	// session fixation, and aru doctor checks that this call exists.
+	//
+	// The remember-me answer travels with it, as security.Remember: Rotate is
+	// what a sign-in calls, so an option only Start accepted would be unreachable
+	// from the one screen that has the checkbox on it. A session started with it
+	// lives for security.RememberLifetime instead of the store's ttl.
 	old := m.sessions.IDFromRequest(r)
-	if _, err := m.sessions.Rotate(r.Context(), w, old, auth.SubjectOf(u)); err != nil {
+	if _, err := m.sessions.Rotate(r.Context(), w, old, auth.SubjectOf(u), security.Remember(remember)); err != nil {
 		observability.Log(r.Context()).Error("starting session", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	redirect(w, r, "/")
+	// Where they were going before a guard turned them away, and the front page
+	// when there was nowhere in particular. middleware.RequireAuth is the only
+	// thing that knows: by the time a password has been typed, the request that
+	// was refused is gone.
+	//
+	// This used to be "/", and the framework's own sign-in handler already ended
+	// this way -- so publishing the kit TOOK THE FEATURE AWAY from the project it
+	// was published into, in the same shape as the guest guard did. The guards
+	// went on writing the address on every refusal and nothing ever spent it:
+	// somebody who followed a link to one invoice signed in, landed on the front
+	// page, and went to find it again.
+	//
+	// The destination is proved local by the store, which is why this is one line
+	// and not a check. An unchecked one would be an open redirect on the one
+	// screen every application has.
+	redirect(w, r, m.sessions.TakeIntended(w, r, "/"))
 }
 
 // doLogout destroys the session on the server, not only in the browser.
@@ -311,27 +391,28 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 // answering it to a plain form post is 200 with an empty body: a blank page
 // after a login that succeeded, with nothing in the log to say so.
 //
-// httpx.Context is where that branch already lives -- HX-Redirect for an HTMX
+// httpx.Redirect is where that branch already lives -- HX-Redirect for an HTMX
 // request, 303 with a Location for everything else. Restating it here would be a
 // second way to redirect, and the second one is the one that drifts (RULE 9).
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
-	if err := (&httpx.Context{Response: w, Request: r}).Redirect(to); err != nil {
-		observability.Log(r.Context()).Error("redirecting", "error", err, "to", to)
-	}
+	httpx.Redirect(w, r, to)
 }
 
 // rejected re-renders just the form, which is what HTMX swaps back in.
 //
 // The token is reissued because the session id may have changed, and the email
-// is kept because retyping it after a rejection is the fastest way to make a
-// login screen unpleasant. The password never comes back.
-func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, errs validation.Errors, status int) {
+// and the remember-me box are kept because retyping either after a rejection is
+// the fastest way to make a login screen unpleasant -- and a box that quietly
+// unticks itself is worse than an empty field, because nothing on screen says it
+// happened. The password never comes back.
+func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, remember bool, errs validation.Errors, status int) {
 	// The status is explicit: HTMX swaps the body of a 422 and of a 200 alike,
 	// so answering 200 for a rejection would make the browser, the logs and
 	// every metric agree that it worked.
 	m.screenStatus(w, r, status, "auth.login", AuthPage{
 		Page:       m.page(r, "Sign in"),
 		Email:      email,
+		Remember:   remember,
 		EmailError: errs.First(),
 	})
 }
@@ -354,12 +435,21 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 // an empty token that makes the next write fail the CSRF check. That is one line
 // of wiring in bootstrap/app.go, and make:auth prints it -- the same shape
 // `aru make:module` uses for every controller it writes.
+//
+// It also takes the auth service and the tenant, and that is the signature the
+// skeleton declares too. It has to be: this file is in `replaced`, so a publish
+// overwrites it with no flag at all, and a constructor here that the project's
+// bootstrap/app.go does not call is a build that breaks on a command whose whole
+// promise is that it can be run again. The kit, the skeleton and the showcase
+// agree on the parameter list; the command prints the line that wires it, and
+// TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes keeps the two
+// from drifting apart.
 const authHomeControllerTemplate = `package controllers
 
 import (
 	"github.com/arandu-io/framework/httpx"
+	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/framework/view"
 
 	authui "{{ .ModulePath }}/app/Http/Controllers/Auth"
 )
@@ -384,12 +474,26 @@ type HomeController struct {
 	// allowed to know about a token and a cookie.
 	sessions *security.SessionStore
 	csrf     *security.CSRF
+
+	// people and tenant are how the id in a session becomes a name to greet.
+	// A session carries an id and not a name on purpose -- a name kept in one
+	// stays wrong after somebody changes theirs -- so the header costs one
+	// lookup by primary key, and the page greeted people with a UUID until it
+	// had somewhere to make it.
+	//
+	// The tenant is whose rows are read (RULE 14). It comes from the
+	// configuration, through bootstrap/app.go, and never from the request.
+	people *auth.Service
+	tenant string
 }
 
 // NewHomeController returns the controller. bootstrap/app.go builds it and hands
 // it to the routes.
-func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF) *HomeController {
-	return &HomeController{appName: appName, sessions: sessions, csrf: csrf}
+func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF, people *auth.Service, tenant string) *HomeController {
+	return &HomeController{
+		appName: appName, sessions: sessions, csrf: csrf,
+		people: people, tenant: tenant,
+	}
 }
 
 // Compile-time proof that this controller answers GET / the way Resource and the
@@ -419,29 +523,52 @@ func (c *HomeController) Index(ctx *httpx.Context) error {
 	}
 
 	// arandu:begin custom
-	return ctx.View("home", authui.AuthPage{
-		// view.Page is the chrome the layout draws, embedded rather than
-		// repeated. The navigation draws a link only for what answers: the kit
-		// ships the sign-in handler and nothing else, so RegisterURL stays
-		// empty and the link is not drawn -- a link to a route nobody
-		// registered is a 404 the layout put there.
-		Page: view.Page{
+	// The name to greet, through the helper the kit's own screens greet with, so
+	// this page and the nine beside it answer the same way when the lookup fails.
+	name := authui.SignedInName(ctx.Ctx(), c.people, c.tenant, subject.ID)
+
+	// Which of the two published screens the front page is.
+	//
+	// It used to be "home" for everybody, and home.kyse.go is a card headed
+	// "Dashboard" that says "You are logged in." -- so an anonymous visitor to a
+	// freshly published project was told they were signed in, on the first page
+	// they saw. Meanwhile welcome.kyse.go was published, compiled, and drawn by
+	// nothing in any project: the landing page with the Login and Register
+	// buttons on it, unreachable, under a command that prints "every screen has a
+	// route and every route has a handler".
+	//
+	// One address and two screens, decided by the session, which is the shape
+	// welcome's own @if(.Authenticated) was written for.
+	screen := "welcome"
+	if signedIn {
+		screen = "home"
+	}
+
+	return ctx.View(screen, authui.AuthPage{
+		// The chrome, from the one function that fills it. This used to be a
+		// view.Page literal written here, and a literal is a list of fields
+		// somebody can forget: this one forgot the name, the register link and
+		// the reset, on the screen everybody sees first.
+		Page: authui.Chrome(authui.ChromeProps{
 			AppName:       c.appName,
 			Title:         c.appName,
+			Path:          ctx.Request.URL.Path,
 			Token:         token,
 			Authenticated: signedIn,
-			// The identifier, because that is what a session carries. Show a
-			// display name here once you have a screen that loads the user
-			// through its policy.
-			UserName:  subject.ID,
-			HomeURL:   "/",
-			LoginURL:  "/auth/login",
-			LogoutURL: "/auth/logout",
-		},
+			UserName:      name,
+		}),
 
-		// Password reset stays off for the same reason: write the handler, then
-		// turn the link on.
-		HasPasswordReset: false,
+		// Where a signed-in person is sent. It is the front page for this kit,
+		// because that is what doLogin redirects to and what this controller
+		// answers; welcome.kyse.go draws a "Dashboard" button from it, and an
+		// application that grows a panel of its own changes this one line.
+		DashboardURL: "/",
+
+		// The reset is wired: this kit publishes PasswordController, mounts its
+		// three routes and mails a signed link. The link on the sign-in screen
+		// is drawn because the handler behind it exists, which is the only
+		// reason a link is ever drawn.
+		HasPasswordReset: true,
 	})
 	// arandu:end custom
 }

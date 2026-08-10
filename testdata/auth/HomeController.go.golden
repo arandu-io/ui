@@ -2,8 +2,8 @@ package controllers
 
 import (
 	"github.com/arandu-io/framework/httpx"
+	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/framework/view"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
 )
@@ -28,12 +28,26 @@ type HomeController struct {
 	// allowed to know about a token and a cookie.
 	sessions *security.SessionStore
 	csrf     *security.CSRF
+
+	// people and tenant are how the id in a session becomes a name to greet.
+	// A session carries an id and not a name on purpose -- a name kept in one
+	// stays wrong after somebody changes theirs -- so the header costs one
+	// lookup by primary key, and the page greeted people with a UUID until it
+	// had somewhere to make it.
+	//
+	// The tenant is whose rows are read (RULE 14). It comes from the
+	// configuration, through bootstrap/app.go, and never from the request.
+	people *auth.Service
+	tenant string
 }
 
 // NewHomeController returns the controller. bootstrap/app.go builds it and hands
 // it to the routes.
-func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF) *HomeController {
-	return &HomeController{appName: appName, sessions: sessions, csrf: csrf}
+func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF, people *auth.Service, tenant string) *HomeController {
+	return &HomeController{
+		appName: appName, sessions: sessions, csrf: csrf,
+		people: people, tenant: tenant,
+	}
 }
 
 // Compile-time proof that this controller answers GET / the way Resource and the
@@ -63,29 +77,52 @@ func (c *HomeController) Index(ctx *httpx.Context) error {
 	}
 
 	// arandu:begin custom
-	return ctx.View("home", authui.AuthPage{
-		// view.Page is the chrome the layout draws, embedded rather than
-		// repeated. The navigation draws a link only for what answers: the kit
-		// ships the sign-in handler and nothing else, so RegisterURL stays
-		// empty and the link is not drawn -- a link to a route nobody
-		// registered is a 404 the layout put there.
-		Page: view.Page{
+	// The name to greet, through the helper the kit's own screens greet with, so
+	// this page and the nine beside it answer the same way when the lookup fails.
+	name := authui.SignedInName(ctx.Ctx(), c.people, c.tenant, subject.ID)
+
+	// Which of the two published screens the front page is.
+	//
+	// It used to be "home" for everybody, and home.kyse.go is a card headed
+	// "Dashboard" that says "You are logged in." -- so an anonymous visitor to a
+	// freshly published project was told they were signed in, on the first page
+	// they saw. Meanwhile welcome.kyse.go was published, compiled, and drawn by
+	// nothing in any project: the landing page with the Login and Register
+	// buttons on it, unreachable, under a command that prints "every screen has a
+	// route and every route has a handler".
+	//
+	// One address and two screens, decided by the session, which is the shape
+	// welcome's own @if(.Authenticated) was written for.
+	screen := "welcome"
+	if signedIn {
+		screen = "home"
+	}
+
+	return ctx.View(screen, authui.AuthPage{
+		// The chrome, from the one function that fills it. This used to be a
+		// view.Page literal written here, and a literal is a list of fields
+		// somebody can forget: this one forgot the name, the register link and
+		// the reset, on the screen everybody sees first.
+		Page: authui.Chrome(authui.ChromeProps{
 			AppName:       c.appName,
 			Title:         c.appName,
+			Path:          ctx.Request.URL.Path,
 			Token:         token,
 			Authenticated: signedIn,
-			// The identifier, because that is what a session carries. Show a
-			// display name here once you have a screen that loads the user
-			// through its policy.
-			UserName:  subject.ID,
-			HomeURL:   "/",
-			LoginURL:  "/auth/login",
-			LogoutURL: "/auth/logout",
-		},
+			UserName:      name,
+		}),
 
-		// Password reset stays off for the same reason: write the handler, then
-		// turn the link on.
-		HasPasswordReset: false,
+		// Where a signed-in person is sent. It is the front page for this kit,
+		// because that is what doLogin redirects to and what this controller
+		// answers; welcome.kyse.go draws a "Dashboard" button from it, and an
+		// application that grows a panel of its own changes this one line.
+		DashboardURL: "/",
+
+		// The reset is wired: this kit publishes PasswordController, mounts its
+		// three routes and mails a signed link. The link on the sign-in screen
+		// is drawn because the handler behind it exists, which is the only
+		// reason a link is ever drawn.
+		HasPasswordReset: true,
 	})
 	// arandu:end custom
 }

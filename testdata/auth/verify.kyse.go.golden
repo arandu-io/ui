@@ -23,6 +23,13 @@ type VerifyData = authui.AuthPage
 			</header>
 
 			<div class="flex flex-col gap-4 px-6 py-6 text-sm">
+				{{-- A link that was not valid, or has expired. It is an error about
+				     something that already happened, so it is a banner rather than a
+				     message under a field: there is no field it belongs to. --}}
+				@if(.EmailError != "")
+					{!! components.Alert(components.AlertProps{Title: .EmailError, Variant: "destructive"}) !!}
+				@endif
+
 				@if(.Resent)
 					{!! components.Alert(components.AlertProps{
 						Title: "A fresh link is on its way",

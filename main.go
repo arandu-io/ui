@@ -123,8 +123,24 @@ func publishAuth(args []string) error {
 	fs.SetOutput(os.Stderr)
 	force := fs.Bool("force", false, "overwrite files that already exist")
 	dryRun := fs.Bool("dry-run", false, "print what would be written, and write nothing")
+	// --views is "the screens, not the flow behind them": what the layout unit
+	// needs to keep compiling travels with it, and nothing else does. See
+	// screensOnly.
+	viewsOnly := fs.Bool("views", false, "publish only the screens, leaving the controllers you have edited alone")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// flag.Parse stops at the first argument that is not a flag, and returns
+	// what is left without complaining. So `auth bootstrap --force` used to
+	// publish with force OFF and say nothing -- the word was ignored AND it
+	// switched off every flag typed after it. Laravel answers "Invalid preset."
+	// to the same input; answering nothing is worse, because the person believes
+	// the flag took.
+	if rest := fs.Args(); len(rest) > 0 {
+		return fmt.Errorf("unknown argument %q.\n"+
+			"There is no preset to choose: the kit publishes one set of screens (ADR 0026).\n"+
+			"Run `auth`, optionally with --force, --views or --dry-run", rest[0])
 	}
 
 	root, err := projectRoot()
@@ -140,6 +156,9 @@ func publishAuth(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *viewsOnly {
+		files = screensOnly(files)
+	}
 
 	if *dryRun {
 		for _, f := range files {
@@ -153,13 +172,22 @@ func publishAuth(args []string) error {
 		return err
 	}
 
-	// The wiring is printed, not written. One line in a file the person reads
-	// beats a generator that edits bootstrap/app.go behind their back (ADR
-	// 0001), and a test pins these symbols to what the templates emit -- an
-	// instruction that does not compile is worse than no instruction, and that
-	// happened here twice.
-	fmt.Printf(`
-Two lines in bootstrap/app.go, so these screens answer /auth/login instead of
+	fmt.Printf(wiring, modulePath, viewImports(modulePath))
+	return nil
+}
+
+// wiring is what the command prints once the files are written.
+//
+// It is a constant rather than a literal inside the Printf so a test can read
+// it. The instruction has to name the symbols the templates actually emit -- an
+// instruction that does not compile is worse than no instruction, and that
+// happened here twice -- and the only way to check that is to have both sides
+// in the same process.
+//
+// Printed and not written. One line in a file the person reads beats a generator
+// that edits bootstrap/app.go behind their back (ADR 0001).
+const wiring = `
+Three lines in bootstrap/app.go, so these screens answer /auth/login instead of
 the framework's. The import:
 
     authui "%s/app/Http/Controllers/Auth"
@@ -168,6 +196,14 @@ and, in the k.Register(...) list, in place of auth.New:
 
     authui.New(authService, sessions, csrf, mailer, fw.AppKey,
         cfg.App.Name, cfg.App.URL, auth.FixedTenant(cfg.Auth.Tenant)),
+
+The landing page is published too, because a page renders with the type of its
+layout and this command replaces the layout. It is built in the same file, and
+it takes the auth service and the tenant so the header can greet by name rather
+than by the id in the session:
+
+    controllers.NewHomeController(cfg.App.Name, sessions, csrf,
+        authService, cfg.Auth.Tenant),
 
 Register one or the other, never both: they answer the same path. The
 framework's has the minimum markup that exists so authentication could be
@@ -185,9 +221,16 @@ Then:
     aru migrate
 
 Every screen has a route and every route has a handler. Registration, e-mail
-verification and the password reset are wired -- the reset writes the password
-rather than stopping one step short of it, and the verification link is signed
-rather than stored, so it survives a restart and a second replica.
+verification, the password reset and the password confirmation are wired. Both
+links in the two messages are signed rather than stored, so they survive a
+restart and a second replica, and the reset link stops working the moment the
+password changes -- there is no table of tokens to sweep.
+
+To ask for the password again before something that matters, mount
+middleware.RequireConfirmedPassword on that route. It sends people to
+/auth/password/confirm, which this kit answers. It asks whether the password was
+typed recently and nothing else: whether this account may touch this record is
+still the Policy's answer.
 
 What this kit does NOT decide is your rules. The handlers are yours from the
 moment they are written: the minimum password length, whether registration is
@@ -198,6 +241,4 @@ survives a --force. See ADR 0022.
 The two messages go out through your mailer. In development that is
 MAIL_URL=log://, so the links land in the output of aru dev and the flow works
 with nothing installed.
-`, modulePath, viewImports(modulePath))
-	return nil
-}
+`

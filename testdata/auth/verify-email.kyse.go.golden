@@ -2,7 +2,11 @@
 
 package mail
 
-import appmail "example.test/project/app/Mail"
+import (
+	"github.com/arandu-io/kyse/mailui"
+
+	appmail "example.test/project/app/Mail"
+)
 
 @go
 // The data this message renders from, named rather than declared: it is
@@ -10,55 +14,28 @@ import appmail "example.test/project/app/Mail"
 type VerifyEmailData = appmail.VerifyEmail
 @endgo
 
-<!doctype html>
-<html lang="en">
-<head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Confirm your email address</title>
-</head>
-{{-- Inline styles, and that is not laziness.
-     A mail client strips <style> and ignores an external stylesheet, so the
-     class names the rest of this application uses reach nothing here. This is
-     one of two places in the project where a hex value belongs in the markup.
+{{-- The whole message is one call.
+     mailui builds the table, the inline styles and the hidden preheader that a
+     mail client needs -- Outlook renders with Word, Gmail strips <style>, and an
+     external stylesheet is not fetched at all. Writing that by hand per message
+     is how two messages from one application stop looking alike.
 
-     The mark at the top is set in type rather than fetched as an image. Every
-     mail client blocks remote images until the reader allows them, so a logo
-     delivered that way is a broken-image box on the first impression -- which is
-     the one message where the first impression is the whole job. --}}
-<body style="margin:0;padding:24px;background:#f4f4f5;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#18181b">
-	<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto">
-		<tr>
-			<td style="padding:0 4px 20px">
-				<span style="font-size:15px;font-weight:600;letter-spacing:-0.01em;color:#18181b">Arandu</span>
-			</td>
-		</tr>
-		<tr>
-			<td style="background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:32px">
-				<h1 style="margin:0 0 16px;font-size:20px;font-weight:600;letter-spacing:-0.02em">Confirm your email address</h1>
+     The brand is a field and never a word typed here: this file is published
+     into your project by a starter kit, and a name in the markup is the kit's
+     name going out on your mail.
 
-				{{-- arandu:begin custom --}}
-				<p style="margin:0 0 16px;font-size:15px;line-height:1.6">
-					Hello {{ .Greeting }}, and welcome. One click and the account is
-					yours -- until then you can read, but not comment.
-				</p>
-				<p style="margin:0 0 24px">
-					<a href="{{ .Link }}" style="display:inline-block;background:#18181b;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px;font-weight:500">Confirm my address</a>
-				</p>
-				<p style="margin:0;font-size:13px;color:#71717a;line-height:1.6">
-					The link works for 24 hours. If the button does not open, copy
-					this address:<br>
-					<span style="word-break:break-all">{{ .Link }}</span>
-				</p>
-				{{-- arandu:end custom --}}
-			</td>
-		</tr>
-		<tr>
-			<td style="padding:16px 8px;font-size:12px;color:#a1a1aa;line-height:1.6">
-				If you did not create this account, ignore this message. Nothing was
-				activated and the address will not be written to again.
-			</td>
-		</tr>
-	</table>
-</body>
-</html>
+     Everything inside the block below is yours and survives a republish: the
+     wording, the heading and the footer are what this application says, not what
+     the kit says. --}}
+{{-- arandu:begin custom --}}
+{!! mailui.Layout(mailui.LayoutProps{
+	Brand:     .BrandName,
+	Heading:   "Confirm your email address",
+	Preheader: "One click and the account is yours.",
+	Body: mailui.Paragraph("Hello " + .Greeting() + ", and welcome. One click and the account is yours -- until then you can read, but not comment.") +
+		mailui.Button(mailui.ButtonProps{Label: "Confirm my address", Href: .Link}) +
+		mailui.Small("The link works for 24 hours.") +
+		mailui.Fallback(.Link),
+	Footer: "If you did not create this account, ignore this message. Nothing was activated and the address will not be written to again.",
+}) !!}
+{{-- arandu:end custom --}}

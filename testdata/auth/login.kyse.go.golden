@@ -17,6 +17,15 @@ type LoginData = authui.AuthPage
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
+		{{-- The one-shot message a redirect or another handler left behind: an
+		     address just confirmed, a password just changed. It is above the card
+		     because it is about what already happened, not about what to type. --}}
+		@if(.Status != "")
+			<div class="mb-6">
+				{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+			</div>
+		@endif
+
 		<section class="card">
 			<header class="border-b px-6 py-4">
 				<h1 class="text-base font-semibold tracking-tight">Login</h1>

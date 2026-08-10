@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"strings"
 )
 
 // The nine screens of the starter kit.
@@ -345,6 +346,12 @@ type WelcomeData = authui.AuthPage
 `
 
 // authLoginViewTemplate is the sign-in screen.
+//
+// It draws Status, and that block is not decoration. Two handlers render this
+// screen to say something good happened -- the address was confirmed, the
+// password was changed -- and with no block for it the string was computed,
+// passed and thrown away: somebody who had just finished a password reset was
+// shown an ordinary sign-in form with nothing on it to say the reset worked.
 const authLoginViewTemplate = `//go:build kyse
 
 package auth
@@ -364,6 +371,15 @@ type LoginData = authui.AuthPage
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
+		{{-- The one-shot message a redirect or another handler left behind: an
+		     address just confirmed, a password just changed. It is above the card
+		     because it is about what already happened, not about what to type. --}}
+		@if(.Status != "")
+			<div class="mb-6">
+				{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+			</div>
+		@endif
+
 		<section class="card">
 			<header class="border-b px-6 py-4">
 				<h1 class="text-base font-semibold tracking-tight">Login</h1>
@@ -469,6 +485,12 @@ type RegisterData = authui.AuthPage
 `
 
 // authVerifyViewTemplate is the "check your email" screen.
+//
+// It draws EmailError as well as Resent, because the same view answers a click
+// on a link that did not work. The verify handler writes that field on three
+// paths -- forged, expired, and an account the link no longer names -- and with
+// no block to draw it, somebody clicking a dead link was shown the cheerful
+// "check your inbox" page and no reason at all.
 const authVerifyViewTemplate = `//go:build kyse
 
 package auth
@@ -494,6 +516,13 @@ type VerifyData = authui.AuthPage
 			</header>
 
 			<div class="flex flex-col gap-4 px-6 py-6 text-sm">
+				{{-- A link that was not valid, or has expired. It is an error about
+				     something that already happened, so it is a banner rather than a
+				     message under a field: there is no field it belongs to. --}}
+				@if(.EmailError != "")
+					{!! components.Alert(components.AlertProps{Title: .EmailError, Variant: "destructive"}) !!}
+				@endif
+
 				@if(.Resent)
 					{!! components.Alert(components.AlertProps{
 						Title: "A fresh link is on its way",
@@ -666,3 +695,47 @@ type ConfirmData = authui.AuthPage
 	</div>
 @endsection
 `
+
+// screensOnly is what --views publishes.
+//
+// Laravel's `ui:auth --views` refreshes the screens and leaves the backend the
+// project has edited alone. Ours cannot be quite that, and the reason is kyse:
+// a page renders with the TYPE OF ITS LAYOUT (ADR 0026), so the layout,
+// page.go, home, welcome and HomeController are one unit. Publishing a new
+// layout without the controller that hands it its data leaves a project that
+// does not compile -- which is why `replaced` exists in publish.go and lists
+// exactly those five.
+//
+// So --views is the screens plus that unit, and the flag's help says so. The
+// alternative -- refreshing login and register while a stale HomeController
+// still hands over its own struct -- is a build failure delivered by a flag
+// whose whole purpose is to be the safe one.
+//
+// What it leaves alone is the flow: the four controllers and the two mailables,
+// which are the files somebody edits to decide their own rules.
+func screensOnly(files []File) []File {
+	keep := map[string]bool{
+		filepath.Join("app", "Http", "Controllers", "HomeController.go"): true,
+		// render.go is the sixth member of that unit, and leaving it out made
+		// --views the flag that writes code which does not compile: the
+		// HomeController it publishes calls authui.Chrome and
+		// authui.SignedInName, and both are declared here. A project that
+		// reached for the safe flag before it had ever run the full command got
+		// a build failure naming two symbols it had never heard of.
+		//
+		// It is safe to add because it is not in `replaced`: an existing
+		// render.go is kept and reported as kept, exactly like the four
+		// controllers below. Adding it changes what a project WITHOUT one gets,
+		// and nothing else.
+		filepath.Join("app", "Http", "Controllers", "Auth", "render.go"): true,
+	}
+
+	var out []File
+	for _, f := range files {
+		if keep[f.Path] || strings.HasPrefix(f.Path, filepath.Join("resources", "views")) ||
+			f.Path == filepath.Join("app", "Http", "Controllers", "Auth", "page.go") {
+			out = append(out, f)
+		}
+	}
+	return out
+}

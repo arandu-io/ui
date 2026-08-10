@@ -20,10 +20,15 @@
 go run github.com/arandu-io/ui@latest auth
 ```
 
-Thirteen files: sign in, sign up, e-mail verification, the three password
-screens, the dashboard, the welcome page, the layout, the controllers behind
-them and the page struct they render through. They land in your tree and they
-are yours — edit them, delete them, rewrite them.
+Twenty-two files: sign in, sign up, e-mail verification, the three password
+screens, the dashboard, the welcome page, the layout, the four controllers
+behind them, the two messages the flow sends with both their parts, and the
+page struct they all render through. They land in your tree and they are
+yours — edit them, delete them, rewrite them.
+
+Run it again to take a fix from a newer version: what you wrote inside a
+`arandu:begin custom` block is carried over, and the command says so per file.
+`--views` refreshes only the screens.
 
 **Nothing is added to your `go.mod`.** `go run <module>@latest` runs a published
 module without touching the caller's dependency graph, so there is no package to

@@ -22,20 +22,24 @@ import (
 // which is usually "this link is not valid", three months later, to somebody who
 // verified correctly the first time.
 //
-// This one carries the user id and is signed with the application key
+// This one carries the user id and the address it was mailed to
+// (auth.VerificationPayload), signed with the application key
 // (security.Signer). Nothing is written when the mail goes out, the link says
 // "expired" when it has expired rather than "unknown", and a second instance
-// behind a load balancer accepts a link the first one issued -- which the
-// in-memory password reset store in PasswordController does not, and says so.
+// behind a load balancer accepts a link the first one issued. The reset link in
+// PasswordController is built the same way, and was not: it lived in a map in
+// this process, so it worked on whichever replica issued it and a restart threw
+// it away.
 //
 // The purpose is part of the signature, so a verification link is not a password
 // reset link even though the same key signed both.
 //
 // # What verification is worth
 //
-// It proves control of the address and nothing else. So the handler takes the id
-// from the signed payload and reads the row itself: no name, no role and no
-// tenant arrives from the URL.
+// It proves control of the address it was sent to, and nothing else. So the
+// handler takes the payload of the signed token and lets the service read the
+// row: no name, no role and no tenant arrives from the URL, and the service
+// refuses the link when the account's address is no longer the one in it.
 //
 // It is not a login. Clicking the link marks the address verified and sends the
 // person to the sign-in screen -- a link in an e-mail that opens an authenticated
@@ -119,7 +123,12 @@ func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
 			// its own sentence.
 			status = "That link has expired. Sign in and we will send another."
 		}
-		m.screen(w, r, "auth.verify", AuthPage{
+		// 422 and not 200. A dead verification link answered 200 with the
+		// "check your inbox" page and a message under it, so the browser, the
+		// log and every dashboard agreed that a forged token was a confirmed
+		// address -- and nothing looked wrong until somebody asked why the
+		// verification rate was 100%.
+		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.verify", AuthPage{
 			Page:       m.page(r, "Confirm your address"),
 			EmailError: status,
 		})
@@ -129,7 +138,7 @@ func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
 	_, first, err := m.auth.MarkVerified(r.Context(), m.tenant(r), payload)
 	if err != nil {
 		observability.Log(r.Context()).Error("marking an address verified", "error", err)
-		m.screen(w, r, "auth.verify", AuthPage{
+		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.verify", AuthPage{
 			Page:       m.page(r, "Confirm your address"),
 			EmailError: "That link is not valid.",
 		})
@@ -184,16 +193,24 @@ func (m *Module) resendVerification(w http.ResponseWriter, r *http.Request) {
 // is a registration the person repeats, which fails on the address being taken.
 // The resend button is the recovery, and it is on the next screen.
 func (m *Module) sendVerification(r *http.Request, u auth.User) {
-	token := m.signer.Sign(verifyPurpose, u.ID, verifyTTL)
+	// The id AND the address, so the link stops verifying once the address it
+	// was sent to is no longer the account's. Signing the id alone made a link
+	// mailed to an old address confirm a new one somebody else controls.
+	token := m.signer.Sign(verifyPurpose, auth.VerificationPayload(u), verifyTTL)
 
 	// The origin comes from configuration and never from the Host header: a link
 	// built from what the client sent is a link the client chose the destination
 	// of, delivered by us, to the address of somebody who trusts us.
 	link := m.base + "/auth/verify/confirm?token=" + token
 
+	// The brand travels with the message, from the configuration this module was
+	// built with. It is not a literal in the mail view: a starter kit that types
+	// its own name there sends every project's verification mail signed with the
+	// framework's name, to people who have never heard of it.
 	if err := m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
-		Name: firstWord(u.Name),
-		Link: link,
+		Name:      firstWord(u.Name),
+		Link:      link,
+		BrandName: m.appName,
 	}); err != nil {
 		observability.Log(r.Context()).Error("sending the verification link",
 			"error", err, "user", u)

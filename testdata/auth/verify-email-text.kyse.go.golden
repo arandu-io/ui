@@ -12,8 +12,8 @@ type VerifyEmailTextData = appmail.VerifyEmail
 Confirm your email address
 
 {{-- arandu:begin custom --}}
-Hello {{ .Greeting }}, and welcome. One click and the account is yours -- until
-then you can read, but not comment.
+Hello {{ .Greeting() }}, and welcome. One click and the account is yours --
+until then you can read, but not comment.
 
 Confirm your address:
 {{ .Link }}

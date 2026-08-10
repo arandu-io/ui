@@ -15,6 +15,11 @@ type PasswordReset struct {
 	Name string
 	// Link is the Link this message carries.
 	Link string
+	// BrandName is what the message is signed with, from the configuration and
+	// never from a literal in the view. See VerifyEmail.BrandName: the two
+	// messages an application sends have to be signed with the same name, and a
+	// name typed into the markup is the starter kit's.
+	BrandName string
 }
 
 // Envelope is who it is from and what it says it is.

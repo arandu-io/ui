@@ -16,6 +16,7 @@ package authui
 
 import (
 	"github.com/arandu-io/framework/httpx"
+	"github.com/arandu-io/framework/httpx/middleware"
 	"github.com/arandu-io/framework/kernel"
 	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/modules/auth"
@@ -103,9 +104,26 @@ func (m *Module) Name() string { return "authui" }
 //
 // This is the one method the kit overrides. The embedded module still declares
 // the users table; it just no longer answers /auth/login, because this does.
+//
+// guest is the guard on the two screens that exist to bring somebody in. It is
+// on the route rather than at the top of each handler because there are two
+// handlers today and there is a third the day somebody adds one -- and the
+// third is the one that would render the sign-in form to a person who is
+// already signed in, which reads to them as having been signed out.
+//
+// The framework's auth module guards its own minimal sign-in screen the same
+// way, and this method replaces that one. The guard was missing here while it
+// was already there, so publishing the kit TOOK A GUARD AWAY from the project
+// it was published into -- and publishing again over a project that had added
+// one by hand took it away a second time.
 func (m *Module) Routes(r *httpx.Router) {
 	g := r.Group("/auth")
-	g.Get("/login", m.showLogin)
+
+	// Where somebody already signed in is sent instead. The front page, which
+	// is where signing in lands them too, so the two agree.
+	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
+
+	g.Get("/login", m.showLogin, guest)
 	g.Post("/login", m.doLogin)
 	g.Post("/logout", m.doLogout)
 
@@ -118,6 +136,20 @@ func (m *Module) Routes(r *httpx.Router) {
 	g.Get("/password/reset", m.showPasswordReset)
 	g.Post("/password/update", m.updatePassword)
 
+	// Typing the password again on a session that is already open. The screen
+	// was published from the beginning with no route, no handler and nothing
+	// assigning PasswordConfirmURL -- so it rendered action="" and posted to
+	// itself, on a kit whose own instructions say every screen has a route.
+	//
+	// Behind the session guard, because there is nothing to confirm without one:
+	// a post here from a guest would otherwise reach a handler that has to
+	// invent an answer. The address is middleware.PasswordConfirmPath, which is
+	// where middleware.RequireConfirmedPassword sends people -- mount that on
+	// your own sensitive routes and this is the screen they land on.
+	signedIn := middleware.RequireAuth(m.sessions)
+	g.Get("/password/confirm", m.showPasswordConfirm, signedIn)
+	g.Post("/password/confirm", m.confirmPassword, signedIn)
+
 	// Registration and address verification, in RegisterController.go.
 	//
 	// /verify is the notice and /verify/confirm is the link. Two addresses and
@@ -125,7 +157,7 @@ func (m *Module) Routes(r *httpx.Router) {
 	// registering, and the link arrives from a mail client -- and a GET that
 	// sometimes changes state and sometimes does not is one nobody can cache,
 	// log or reason about.
-	g.Get("/register", m.showRegister)
+	g.Get("/register", m.showRegister, guest)
 	g.Post("/register", m.doRegister)
 	g.Get("/verify", m.showVerifyNotice)
 	g.Get("/verify/confirm", m.verify)
