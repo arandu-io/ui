@@ -303,8 +303,14 @@ func TestTheKitsPageEmbedsTheFrameworksPage(t *testing.T) {
 	if !strings.Contains(body, "\n\tview.Page\n") {
 		t.Errorf("AuthPage does not embed view.Page: the chrome would be declared twice\n%s", body)
 	}
-	if !strings.Contains(page, "var _ view.Layout = AuthPage{}") {
+	// The assertion is on the pair and not on a whole line, because the two
+	// compile-time proofs -- the layout and the components.Page a field asks
+	// through -- are declared in one var block, and gofmt aligns them.
+	if !strings.Contains(page, "view.Layout") || !strings.Contains(page, "= AuthPage{}") {
 		t.Error("nothing proves AuthPage fits the layout at compile time")
+	}
+	if !strings.Contains(page, "components.Page") {
+		t.Error("nothing proves a kyse component can ask AuthPage about a field, which is how every validation message reaches the screen")
 	}
 }
 

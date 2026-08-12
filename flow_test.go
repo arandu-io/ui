@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -462,9 +463,27 @@ func TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn(t *testing.T) {
 		goSource.Write(f.Content)
 	}
 
+	// A field reaches the screen one of two ways. Status is read straight from
+	// the markup, as `.Status`. A validation message is not: the components ask
+	// the page through FieldError, so the field is drawn when FieldError maps a
+	// form field name onto it AND some screen has an input by that name.
+	//
+	// That indirection is why this check is stronger than the one it replaces
+	// rather than weaker. Before, `.NameError` appearing anywhere in the markup
+	// counted as drawn. Now the name has to line up end to end: handler fills
+	// the field, FieldError names it, a screen has an input called that.
+	names := fieldErrorNames(t, authFile(t, "page.go"))
+
 	for _, name := range fields {
-		read := strings.Contains(markup.String(), "."+name)
 		filled := strings.Contains(goSource.String(), name+":")
+
+		read := strings.Contains(markup.String(), "."+name)
+		if !read {
+			if formField, mapped := names[name]; mapped {
+				read = strings.Contains(markup.String(), `Name: "`+formField+`"`) ||
+					strings.Contains(markup.String(), `Name:  "`+formField+`"`)
+			}
+		}
 
 		switch {
 		case filled && !read:
@@ -475,6 +494,59 @@ func TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn(t *testing.T) {
 				"assume something writes it", name)
 		}
 	}
+}
+
+// fieldErrorNames reads AuthPage.FieldError and returns, for each message field
+// it answers with, the form field name that reaches it.
+//
+// It parses rather than greps because the mapping is the load-bearing half of
+// the indirection: a case that returns the wrong field is a message shown under
+// the wrong input, and nothing else would catch it.
+func fieldErrorNames(t *testing.T, page string) map[string]string {
+	t.Helper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), "page.go", page, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("page.go does not parse: %v", err)
+	}
+
+	out := map[string]string{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		decl, ok := n.(*ast.FuncDecl)
+		if !ok || decl.Name.Name != "FieldError" || decl.Recv == nil {
+			return true
+		}
+		ast.Inspect(decl.Body, func(n ast.Node) bool {
+			clause, ok := n.(*ast.CaseClause)
+			if !ok || len(clause.List) != 1 || len(clause.Body) != 1 {
+				return true
+			}
+			lit, ok := clause.List[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			ret, ok := clause.Body[0].(*ast.ReturnStmt)
+			if !ok || len(ret.Results) != 1 {
+				return true
+			}
+			sel, ok := ret.Results[0].(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			formField, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+			out[sel.Sel.Name] = formField
+			return true
+		})
+		return false
+	})
+
+	if len(out) == 0 {
+		t.Fatal("AuthPage.FieldError maps no field: either it changed shape or this test is looking in the wrong place")
+	}
+	return out
 }
 
 // messageFields returns the names of the AuthPage fields that hold a sentence

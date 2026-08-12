@@ -29,7 +29,7 @@ type ConfirmData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "Password", Type: "password",
-					Error: .PasswordError,
+					Page: .,
 					Autocomplete: "current-password", Required: true, Autofocus: true,
 				}) !!}
 

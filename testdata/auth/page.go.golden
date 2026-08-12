@@ -1,6 +1,9 @@
 package authui
 
-import "github.com/arandu-io/framework/view"
+import (
+	"github.com/arandu-io/framework/view"
+	"github.com/arandu-io/kyse/components"
+)
 
 // AuthPage is what every screen of the starter kit renders from.
 //
@@ -58,8 +61,41 @@ type AuthPage struct {
 	PasswordConfirmationError string
 }
 
-// Compile-time proof that these screens fit the layout.
-var _ view.Layout = AuthPage{}
+// Compile-time proof that these screens fit the layout, and that a component
+// can ask them about a field.
+var (
+	_ view.Layout     = AuthPage{}
+	_ components.Page = AuthPage{}
+)
+
+// FieldError answers the question a kyse component asks about an input.
+//
+// components.FieldProps carries the page and the field name, and asks; it does
+// not carry the message as a third prop, because that meant writing the field
+// name twice in one call and the two could disagree without anything saying so.
+// See the doc comment on components.FieldProps for the whole of that argument.
+//
+// These screens keep the messages in named fields rather than in the map
+// view.Page carries, because a typed field is one the compiler checks: a
+// handler that sets PasswordConfirmatonError does not build, where a map key
+// spelt the same way is simply never read. This method is the seam between the
+// two -- the fields stay the source, and the components see one interface.
+//
+// A name with no field of its own falls through to view.Page, which is where a
+// message put in the map by anything generic would be.
+func (p AuthPage) FieldError(name string) string {
+	switch name {
+	case "name":
+		return p.NameError
+	case "email":
+		return p.EmailError
+	case "password":
+		return p.PasswordError
+	case "password_confirmation":
+		return p.PasswordConfirmationError
+	}
+	return p.Page.FieldError(name)
+}
 
 // RememberAttribute is the checked attribute of the remember-me box, or nothing.
 //

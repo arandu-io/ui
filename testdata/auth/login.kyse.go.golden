@@ -40,13 +40,13 @@ type LoginData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Error: .EmailError,
+					Value: .Email, Page: .,
 					Autocomplete: "username", Required: true, Autofocus: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "Password", Type: "password",
-					Error: .PasswordError,
+					Page: .,
 					Autocomplete: "current-password", Required: true,
 				}) !!}
 

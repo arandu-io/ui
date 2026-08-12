@@ -31,7 +31,7 @@ type EmailData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Error: .EmailError,
+					Value: .Email, Page: .,
 					Hint: "We will send a link if the address is registered.",
 					Autocomplete: "email", Required: true, Autofocus: true,
 				}) !!}

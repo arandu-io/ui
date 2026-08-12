@@ -102,7 +102,10 @@ func AuthViews(m Module) ([]File, error) {
 // the framework instead of once per project.
 const authPageTemplate = `package authui
 
-import "github.com/arandu-io/framework/view"
+import (
+	"github.com/arandu-io/framework/view"
+	"github.com/arandu-io/kyse/components"
+)
 
 // AuthPage is what every screen of the starter kit renders from.
 //
@@ -160,8 +163,41 @@ type AuthPage struct {
 	PasswordConfirmationError string
 }
 
-// Compile-time proof that these screens fit the layout.
-var _ view.Layout = AuthPage{}
+// Compile-time proof that these screens fit the layout, and that a component
+// can ask them about a field.
+var (
+	_ view.Layout     = AuthPage{}
+	_ components.Page = AuthPage{}
+)
+
+// FieldError answers the question a kyse component asks about an input.
+//
+// components.FieldProps carries the page and the field name, and asks; it does
+// not carry the message as a third prop, because that meant writing the field
+// name twice in one call and the two could disagree without anything saying so.
+// See the doc comment on components.FieldProps for the whole of that argument.
+//
+// These screens keep the messages in named fields rather than in the map
+// view.Page carries, because a typed field is one the compiler checks: a
+// handler that sets PasswordConfirmatonError does not build, where a map key
+// spelt the same way is simply never read. This method is the seam between the
+// two -- the fields stay the source, and the components see one interface.
+//
+// A name with no field of its own falls through to view.Page, which is where a
+// message put in the map by anything generic would be.
+func (p AuthPage) FieldError(name string) string {
+	switch name {
+	case "name":
+		return p.NameError
+	case "email":
+		return p.EmailError
+	case "password":
+		return p.PasswordError
+	case "password_confirmation":
+		return p.PasswordConfirmationError
+	}
+	return p.Page.FieldError(name)
+}
 
 // RememberAttribute is the checked attribute of the remember-me box, or nothing.
 //
@@ -406,13 +442,13 @@ type LoginData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Error: .EmailError,
+					Value: .Email, Page: .,
 					Autocomplete: "username", Required: true, Autofocus: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "Password", Type: "password",
-					Error: .PasswordError,
+					Page: .,
 					Autocomplete: "current-password", Required: true,
 				}) !!}
 
@@ -463,26 +499,26 @@ type RegisterData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "name", Label: "Name",
-					Value: .Name, Error: .NameError,
+					Value: .Name, Page: .,
 					Autocomplete: "name", Required: true, Autofocus: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Error: .EmailError,
+					Value: .Email, Page: .,
 					Autocomplete: "email", Required: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "Password", Type: "password",
-					Error: .PasswordError,
+					Page: .,
 					Hint: "At least twelve characters.",
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
 					Name: "password_confirmation", Label: "Confirm password", Type: "password",
-					Error: .PasswordConfirmationError,
+					Page: .,
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 
@@ -588,7 +624,7 @@ type EmailData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Error: .EmailError,
+					Value: .Email, Page: .,
 					Hint: "We will send a link if the address is registered.",
 					Autocomplete: "email", Required: true, Autofocus: true,
 				}) !!}
@@ -636,20 +672,20 @@ type ResetData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Error: .EmailError,
+					Value: .Email, Page: .,
 					Autocomplete: "email", Required: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "New password", Type: "password",
-					Error: .PasswordError,
+					Page: .,
 					Hint: "At least twelve characters.",
 					Autocomplete: "new-password", Required: true, Autofocus: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
 					Name: "password_confirmation", Label: "Confirm the new password", Type: "password",
-					Error: .PasswordConfirmationError,
+					Page: .,
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 
@@ -695,7 +731,7 @@ type ConfirmData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "Password", Type: "password",
-					Error: .PasswordError,
+					Page: .,
 					Autocomplete: "current-password", Required: true, Autofocus: true,
 				}) !!}
 
