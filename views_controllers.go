@@ -202,7 +202,7 @@ func (m *Module) Name() string { return "authui" }
 // was already there, so publishing the kit TOOK A GUARD AWAY from the project
 // it was published into -- and publishing again over a project that had added
 // one by hand took it away a second time.
-func (m *Module) Routes(r *fhttp.Router) {
+func (m *Module) Routes(r *http.Router) {
 	g := r.Group("/auth")
 
 	// Where somebody already signed in is sent instead. The front page, which
@@ -498,7 +498,7 @@ func NewHomeController(appName string, sessions *security.SessionStore, csrf *se
 
 // Compile-time proof that this controller answers GET / the way Resource and the
 // route table expect. It costs nothing and catches a renamed method.
-var _ fhttp.Indexer = (*HomeController)(nil)
+var _ http.Indexer = (*HomeController)(nil)
 
 // Index renders the landing page.
 //
@@ -506,7 +506,7 @@ var _ fhttp.Indexer = (*HomeController)(nil)
 // they are what the layout draws its navigation and its hx-headers from, so a
 // regeneration that carried over an edited block would otherwise carry over a
 // page that greets a signed-in visitor with a sign-in link.
-func (c *HomeController) Index(ctx *fhttp.Context) error {
+func (c *HomeController) Index(ctx *http.Context) error {
 	// Who is signed in, from the session cookie and never from the request. An
 	// error here is the anonymous case -- no cookie, a forged one, or a session
 	// that expired -- and the guest half of the navigation is what gets drawn.
