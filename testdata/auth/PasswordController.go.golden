@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arandu-io/framework/httpx/middleware"
+	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
 	"github.com/arandu-io/framework/security"

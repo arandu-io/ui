@@ -580,7 +580,7 @@ func TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes(t *testing.T)
 // a header only HTMX reads, so a plain form post that succeeded got 200, no
 // body, and a blank page.
 //
-// httpx.Redirect is where the branch lives: HX-Redirect under HTMX, a 303 with
+// http.Redirect is where the branch lives: HX-Redirect under HTMX, a 303 with
 // a Location otherwise. The handler has to go through it, and the two exits --
 // login and logout -- both have to.
 func TestTheRedirectSurvivesWithoutJavaScript(t *testing.T) {
@@ -589,8 +589,8 @@ func TestTheRedirectSurvivesWithoutJavaScript(t *testing.T) {
 	if strings.Contains(source, `"HX-Redirect"`) {
 		t.Error("the handler sets HX-Redirect itself: a form post from a browser without HTMX gets 200 and an empty body")
 	}
-	if !strings.Contains(source, "httpx.Redirect(w, r, to)") {
-		t.Error("the redirect does not go through httpx.Redirect, which is what answers 303 to a request that is not HTMX")
+	if !strings.Contains(source, "http.Redirect(w, r, to)") {
+		t.Error("the redirect does not go through http.Redirect, which is what answers 303 to a request that is not HTMX")
 	}
 
 	file, err := parser.ParseFile(token.NewFileSet(), "LoginController_handlers.go", source, parser.AllErrors)

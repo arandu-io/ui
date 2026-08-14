@@ -1,7 +1,7 @@
 package controllers
 
 import (
-	"github.com/arandu-io/framework/httpx"
+	"github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
 
@@ -52,7 +52,7 @@ func NewHomeController(appName string, sessions *security.SessionStore, csrf *se
 
 // Compile-time proof that this controller answers GET / the way Resource and the
 // route table expect. It costs nothing and catches a renamed method.
-var _ httpx.Indexer = (*HomeController)(nil)
+var _ fhttp.Indexer = (*HomeController)(nil)
 
 // Index renders the landing page.
 //
@@ -60,7 +60,7 @@ var _ httpx.Indexer = (*HomeController)(nil)
 // they are what the layout draws its navigation and its hx-headers from, so a
 // regeneration that carried over an edited block would otherwise carry over a
 // page that greets a signed-in visitor with a sign-in link.
-func (c *HomeController) Index(ctx *httpx.Context) error {
+func (c *HomeController) Index(ctx *fhttp.Context) error {
 	// Who is signed in, from the session cookie and never from the request. An
 	// error here is the anonymous case -- no cookie, a forged one, or a session
 	// that expired -- and the guest half of the navigation is what gets drawn.

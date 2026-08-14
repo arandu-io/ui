@@ -101,8 +101,8 @@ const authModuleTemplate = `// Package authui holds the sign-in screens.
 package authui
 
 import (
-	"github.com/arandu-io/framework/httpx"
-	"github.com/arandu-io/framework/httpx/middleware"
+	"github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/kernel"
 	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/modules/auth"
@@ -202,7 +202,7 @@ func (m *Module) Name() string { return "authui" }
 // was already there, so publishing the kit TOOK A GUARD AWAY from the project
 // it was published into -- and publishing again over a project that had added
 // one by hand took it away a second time.
-func (m *Module) Routes(r *httpx.Router) {
+func (m *Module) Routes(r *fhttp.Router) {
 	g := r.Group("/auth")
 
 	// Where somebody already signed in is sent instead. The front page, which
@@ -260,8 +260,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/arandu-io/framework/httpx"
-	"github.com/arandu-io/framework/httpx/middleware"
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
 	"github.com/arandu-io/framework/security"
@@ -391,11 +391,11 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 // answering it to a plain form post is 200 with an empty body: a blank page
 // after a login that succeeded, with nothing in the log to say so.
 //
-// httpx.Redirect is where that branch already lives -- HX-Redirect for an HTMX
+// fhttp.Redirect is where that branch already lives -- HX-Redirect for an HTMX
 // request, 303 with a Location for everything else. Restating it here would be a
 // second way to redirect, and the second one is the one that drifts (RULE 9).
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
-	httpx.Redirect(w, r, to)
+	fhttp.Redirect(w, r, to)
 }
 
 // rejected re-renders just the form, which is what HTMX swaps back in.
@@ -447,7 +447,7 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 const authHomeControllerTemplate = `package controllers
 
 import (
-	"github.com/arandu-io/framework/httpx"
+	"github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
 
@@ -498,7 +498,7 @@ func NewHomeController(appName string, sessions *security.SessionStore, csrf *se
 
 // Compile-time proof that this controller answers GET / the way Resource and the
 // route table expect. It costs nothing and catches a renamed method.
-var _ httpx.Indexer = (*HomeController)(nil)
+var _ fhttp.Indexer = (*HomeController)(nil)
 
 // Index renders the landing page.
 //
@@ -506,7 +506,7 @@ var _ httpx.Indexer = (*HomeController)(nil)
 // they are what the layout draws its navigation and its hx-headers from, so a
 // regeneration that carried over an edited block would otherwise carry over a
 // page that greets a signed-in visitor with a sign-in link.
-func (c *HomeController) Index(ctx *httpx.Context) error {
+func (c *HomeController) Index(ctx *fhttp.Context) error {
 	// Who is signed in, from the session cookie and never from the request. An
 	// error here is the anonymous case -- no cookie, a forged one, or a session
 	// that expired -- and the guest half of the navigation is what gets drawn.

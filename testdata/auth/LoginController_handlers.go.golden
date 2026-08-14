@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/arandu-io/framework/httpx"
-	"github.com/arandu-io/framework/httpx/middleware"
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
 	"github.com/arandu-io/framework/security"
@@ -137,11 +137,11 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 // answering it to a plain form post is 200 with an empty body: a blank page
 // after a login that succeeded, with nothing in the log to say so.
 //
-// httpx.Redirect is where that branch already lives -- HX-Redirect for an HTMX
+// fhttp.Redirect is where that branch already lives -- HX-Redirect for an HTMX
 // request, 303 with a Location for everything else. Restating it here would be a
 // second way to redirect, and the second one is the one that drifts (RULE 9).
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
-	httpx.Redirect(w, r, to)
+	fhttp.Redirect(w, r, to)
 }
 
 // rejected re-renders just the form, which is what HTMX swaps back in.

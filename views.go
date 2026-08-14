@@ -254,7 +254,7 @@ import "github.com/arandu-io/kyse/components"
 	     kit publishes is a form, so without this line none of them can say why
 	     they refused anything.
 	     422 comes before the catch-all because htmx takes the first entry that
-	     matches. See framework/httpx/context.go. --}}
+	     matches. See framework/http/context.go. --}}
 	<meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"422","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
 	<title>{{ .PageTitle() }}</title>
 	<link rel="icon" href="/favicon.ico">
