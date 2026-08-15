@@ -20,11 +20,13 @@
 go run github.com/arandu-io/ui@latest auth
 ```
 
-Twenty-two files: sign in, sign up, e-mail verification, the three password
-screens, the dashboard, the welcome page, the layout, the four controllers
-behind them, the two messages the flow sends with both their parts, and the
-page struct they all render through. They land in your tree and they are
-yours — edit them, delete them, rewrite them.
+Thirteen views, written in kyse: the layout, the dashboard, the welcome page,
+sign in, sign up, e-mail verification, the three password screens, and both
+parts — HTML and plain text — of the two messages the flow sends. Alongside
+them land nine Go files: the controllers that answer the routes, the two
+mailables, and the page struct every screen renders through — twenty-two files
+in all — and they are yours
+from the moment they land: edit them, delete them, rewrite them.
 
 Run it again to take a fix from a newer version: what you wrote inside a
 `arandu:begin custom` block is carried over, and the command says so per file.
