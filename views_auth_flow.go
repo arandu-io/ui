@@ -394,8 +394,8 @@ func (m *Module) page(r *http.Request, title string) view.Page {
 		Path:    r.URL.Path,
 
 		Authenticated: err == nil,
-		// The tenant is the session's and not the resolver's (RULE 14): both are
-		// this application's rather than the caller's, but only one of them is the
+		// The tenant is the session's and not the resolver's: both are this
+		// application's rather than the caller's, but only one of them is the
 		// tenant this id belongs to. Under a host-based resolver they differ the
 		// moment a session is carried to another customer's host, and the lookup
 		// would then run in a tenant that never held the account.
@@ -501,9 +501,9 @@ import (
 // The password screens: forgetting one, choosing a new one, and typing the
 // current one again before something that matters.
 //
-// The kit publishes the three and stops there, on purpose (ADR 0022): the
-// handlers write to your users table, send through your mailer and decide your
-// rules, so they are the application's. This is that application's.
+// The kit publishes the three and stops there, on purpose: the handlers write
+// to your users table, send through your mailer and decide your rules, so they
+// are the application's. This is that application's.
 //
 // # The link is signed, and stored nowhere
 //
@@ -514,7 +514,7 @@ import (
 // entry that left only when that exact token was presented, so nothing swept
 // what nobody clicked; and asking twice left two live links.
 //
-// What replaced it is what ADR 0032 already described. The token carries the
+// What replaced it is a signature and nothing else. The token carries the
 // tenant, the account, the address it was mailed to and a fingerprint of the
 // password the account had when it was minted (auth.ResetPayload), signed with
 // the application key (security.Signer). Nothing is written when the mail goes
@@ -560,10 +560,10 @@ func (m *Module) showPasswordRequest(w http.ResponseWriter, r *http.Request) {
 //
 // The lookup is auth.Service.FindForReset, which takes a unit of the throttle's
 // budget before it reads the users table. That is the same throttle the sign-in
-// screen is behind and not a second counter (RULE 9), keyed apart from it for one
-// reason: somebody who has just got their password wrong five times is exactly
-// the person who clicks this, and a shared count would refuse them the recovery
-// at the one moment they want it.
+// screen is behind and not a second counter, keyed apart from it for one reason:
+// somebody who has just got their password wrong five times is exactly the
+// person who clicks this, and a shared count would refuse them the recovery at
+// the one moment they want it.
 func (m *Module) sendPasswordLink(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(r.PostFormValue("email"))
 
@@ -688,8 +688,7 @@ func (m *Module) updatePassword(w http.ResponseWriter, r *http.Request) {
 
 	// The tenant is not passed and must not be: it is inside the payload, signed.
 	// Resolving it from the host at this point is what let a link minted for one
-	// customer change the password of the account with that address at another
-	// (RULE 14).
+	// customer change the password of the account with that address at another.
 	u, err := m.auth.ResetPassword(r.Context(), payload, email, password)
 	if err != nil {
 		if errors.Is(err, auth.ErrResetLinkSpent) {
@@ -712,12 +711,12 @@ func (m *Module) updatePassword(w http.ResponseWriter, r *http.Request) {
 		observability.Log(r.Context()).Error("signing the account's other sessions out", "error", err)
 	}
 
-	// It does NOT open a session, and Laravel's does. The link arrives in an
-	// inbox: signing somebody in on the strength of it hands the account to
-	// whoever else can read that mailbox, or read the message once it has been
-	// forwarded -- and having just ended every other session, opening one from a
-	// mail link would be the only session left and the least proven. It is the
-	// same decision the verification link makes (ADR 0032). The cost is one form.
+	// It does NOT open a session. The link arrives in an inbox: signing somebody
+	// in on the strength of it hands the account to whoever else can read that
+	// mailbox, or read the message once it has been forwarded -- and having just
+	// ended every other session, opening one from a mail link would be the only
+	// session left and the least proven. It is the same decision the
+	// verification link makes. The cost is one form.
 	m.screen(w, r, "auth.login", AuthPage{
 		Page:   m.page(r, "Sign in"),
 		Email:  u.Email,
@@ -995,10 +994,10 @@ var _ mail.Mailable = PasswordReset{}
 
 // verifyMailViewTemplate is a message body, in kyse like every other view.
 //
-// It is a call to kyse's mailui and not a table written by hand, for the reason
-// RULE 9 gives: the two messages this kit sends used to be two designs -- one
-// built from mailui, the other 40 lines of <table> with its own greys, its own
-// radius and its own idea of a footer -- and an application whose password reset
+// It is a call to kyse's mailui and not a table written by hand. Written by
+// hand, the two messages this kit sends are two designs -- one built from
+// mailui, the other 40 lines of <table> with its own greys, its own radius and
+// its own idea of a footer -- and an application whose password reset
 // does not look like its verification mail is one the reader is right to
 // distrust. What a message is made of is decided in one place, and that place is
 // the component library.

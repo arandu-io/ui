@@ -13,11 +13,11 @@ import (
 // is the whole point -- somebody looking for the password reset form opens
 // `resources/views/auth/passwords/reset.kyse.go` and finds it there.
 //
-// What changed is everything underneath. Bootstrap became Basecoat's component
-// classes, `@vite` became the embedded assets the binary already serves, and the
-// helpers a template usually reaches for -- config, route, the signed-in user --
-// became fields of one typed struct. A view here cannot reach for request state
-// on its own, so a link that drifts is a compile error rather than a dead anchor.
+// Underneath, nothing is borrowed. The styling is Basecoat's component classes,
+// the assets are the ones the binary already serves embedded, and the helpers a
+// template usually reaches for -- config, route, the signed-in user -- are
+// fields of one typed struct. A view here cannot reach for request state on its
+// own, so a link that drifts is a compile error rather than a dead anchor.
 //
 // # Where the struct lives
 //
@@ -40,9 +40,9 @@ import (
 // # What is deliberately absent
 //
 // No `@auth`, no `@error`, no `@can`, no `<x-component>`: kyse's directive set
-// is closed (RULE 15). The guest branch of the navigation bar is
-// `@if(!.SignedIn())`, and a validation message is a field of the Field
-// component. That is more characters and one less language.
+// is closed. The guest branch of the navigation bar is `@if(!.SignedIn())`, and
+// a validation message is a field of the Field component. That is more
+// characters and one less language.
 
 // AuthViews returns the nine views plus the struct they render, ready to be
 // written into a project.
@@ -202,8 +202,8 @@ func (p AuthPage) FieldError(name string) string {
 // RememberAttribute is the checked attribute of the remember-me box, or nothing.
 //
 // A conditional attribute has no directive of its own, and inventing one would
-// grow the DSL for a single case (RULE 15). What does not fit a directive is
-// written in Go, which is here.
+// grow the DSL for a single case. What does not fit a directive is written in
+// Go, which is here.
 func (p AuthPage) RememberAttribute() string {
 	if p.Remember {
 		return "checked"
@@ -746,13 +746,12 @@ type ConfirmData = authui.AuthPage
 
 // screensOnly is what --views publishes.
 //
-// Laravel's `ui:auth --views` refreshes the screens and leaves the backend the
-// project has edited alone. Ours cannot be quite that, and the reason is kyse:
-// a page renders with the TYPE OF ITS LAYOUT (ADR 0026), so the layout,
-// page.go, home, welcome and HomeController are one unit. Publishing a new
-// layout without the controller that hands it its data leaves a project that
-// does not compile -- which is why `replaced` exists in publish.go and lists
-// exactly those five.
+// It refreshes the screens and leaves the backend the project has edited alone
+// -- except that it cannot be quite that, and the reason is kyse: a page
+// renders with the TYPE OF ITS LAYOUT, so the layout, page.go, home, welcome
+// and HomeController are one unit. Publishing a new layout without the
+// controller that hands it its data leaves a project that does not compile --
+// which is why `replaced` exists in publish.go and lists exactly those five.
 //
 // So --views is the screens plus that unit, and the flag's help says so. The
 // alternative -- refreshing login and register while a stale HomeController

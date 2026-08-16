@@ -123,8 +123,8 @@ func (m *Module) page(r *http.Request, title string) view.Page {
 		Path:    r.URL.Path,
 
 		Authenticated: err == nil,
-		// The tenant is the session's and not the resolver's (RULE 14): both are
-		// this application's rather than the caller's, but only one of them is the
+		// The tenant is the session's and not the resolver's: both are this
+		// application's rather than the caller's, but only one of them is the
 		// tenant this id belongs to. Under a host-based resolver they differ the
 		// moment a session is carried to another customer's host, and the lookup
 		// would then run in a tenant that never held the account.

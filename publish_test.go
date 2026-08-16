@@ -180,9 +180,10 @@ func TestTheScreenDoesNotReachTheDatabase(t *testing.T) {
 	}
 }
 
-// TestTheTenantDoesNotComeFromTheRequestBody is RULE 14 applied to the one place
-// where the tenant legitimately does not come from a Grant -- login, where there
-// is no session yet. It has to come from the resolver the application wired.
+// TestTheTenantDoesNotComeFromTheRequestBody covers the one place where the
+// tenant legitimately does not come from a Grant -- login, where there is no
+// session yet. It has to come from the resolver the application wired, and
+// never from anything the caller sent.
 func TestTheTenantDoesNotComeFromTheRequestBody(t *testing.T) {
 	handlers := authFile(t, "LoginController_handlers.go")
 
@@ -204,9 +205,9 @@ func TestTheStarterKitDoesNotMigrate(t *testing.T) {
 		t.Error("the starter kit declares migrations: the users table already has an owner")
 	}
 	// The starter kit stopped being a module and became controllers in the
-	// project's own tree (ADR 0019), so there is no manifest to declare
-	// migrations = false. What the rule protects is unchanged and now
-	// structural: it emits no migration at all.
+	// project's own tree, so there is no manifest to declare migrations = false.
+	// What that declaration protected is unchanged and now structural: it emits
+	// no migration at all.
 	for _, f := range mustGenerateAuth(t) {
 		if strings.Contains(filepath.ToSlash(f.Path), "database/migrations") {
 			t.Errorf("the starter kit emitted a migration: %s", f.Path)
@@ -316,12 +317,12 @@ func typeSpec(t *testing.T, file *ast.File, name string) *ast.TypeSpec {
 	return nil
 }
 
-// TestTheStarterKitLandsInTheLaravelTree: the nine views at the nine paths
-// `laravel/ui` uses, and the controller where Laravel puts it.
+// The nine views land at the nine paths people look for, and the controller
+// lands beside them.
 //
 // The command used to write four files into modules/authui/ and declare itself
 // with a manifest. It is not a module any more -- it is the project's own code,
-// in the project's own tree (ADR 0019), so there is nothing to declare.
+// in the project's own tree, so there is nothing to declare.
 func TestTheStarterKitLandsInTheLaravelTree(t *testing.T) {
 	var paths []string
 	for _, f := range mustGenerateAuth(t) {
@@ -715,9 +716,9 @@ func authFile(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("GenerateAuth: %v", err)
 	}
-	// Matched by suffix, not by exact base name. The tree moved to Laravel's
-	// shape and the file names moved with it; a test pinned to one spelling
-	// breaks on a rename that changed nothing it was testing.
+	// Matched by suffix, not by exact base name. The tree has moved once and the
+	// file names moved with it; a test pinned to one spelling breaks on a rename
+	// that changed nothing it was testing.
 	for _, f := range files {
 		if strings.HasSuffix(filepath.ToSlash(f.Path), name) {
 			return string(f.Content)

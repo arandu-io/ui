@@ -35,8 +35,8 @@ type HomeController struct {
 	// lookup by primary key, and the page greeted people with a UUID until it
 	// had somewhere to make it.
 	//
-	// The tenant is whose rows are read (RULE 14). It comes from the
-	// configuration, through bootstrap/app.go, and never from the request.
+	// The tenant is whose rows are read. It comes from the configuration,
+	// through bootstrap/app.go, and never from the request.
 	people *auth.Service
 	tenant string
 }

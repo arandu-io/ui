@@ -38,10 +38,10 @@ func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 	// Only the .kyse.go. AuthViews also publishes resources/views/page.go, which
 	// is plain Go -- the struct the layout is read through, not a view.
 	//
-	// Nine SCREENS, which is what laravel/ui publishes, plus the four message
-	// bodies -- two messages, an HTML part and a text part each. A mail body is
-	// not a screen: it has no layout, no navigation and no token, and counting
-	// them together would make the number meaningless.
+	// Nine SCREENS, plus the four message bodies -- two messages, an HTML part
+	// and a text part each. A mail body is not a screen: it has no layout, no
+	// navigation and no token, and counting them together would make the number
+	// meaningless.
 	views := kyseOnly(mustAuthViews(t))
 
 	var screens, bodies []File
@@ -159,9 +159,9 @@ func TestTheFormsCarryTheToken(t *testing.T) {
 	}
 }
 
-// TestTheAuthViewsInventNoDirective is RULE 15 held against the starter kit: the
-// set is closed, and a screen that reaches for a Blade directive kyse does not
-// have would fail to compile in somebody else's project rather than in this test.
+// TestTheAuthViewsInventNoDirective holds the starter kit to kyse's closed
+// directive set: a screen that reaches for a directive kyse does not have would
+// fail to compile in somebody else's project rather than in this test.
 func TestTheAuthViewsInventNoDirective(t *testing.T) {
 	absent := []string{
 		"@vite", "@auth", "@guest", "@error", "@can", "@props",
@@ -177,8 +177,8 @@ func TestTheAuthViewsInventNoDirective(t *testing.T) {
 	}
 }
 
-// TestTheAuthViewsCarryNoBootstrap: the translation is to Tailwind utilities, and
-// a leftover Bootstrap class renders as nothing at all -- an unstyled form that
+// TestTheAuthViewsCarryNoBootstrap: the styling is Tailwind utilities, and a
+// leftover Bootstrap class renders as nothing at all -- an unstyled form that
 // looks like a broken build.
 func TestTheAuthViewsCarryNoBootstrap(t *testing.T) {
 	bootstrap := []string{

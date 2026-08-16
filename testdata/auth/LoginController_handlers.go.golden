@@ -139,7 +139,7 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 //
 // fhttp.Redirect is where that branch already lives -- HX-Redirect for an HTMX
 // request, 303 with a Location for everything else. Restating it here would be a
-// second way to redirect, and the second one is the one that drifts (RULE 9).
+// second way to redirect, and the second one is the one that drifts.
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	fhttp.Redirect(w, r, to)
 }

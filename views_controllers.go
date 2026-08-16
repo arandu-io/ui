@@ -6,16 +6,15 @@ import (
 
 // GenerateAuth produces the sign-in screens in the project.
 //
-// This is the starter kit, and it follows the Breeze contract literally: it
-// publishes views, routes and handlers into the project and gets out of the way.
-// Nothing here is a runtime dependency, and every file is yours to edit the
-// moment it lands.
+// This is the starter kit: it publishes views, routes and handlers into the
+// project and gets out of the way. Nothing here is a runtime dependency, and
+// every file is yours to edit the moment it lands.
 //
 // It is a command rather than a package to import, because an imported starter
 // kit cannot be edited -- and editing the sign-in screen is the first thing
 // anyone does. It is a command rather than a repository to clone, because the
 // generator already exists and a second delivery mechanism would be a second way
-// to do one thing (RULE 9).
+// to do one thing.
 func GenerateAuth(m Module) ([]File, error) {
 	if m.ModulePath == "" {
 		return nil, errModulePath
@@ -61,7 +60,7 @@ func GenerateAuth(m Module) ([]File, error) {
 
 	// And the nine views, which are the point of the command: the screens every
 	// application has, at the paths people look for. Inside them it is kyse,
-	// Tailwind and HTMX -- typed markup, utilities and hypermedia (ADR 0022).
+	// Tailwind and HTMX -- typed markup, utilities and hypermedia.
 	views, err := AuthViews(m)
 	if err != nil {
 		return nil, err
@@ -81,8 +80,8 @@ func GenerateAuth(m Module) ([]File, error) {
 // It is deleted rather than wired because there is nowhere honest to write it.
 // The kit publishes into a project that already has its own arandu.toml, and a
 // second manifest arriving beside it is a second place that declares what this
-// application may do (RULE 9). The screens' permissions are the project's, and
-// the project already states them.
+// application may do. The screens' permissions are the project's, and the
+// project already states them.
 
 const authModuleTemplate = `// Package authui holds the sign-in screens.
 //
@@ -90,9 +89,8 @@ const authModuleTemplate = `// Package authui holds the sign-in screens.
 // that moment on: edit it, delete what you do not want, restyle it. Nothing in
 // the framework imports it back.
 //
-// Not "aru make:auth". That command does not exist and will not: the artisan
-// dropped its equivalent at version 6, for the reason RULE 3 repeats -- two
-// ways to install one scaffolding diverge, and the second one is the one nobody
+// Not "aru make:auth". That command does not exist and will not: two ways to
+// install one scaffolding diverge, and the second one is the one nobody
 // maintains.
 //
 // The authentication itself stays in the framework's auth module -- password
@@ -215,8 +213,8 @@ func (m *Module) Routes(r *http.Router) {
 
 	// arandu:begin custom
 	// The password reset, in PasswordController.go. The kit publishes the three
-	// screens and stops there (ADR 0022): the handlers write to your users
-	// table and send through your mailer, so they are yours.
+	// screens and stops there: the handlers write to your users table and send
+	// through your mailer, so they are yours.
 	g.Get("/password", m.showPasswordRequest)
 	g.Post("/password/email", m.sendPasswordLink)
 	g.Get("/password/reset", m.showPasswordReset)
@@ -393,7 +391,7 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 //
 // fhttp.Redirect is where that branch already lives -- HX-Redirect for an HTMX
 // request, 303 with a Location for everything else. Restating it here would be a
-// second way to redirect, and the second one is the one that drifts (RULE 9).
+// second way to redirect, and the second one is the one that drifts.
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	fhttp.Redirect(w, r, to)
 }
@@ -422,8 +420,8 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 // arandu:end custom
 `
 
-// The views are no longer here. `aru make:auth` writes the nine of
-// the starter kit in resources/views, as kyse — see views.go and ADR 0022.
+// The views are no longer here. AuthViews writes the nine screens of the
+// starter kit into resources/views, as kyse -- see views.go.
 
 // authHomeControllerTemplate is the HomeController the kit publishes, the same
 // file the starter kit generates.
@@ -481,8 +479,8 @@ type HomeController struct {
 	// lookup by primary key, and the page greeted people with a UUID until it
 	// had somewhere to make it.
 	//
-	// The tenant is whose rows are read (RULE 14). It comes from the
-	// configuration, through bootstrap/app.go, and never from the request.
+	// The tenant is whose rows are read. It comes from the configuration,
+	// through bootstrap/app.go, and never from the request.
 	people *auth.Service
 	tenant string
 }

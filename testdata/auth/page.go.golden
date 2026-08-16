@@ -100,8 +100,8 @@ func (p AuthPage) FieldError(name string) string {
 // RememberAttribute is the checked attribute of the remember-me box, or nothing.
 //
 // A conditional attribute has no directive of its own, and inventing one would
-// grow the DSL for a single case (RULE 15). What does not fit a directive is
-// written in Go, which is here.
+// grow the DSL for a single case. What does not fit a directive is written in
+// Go, which is here.
 func (p AuthPage) RememberAttribute() string {
 	if p.Remember {
 		return "checked"

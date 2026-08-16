@@ -4,9 +4,8 @@
 // that moment on: edit it, delete what you do not want, restyle it. Nothing in
 // the framework imports it back.
 //
-// Not "aru make:auth". That command does not exist and will not: the artisan
-// dropped its equivalent at version 6, for the reason RULE 3 repeats -- two
-// ways to install one scaffolding diverge, and the second one is the one nobody
+// Not "aru make:auth". That command does not exist and will not: two ways to
+// install one scaffolding diverge, and the second one is the one nobody
 // maintains.
 //
 // The authentication itself stays in the framework's auth module -- password
@@ -129,8 +128,8 @@ func (m *Module) Routes(r *http.Router) {
 
 	// arandu:begin custom
 	// The password reset, in PasswordController.go. The kit publishes the three
-	// screens and stops there (ADR 0022): the handlers write to your users
-	// table and send through your mailer, so they are yours.
+	// screens and stops there: the handlers write to your users table and send
+	// through your mailer, so they are yours.
 	g.Get("/password", m.showPasswordRequest)
 	g.Post("/password/email", m.sendPasswordLink)
 	g.Get("/password/reset", m.showPasswordReset)

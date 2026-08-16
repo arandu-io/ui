@@ -18,10 +18,9 @@
 //
 // # Why there is no preset
 //
-// Arandu has one stack: kyse, HTMX, Alpine and Tailwind v4 (ADR 0022, RULE 9).
-// An argument with a single legal value is a dimension that does not exist, so
-// the verb is what varies: `auth` today, and whatever scaffolding earns its
-// place later.
+// Arandu has one stack: kyse, HTMX, Alpine and Tailwind v4. An argument with a
+// single legal value is a dimension that does not exist, so the verb is what
+// varies: `auth` today, and whatever scaffolding earns its place later.
 package main
 
 import (
@@ -132,11 +131,10 @@ func publishAuth(args []string) error {
 	}
 
 	// flag.Parse stops at the first argument that is not a flag, and returns
-	// what is left without complaining. So `auth bootstrap --force` used to
-	// publish with force OFF and say nothing -- the word was ignored AND it
-	// switched off every flag typed after it. Laravel answers "Invalid preset."
-	// to the same input; answering nothing is worse, because the person believes
-	// the flag took.
+	// what is left without complaining. Left unchecked, `auth bootstrap --force`
+	// publishes with force OFF and says nothing -- the word is ignored AND it
+	// switches off every flag typed after it. Answering nothing is worse than
+	// refusing, because the person believes the flag took.
 	if rest := fs.Args(); len(rest) > 0 {
 		return fmt.Errorf("unknown argument %q.\n"+
 			"There is no preset to choose: the kit publishes one set of screens (ADR 0026).\n"+
@@ -185,7 +183,7 @@ func publishAuth(args []string) error {
 // in the same process.
 //
 // Printed and not written. One line in a file the person reads beats a generator
-// that edits bootstrap/app.go behind their back (ADR 0001).
+// that edits bootstrap/app.go behind their back.
 const wiring = `
 Three lines in bootstrap/app.go, so these screens answer /auth/login instead of
 the framework's. The import:

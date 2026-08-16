@@ -45,9 +45,9 @@ func bodyOf(t *testing.T, source, function string) string {
 // The store was a package-level map guarded by a mutex, and it cost four things
 // at once: a restart threw away every link in flight, a second replica refused
 // the link the first one issued, every address anybody typed left an entry that
-// only a click could remove, and asking twice left two live links. ADR 0032
-// named the fix and this is it -- a token signed with the application key,
-// carrying what it needs, stored nowhere.
+// only a click could remove, and asking twice left two live links. What answers
+// all four is here -- a token signed with the application key, carrying what it
+// needs, stored nowhere.
 func TestTheResetLinkIsSignedAndHeldNowhere(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
 
@@ -67,7 +67,8 @@ func TestTheResetLinkIsSignedAndHeldNowhere(t *testing.T) {
 //
 // The guard was `if email != ""` and the send was unconditional, which made this
 // endpoint a way to send mail from the application's own domain to any address
-// on request. Laravel calls getUser() and sends nothing when there is none.
+// on request. The account is looked up first, and nothing goes out when there
+// is none.
 func TestNothingIsMailedToAnAddressNobodyLookedUp(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
 
@@ -88,7 +89,7 @@ func TestNothingIsMailedToAnAddressNobodyLookedUp(t *testing.T) {
 // Reusing security.SignInThrottle through the service, rather than a counter of
 // this screen's own: the screen is the project's file the moment it is
 // published, and a control that a redesign of the form can delete is not a
-// control (RULE 9).
+// control.
 func TestTheResetIsThrottledByTheCounterSigningInAlreadyUses(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
 
@@ -372,7 +373,7 @@ func TestNothingTheKitPublishesIsBrandedWithItsOwnName(t *testing.T) {
 // One of them was mailui and the other was 40 lines of hand-written <table>,
 // with its own greys, its own radius and its own footer -- two designs from one
 // application, in the same inbox, a week apart. What a message is made of is
-// decided in the component library and nowhere else (RULE 9).
+// decided in the component library and nowhere else.
 func TestBothMessagesAreBuiltTheSameWay(t *testing.T) {
 	for _, view := range []string{"verify-email.kyse.go", "password-reset.kyse.go"} {
 		source := authFile(t, view)
@@ -619,7 +620,7 @@ func TestSigningInLandsOnThePageTheGuardTurnedAwayFrom(t *testing.T) {
 //
 // It is checked on Module.page and not on each handler on purpose: page is the
 // one place the chrome is built, and a handler that filled the two fields itself
-// would be the second place the header is decided (RULE 9).
+// would be the second place the header is decided.
 func TestEveryScreenOfTheKitDrawsTheHalfOfTheHeaderThatMatchesTheSession(t *testing.T) {
 	source := authFile(t, "render.go")
 
@@ -637,8 +638,8 @@ func TestEveryScreenOfTheKitDrawsTheHalfOfTheHeaderThatMatchesTheSession(t *test
 		}
 	}
 
-	// Read from the session and from nothing else (RULE 14 applied to the header:
-	// who is asking is not something a request may state).
+	// Read from the session and from nothing else: who is asking is not
+	// something a request may state.
 	if body := bodyOf(t, source, "page"); !strings.Contains(body, "m.sessions.Load(r.Context(), r)") {
 		t.Error("Module.page decides who is signed in without loading the session")
 	}
@@ -649,10 +650,10 @@ func TestEveryScreenOfTheKitDrawsTheHalfOfTheHeaderThatMatchesTheSession(t *test
 //
 // The command prints "Every screen has a route and every route has a handler".
 // welcome.kyse.go was published, compiled into its own package, blank-imported
-// by the instructions and rendered by nothing in any of the four repositories --
-// the landing page with the Login and Register buttons on it, unreachable, while
-// home.kyse.go ("Dashboard. You are logged in.") was drawn for signed-in people
-// and guests alike. It is the same defect the confirmation screen had, and it
+// by the instructions and rendered by nothing at all -- the landing page with
+// the Login and Register buttons on it, unreachable, while home.kyse.go
+// ("Dashboard. You are logged in.") was drawn for signed-in people and guests
+// alike. It is the same defect the confirmation screen had, and it
 // survived the pass that fixed that one because nothing asked the question about
 // every screen at once.
 //

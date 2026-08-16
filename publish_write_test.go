@@ -252,7 +252,7 @@ func TestViewsOnlyPublishesTheScreensAndTheLayoutUnit(t *testing.T) {
 		filepath.Join("resources", "views", "mail", "verify-email.kyse.go"),
 		filepath.Join("app", "Http", "Controllers", "Auth", "page.go"),
 		// The layout unit's controller: without it the refreshed layout does
-		// not compile against the skeleton's own HomeController (ADR 0026).
+		// not compile against the skeleton's own HomeController.
 		filepath.Join("app", "Http", "Controllers", "HomeController.go"),
 		// And the file that declares what that controller calls. authui.Chrome
 		// and authui.SignedInName live there, so --views without it publishes a

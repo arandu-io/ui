@@ -32,11 +32,11 @@ var errModulePath = errors.New("the project's module path is empty: is this an A
 
 // render turns a template into the bytes of a file.
 //
-// It is a copy of the renderer in `aru/internal/gen`, and the duplication is
-// deliberate. Importing it would make this module depend on the CLI, and the
-// point of publishing from here is that the CLI is not in the way -- a project
-// runs `go run github.com/arandu-io/ui@latest auth` with no dependency added to
-// its go.mod and nothing to remove afterwards.
+// It is a copy of the CLI's renderer, and the duplication is deliberate.
+// Importing it would make this module depend on the CLI, and the point of
+// publishing from here is that the CLI is not in the way -- a project runs
+// `go run github.com/arandu-io/ui@latest auth` with no dependency added to its
+// go.mod and nothing to remove afterwards.
 //
 // The two copies stay small enough to read side by side, and what would drift
 // is caught where it matters: the golden files below compare the published
@@ -146,10 +146,10 @@ var replaced = map[string]bool{
 
 // customBlock matches the region a republish must carry forward.
 //
-// It is the escape hatch of doc 19 and of RULE 15: what does not fit the
-// standard shape is written in Go, inside these markers, and survives being
-// regenerated. Without it the publisher is a one-time tool, because nobody runs
-// a command twice after it has eaten their work once.
+// It is the escape hatch: what does not fit the standard shape is written in
+// Go, inside these markers, and survives being regenerated. Without it the
+// publisher is a one-time tool, because nobody runs a command twice after it
+// has eaten their work once.
 //
 // The marker is written in the syntax of whatever the file is, because a
 // comment is not portable between the two: `//` below the package clause of a
@@ -160,8 +160,8 @@ var replaced = map[string]bool{
 // backreference to stop it -- and the region between them is whatever happened
 // to be in the middle.
 //
-// This is the same shape as aru/internal/gen, which needs only the Go form: the
-// views it generates put their block inside @go ... @endgo, which is Go.
+// The CLI's generator needs only the Go form: the views it generates put their
+// block inside @go ... @endgo, which is Go.
 var (
 	customBlock     = regexp.MustCompile(`(?s)// arandu:begin custom\n(.*?)// arandu:end custom`)
 	customBlockView = regexp.MustCompile(`(?s)\{\{-- arandu:begin custom --\}\}\n(.*?)\{\{-- arandu:end custom --\}\}`)
@@ -238,9 +238,8 @@ func write(root string, files []File, force bool, out *os.File) error {
 		// five in `replaced` on every run, with no flag at all -- including
 		// HomeController.go, whose whole Index body lives inside one. The
 		// command printed "inside a custom block that survives a --force" while
-		// doing the opposite, and this file already said it was a copy of the
-		// renderer in aru/internal/gen. The copy took the render and left the
-		// merge behind.
+		// doing the opposite: the renderer was copied here and the merge was
+		// left behind.
 		content := f.Content
 		if existing, err := os.ReadFile(full); err == nil {
 			if !force && !replaced[f.Path] {
