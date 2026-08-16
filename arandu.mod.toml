@@ -1,0 +1,11 @@
+# What this starter kit declares about itself.
+
+name = "arandu-io/ui"
+profiles = ["conventional", "performance"]
+
+[permissions]
+network = false
+# publish.go writes the auth screens into the project that runs it.
+filesystem = true
+exec = false
+migrations = false
