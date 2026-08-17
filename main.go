@@ -192,7 +192,7 @@ the framework's. The import:
 
 and, in the k.Register(...) list, in place of auth.New:
 
-    authui.New(authService, sessions, csrf, mailer, fw.AppKey,
+    authui.New(authService, sessions, csrf, mailer, fw.App.Key,
         cfg.App.Name, cfg.App.URL, auth.FixedTenant(cfg.Auth.Tenant)),
 
 The landing page is published too, because a page renders with the type of its
