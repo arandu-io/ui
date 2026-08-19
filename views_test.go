@@ -209,6 +209,233 @@ func TestTheAuthViewsReachForNoHelper(t *testing.T) {
 	}
 }
 
+// TestNoScreenInterpolatesWhereAnAttributeNameGoes is the position that has no
+// escaper at all.
+//
+// An HTML entity is not decoded in an attribute name, so a value written there
+// is read as syntax rather than as text: whatever escaping runs first, the
+// browser still sees attributes. Every other position has an answer -- the body
+// escapes, an attribute value escapes, a URL is checked -- and this one is
+// refused instead.
+//
+// The kit had exactly one, on the remember-me box, drawn as
+//
+//	<input type="checkbox" {{ .RememberAttribute() }}>
+//
+// with a first-party helper answering "checked" or nothing. Nothing could be
+// injected through it, and it was still the wrong thing to ship: these screens
+// are what a project copies, so the shape teaches the next form to interpolate
+// where an attribute name goes -- and there the value is whatever a handler put
+// in the struct.
+//
+// A conditional attribute is written with @if around the attribute, which is how
+// required, autofocus and disabled are already drawn.
+func TestNoScreenInterpolatesWhereAnAttributeNameGoes(t *testing.T) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
+		for _, line := range attributeNameSites(string(f.Content)) {
+			t.Errorf("%s:%d interpolates where an attribute name goes: no escaper covers that position, "+
+				"and the value is read as syntax. Put the attribute inside @if instead", f.Path, line)
+		}
+	}
+}
+
+// TestTheRememberBoxIsTickedByTheAttributeAndNotByItsValue.
+//
+// checked is a presence attribute: checked="false" and checked="" both tick the
+// box. So the conditional is the attribute itself, and a box drawn as
+// checked="{{ .Remember }}" would come back ticked after every rejected sign-in,
+// including the ones where the person had left it alone.
+func TestTheRememberBoxIsTickedByTheAttributeAndNotByItsValue(t *testing.T) {
+	box := elementCarrying(t, markupOf(authView(t, "auth/login.kyse.go")), `name="remember"`)
+
+	if strings.Contains(box, "checked=") {
+		t.Errorf("the remember-me box gives checked a value, which ticks it either way:\n%s", box)
+	}
+	guard, attribute, end := strings.Index(box, "@if(.Remember)"), strings.Index(box, "checked"), strings.Index(box, "@endif")
+	if guard < 0 || attribute < 0 || end < 0 || guard > attribute || attribute > end {
+		t.Errorf("the remember-me box does not draw checked inside @if(.Remember), so it is ticked for "+
+			"everybody or for nobody:\n%s", box)
+	}
+	if strings.Contains(box, "{{") || strings.Contains(box, "{!!") {
+		t.Errorf("the remember-me box interpolates inside the tag:\n%s", box)
+	}
+}
+
+// TestAttributeNameSitesFindsTheShapeItGuardsAgainst.
+//
+// A scanner that answers "nothing found" for every input passes on a tree that
+// is full of what it is looking for, and reads as a green check either way. The
+// first case is the line this kit shipped until the box was rewritten.
+func TestAttributeNameSitesFindsTheShapeItGuardsAgainst(t *testing.T) {
+	cases := []struct {
+		name   string
+		markup string
+		want   []int
+	}{
+		{
+			name:   "the shape the remember-me box had",
+			markup: "<label>\n\t<input class=\"input\" type=\"checkbox\" {{ .RememberAttribute() }}>\n</label>",
+			want:   []int{2},
+		},
+		{
+			name:   "an attribute value is a position with an escaper",
+			markup: `<a href="{{ .LoginURL }}">Login</a>`,
+			want:   nil,
+		},
+		{
+			name:   "so is the body of an element",
+			markup: "<p>{{ .BrandName() }}</p>",
+			want:   nil,
+		},
+		{
+			name:   "a quoted value holding the other quote does not end early",
+			markup: `<body hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}'>`,
+			want:   nil,
+		},
+		{
+			name:   "a directive inside a tag is Go, and its quotes are not markup",
+			markup: "<input\n\ttype=\"text\"\n\t@if(.Placeholder != \"\")\n\t\tplaceholder=\"{{ .Placeholder }}\"\n\t@endif\n>",
+			want:   nil,
+		},
+		{
+			name:   "markup written inside a comment is not markup",
+			markup: "{{-- was <input {{ .X() }}>\n     and is not any more --}}\n<p>{{ .X() }}</p>",
+			want:   nil,
+		},
+		{
+			name:   "an interpolation running past one line keeps its position",
+			markup: "<div>\n\t{!! components.Field(components.FieldProps{\n\t\tName: \"email\",\n\t}) !!}\n</div>",
+			want:   nil,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := attributeNameSites(c.markup)
+			if len(got) != len(c.want) {
+				t.Fatalf("found %v, want %v", got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Errorf("found line %d, want %d", got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
+
+// elementCarrying returns the tag that holds want, from its < to its >.
+func elementCarrying(t *testing.T, source, want string) string {
+	t.Helper()
+
+	at := strings.Index(source, want)
+	if at < 0 {
+		t.Fatalf("no element carries %s", want)
+	}
+	start := strings.LastIndex(source[:at], "<")
+	end := strings.Index(source[at:], ">")
+	if start < 0 || end < 0 {
+		t.Fatalf("%s is not inside a tag", want)
+	}
+	return source[start : at+end+1]
+}
+
+// attributeNameSites returns the lines of a view where an interpolation falls
+// where an attribute name goes: inside a tag, and outside any quoted value.
+//
+// It is a tokenizer only as far as that question needs, and the view is read the
+// way the kyse parser reads it -- a directive takes a whole line, and what is
+// inside its parentheses is Go rather than markup, so a quote in a condition
+// does not open an attribute value that never closes.
+func attributeNameSites(source string) []int {
+	const (
+		text = iota
+		tag
+		quoted
+	)
+
+	var out []int
+	state := text
+	var quote byte
+	// closing is set while a comment or an interpolation is still open, and
+	// carries the delimiter that ends it: both of them run past one line.
+	var closing string
+
+	for n, line := range strings.Split(markupOf(source), "\n") {
+		at := 0
+		switch {
+		case closing != "":
+			end := strings.Index(line, closing)
+			if end < 0 {
+				continue
+			}
+			at = end + len(closing)
+			closing = ""
+		case strings.HasPrefix(strings.TrimSpace(line), "@"):
+			continue
+		}
+
+		for ; at < len(line); at++ {
+			opener, closer := delimiterAt(line[at:])
+			if opener == "" {
+				switch state {
+				case text:
+					if line[at] == '<' && at+1 < len(line) && startsAName(line[at+1]) {
+						state = tag
+					}
+				case tag:
+					switch line[at] {
+					case '"', '\'':
+						state, quote = quoted, line[at]
+					case '>':
+						state = text
+					}
+				case quoted:
+					if line[at] == quote {
+						state = tag
+					}
+				}
+				continue
+			}
+
+			// A comment is not a value and lands nowhere: it is skipped like an
+			// interpolation so that markup inside it is not read as markup.
+			if state == tag && closer != "--}}" {
+				out = append(out, n+1)
+			}
+			at += len(opener)
+			if end := strings.Index(line[at:], closer); end >= 0 {
+				at += end + len(closer) - 1
+				continue
+			}
+			closing = closer
+			break
+		}
+	}
+	return out
+}
+
+// delimiterAt names the kyse delimiter opening at the start of s, with the one
+// that closes it. Both are empty when s starts with anything else.
+func delimiterAt(s string) (opener, closer string) {
+	switch {
+	case strings.HasPrefix(s, "{{--"):
+		return "{{--", "--}}"
+	case strings.HasPrefix(s, "{{"):
+		return "{{", "}}"
+	case strings.HasPrefix(s, "{!!"):
+		return "{!!", "!!}"
+	}
+	return "", ""
+}
+
+// startsAName says whether c can follow < in a tag: a letter, the slash of a
+// closing tag, or the ! of a doctype.
+func startsAName(c byte) bool {
+	return c == '/' || c == '!' ||
+		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
 // markup is the view without its @go block.
 //
 // The Go a view declares is Go, and it is allowed to name in a doc comment the
