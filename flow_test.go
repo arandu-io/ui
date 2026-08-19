@@ -243,8 +243,8 @@ func TestTheConfirmationScreenHasARouteAHandlerAndAnAddressToPostTo(t *testing.T
 // TestTheRememberBoxIsReadAndSurvivesARejection.
 //
 // The checkbox has been drawn since the first version of this kit and nothing
-// read it: AuthPage.Remember was never assigned, so RememberAttribute() always
-// answered "" and the box did not even come back after a wrong password.
+// read it: AuthPage.Remember was never assigned, so the box was always drawn
+// unticked and did not even come back after a wrong password.
 func TestTheRememberBoxIsReadAndSurvivesARejection(t *testing.T) {
 	handlers := authFile(t, "LoginController_handlers.go")
 

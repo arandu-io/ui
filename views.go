@@ -198,18 +198,6 @@ func (p AuthPage) FieldError(name string) string {
 	}
 	return p.Page.FieldError(name)
 }
-
-// RememberAttribute is the checked attribute of the remember-me box, or nothing.
-//
-// A conditional attribute has no directive of its own, and inventing one would
-// grow the DSL for a single case. What does not fit a directive is written in
-// Go, which is here.
-func (p AuthPage) RememberAttribute() string {
-	if p.Remember {
-		return "checked"
-	}
-	return ""
-}
 `
 
 // authLayoutViewTemplate is the application layout.
@@ -453,7 +441,20 @@ type LoginData = authui.AuthPage
 				}) !!}
 
 				<label class="flex items-center gap-2 text-sm">
-					<input class="input" type="checkbox" name="remember" value="1" {{ .RememberAttribute() }}>
+					{{-- checked is a presence attribute: a browser reads the box as
+					     ticked whether the value is "true", "false" or empty, so what
+					     is conditional is the attribute and not its value. @if writes
+					     the whole attribute or none of it, which is how every other
+					     boolean attribute in a kyse view is drawn. --}}
+					<input
+						class="input"
+						type="checkbox"
+						name="remember"
+						value="1"
+						@if(.Remember)
+							checked
+						@endif
+					>
 					Remember me
 				</label>
 

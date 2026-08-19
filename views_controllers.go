@@ -294,10 +294,9 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 
 	// The box on the form, read here and nowhere else. The screen has drawn it
 	// since the first version of this kit and nothing read it: AuthPage.Remember
-	// was never assigned, so RememberAttribute() always answered "" and the box
-	// did not even survive a rejected sign-in -- somebody who mistyped their
-	// password had to tick it again, having no way to know it had been ignored
-	// the first time.
+	// was never assigned, so the box was always drawn unticked and did not even
+	// survive a rejected sign-in -- somebody who mistyped their password had to
+	// tick it again, having no way to know it had been ignored the first time.
 	remember := r.PostFormValue("remember") != ""
 
 	if errs := in.Validate(); errs.Any() {
