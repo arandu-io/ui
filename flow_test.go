@@ -5,6 +5,8 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -770,4 +772,133 @@ func screenName(path string) (string, bool) {
 		return "", false
 	}
 	return strings.ReplaceAll(rest, "/", "."), true
+}
+
+// TestNeitherTokenSurvivesBeingSerialized.
+//
+// Two of the types this kit publishes hold a secret. AuthPage carries the
+// one-time token of a password reset link, which is the whole credential --
+// whoever reads it sets that account's password -- and it carries the session's
+// CSRF token through the view.Page it embeds. ChromeProps carries that same CSRF
+// token. Both are ordinary structs a handler holds for the length of a request,
+// and the debug page prints a recorded value with json.MarshalIndent, so one
+// observability.Dump of either one published a token somebody can spend.
+//
+// It is proved by running the published bytes and not by reading them: the
+// question is what json.Marshal and slog actually produce, and a method that
+// names the right fields and copies the wrong ones reads correct. The kit is
+// compiled in a module of its own against the checkouts beside this one, and
+// skipped where they are absent -- this module is released alone, and its CI has
+// only itself.
+func TestNeitherTokenSurvivesBeingSerialized(t *testing.T) {
+	const (
+		reset = "reset-token-a-stranger-can-spend"
+		csrf  = "csrf-token-read-off-a-screenshot"
+	)
+
+	out := runInPublishedKit(t, `
+	page := authui.AuthPage{ResetToken: `+strconv.Quote(reset)+`}
+	page.Page.Token = `+strconv.Quote(csrf)+`
+	chrome := authui.ChromeProps{Token: `+strconv.Quote(csrf)+`}
+
+	enc := json.NewEncoder(os.Stdout)
+	if err := enc.Encode(page); err != nil {
+		panic(err)
+	}
+	if err := enc.Encode(chrome); err != nil {
+		panic(err)
+	}
+
+	// The other half. A log line handed the whole value goes through
+	// slog.LogValuer, and a type that does not implement it is printed with %+v
+	// -- every field of it, tokens included.
+	slog.New(slog.NewTextHandler(os.Stdout, nil)).Info("dump", "page", page, "chrome", chrome)
+`)
+
+	for _, secret := range []string{reset, csrf} {
+		if strings.Contains(out, secret) {
+			t.Errorf("a token reaches the output of the published kit:\n%s", out)
+		}
+	}
+
+	// The marker, so that a program which printed nothing at all cannot pass:
+	// both types name their token and give it the marker rather than dropping
+	// it, because a field that vanished reads exactly like one nobody filled in.
+	if want := `"ResetToken":"[redacted]"`; !strings.Contains(out, want) {
+		t.Errorf("the reset token is not reported as %s; the page serialized to:\n%s", want, out)
+	}
+	if want := `"Token":"[redacted]"`; !strings.Contains(out, want) {
+		t.Errorf("the CSRF token is not reported as %s; the page serialized to:\n%s", want, out)
+	}
+}
+
+// runInPublishedKit compiles the Go this kit publishes into a module of its own
+// and runs one statement block against it, returning everything the program
+// wrote.
+//
+// A module of its own, rather than a package in this one: this module declares
+// no dependency on the framework, and that is deliberate -- `go run
+// github.com/arandu-io/ui@latest auth` adds nothing to anybody's go.mod, and a
+// dependency taken here for a test would be one taken there for real.
+func runInPublishedKit(t *testing.T, body string) string {
+	t.Helper()
+
+	replaces := map[string]string{}
+	for _, name := range []string{"framework", "kyse", "hesape"} {
+		path, err := filepath.Abs(filepath.Join("..", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Skipf("%s is not checked out beside this module, so nothing here can compile what the kit publishes", name)
+		}
+		replaces[name] = path
+	}
+
+	root := t.TempDir()
+	for _, f := range mustGenerateAuth(t) {
+		// The Go under app/, which is everything the kit declares a type in. A
+		// view is markup behind a build tag, and HomeController extends a base
+		// class that belongs to the skeleton rather than to the kit.
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasPrefix(path, "app/") || strings.HasSuffix(path, ".kyse.go") ||
+			strings.HasSuffix(path, "HomeController.go") {
+			continue
+		}
+		writeInto(t, filepath.Join(root, f.Path), f.Content)
+	}
+
+	gomod := "module " + authSpec().ModulePath + "\n\ngo 1.26\n\nrequire (\n" +
+		"\tgithub.com/arandu-io/framework v0.0.0\n\tgithub.com/arandu-io/kyse v0.0.0\n)\n\n"
+	for _, name := range []string{"framework", "kyse", "hesape"} {
+		gomod += "replace github.com/arandu-io/" + name + " => " + replaces[name] + "\n"
+	}
+	writeInto(t, filepath.Join(root, "go.mod"), []byte(gomod))
+
+	writeInto(t, filepath.Join(root, "cmd", "probe", "main.go"), []byte(
+		"package main\n\nimport (\n\t\"encoding/json\"\n\t\"log/slog\"\n\t\"os\"\n\n\tauthui \""+
+			authSpec().ModulePath+"/app/Http/Controllers/Auth\"\n)\n\nfunc main() {\n"+body+"}\n"))
+
+	cmd := exec.Command("go", "run", "./cmd/probe")
+	cmd.Dir = root
+	// No workspace: the tree this runs in has one, and it does not list a
+	// directory that did not exist a moment ago. The replaces above are what
+	// points at the siblings instead.
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the published kit: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+func writeInto(t *testing.T, path string, content []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -1,6 +1,9 @@
 package authui
 
 import (
+	"encoding/json"
+	"log/slog"
+
 	"github.com/arandu-io/framework/view"
 	"github.com/arandu-io/kyse/components"
 )
@@ -95,4 +98,103 @@ func (p AuthPage) FieldError(name string) string {
 		return p.PasswordConfirmationError
 	}
 	return p.Page.FieldError(name)
+}
+
+// redacted is what a secret looks like once it has left this package.
+//
+// The value never appears. Whether there was one does: an empty string stays
+// empty, and anything else becomes the marker. A secret that simply vanished
+// from the output would read exactly like a field nobody filled in, and "the
+// form posted an empty token" is the failure these pages are dumped to find.
+func redacted(secret string) string {
+	if secret == "" {
+		return ""
+	}
+	return "[redacted]"
+}
+
+// MarshalJSON keeps the two tokens this page carries out of anything that
+// serializes it. Without it a single observability.Dump(ctx, "page", data)
+// publishes the password reset token on the debug page, and whoever reads it
+// there can set that account's password.
+//
+// It names the fields that may leave, rather than the ones that may not. A
+// field added to the struct later does not appear until it is named here, which
+// is the direction that cannot leak by accident -- the reverse spelling grows a
+// hole every time somebody adds a field and does not think about this method.
+//
+// The two tokens are named, and carry the marker instead of the value, so a
+// dump still answers whether they were filled in. See redacted.
+func (p AuthPage) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Title         string
+		AppName       string
+		Path          string
+		Authenticated bool
+		UserName      string
+		Token         string
+
+		HasPasswordReset      bool
+		DashboardURL          string
+		PasswordRequestURL    string
+		PasswordEmailURL      string
+		PasswordUpdateURL     string
+		PasswordConfirmURL    string
+		VerificationResendURL string
+
+		Status   string
+		Resent   bool
+		Name     string
+		Email    string
+		Remember bool
+
+		ResetToken string
+
+		NameError                 string
+		EmailError                string
+		PasswordError             string
+		PasswordConfirmationError string
+	}{
+		Title:         p.Page.Title,
+		AppName:       p.Page.AppName,
+		Path:          p.Page.Path,
+		Authenticated: p.Page.Authenticated,
+		UserName:      p.Page.UserName,
+		Token:         redacted(p.Page.Token),
+
+		HasPasswordReset:      p.HasPasswordReset,
+		DashboardURL:          p.DashboardURL,
+		PasswordRequestURL:    p.PasswordRequestURL,
+		PasswordEmailURL:      p.PasswordEmailURL,
+		PasswordUpdateURL:     p.PasswordUpdateURL,
+		PasswordConfirmURL:    p.PasswordConfirmURL,
+		VerificationResendURL: p.VerificationResendURL,
+
+		Status:   p.Status,
+		Resent:   p.Resent,
+		Name:     p.Name,
+		Email:    p.Email,
+		Remember: p.Remember,
+
+		ResetToken: redacted(p.ResetToken),
+
+		NameError:                 p.NameError,
+		EmailError:                p.EmailError,
+		PasswordError:             p.PasswordError,
+		PasswordConfirmationError: p.PasswordConfirmationError,
+	})
+}
+
+// LogValue implements slog.LogValuer, so a log line handed the whole page
+// records which screen it was and nothing else.
+//
+// Shorter than MarshalJSON on purpose. A log line is shipped to an aggregator
+// and kept, and the address somebody typed into a sign-in form is not something
+// to keep there; the debug page is one request, on one laptop, in development.
+func (p AuthPage) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("path", p.Page.Path),
+		slog.String("title", p.Page.Title),
+		slog.Bool("authenticated", p.Page.Authenticated),
+	)
 }

@@ -2,6 +2,8 @@ package authui
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -45,6 +47,43 @@ type ChromeProps struct {
 	// and never from the request.
 	Authenticated bool
 	UserName      string
+}
+
+// MarshalJSON keeps this session's CSRF token out of anything that serializes
+// the header's props. Without it a single observability.Dump(ctx, "chrome", p)
+// publishes it on the debug page, and a token read off a screenshot is a write
+// in somebody else's session.
+//
+// It names the fields that may leave, like AuthPage.MarshalJSON: a field added
+// to the struct later does not appear until it is named here. The token is
+// named, and carries the marker instead of the value, so a dump still answers
+// whether one was issued -- which is the question when a form comes back 419.
+func (p ChromeProps) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		AppName       string
+		Title         string
+		Path          string
+		Token         string
+		Authenticated bool
+		UserName      string
+	}{
+		AppName:       p.AppName,
+		Title:         p.Title,
+		Path:          p.Path,
+		Token:         redacted(p.Token),
+		Authenticated: p.Authenticated,
+		UserName:      p.UserName,
+	})
+}
+
+// LogValue implements slog.LogValuer, so a log line handed the whole props
+// records which screen the header was drawn for and nothing else.
+func (p ChromeProps) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("path", p.Path),
+		slog.String("title", p.Title),
+		slog.Bool("authenticated", p.Authenticated),
+	)
 }
 
 // Chrome fills the header, in one place, for the screens of this kit and for
