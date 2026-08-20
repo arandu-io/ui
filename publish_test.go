@@ -81,9 +81,9 @@ func TestTheGeneratedGoParses(t *testing.T) {
 	}
 }
 
-// TestTheGeneratedTemplateIsNotFormatted: a .templ is not Go, and running it
-// through gofmt would corrupt it. This is the regression guard for the day
-// somebody makes renderRaw call format.Source unconditionally.
+// TestTheGeneratedTemplateIsNotFormatted: a .kyse.go is markup below the package
+// clause, and gofmt would refuse it. This is the regression guard for the day
+// somebody makes render call format.Source unconditionally.
 func TestTheGeneratedTemplateIsNotFormatted(t *testing.T) {
 	files, err := GenerateAuth(authSpec())
 	if err != nil {

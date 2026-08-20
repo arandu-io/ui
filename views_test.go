@@ -6,23 +6,6 @@ import (
 	"testing"
 )
 
-// dataType is what a page of the kit renders from. Only the layout declares it;
-// the eight pages inherit it, which is what `aru view:build` does when a view
-// extends a layout and brings no @go block of its own.
-const dataType = "AuthPage"
-
-// layoutType is what the layout itself renders from, and it is deliberately not
-// dataType. The layout takes the interface, so it renders any page that
-// satisfies it -- including the ones `aru make:module` wrote before this
-// command ran.
-const layoutType = "Layout"
-
-// TestTheAuthViewsCompile is the check that matters: every one of the nine goes
-// through the same compiler `aru view:build` runs, and the Go it emits parses.
-//
-// A view that only looks right is a view nobody has run. This is cheap, it runs
-// in CI, and it fails on the commit that breaks a directive rather than in
-// somebody's project after make:auth.
 // kyseOnly keeps the views and drops the plain Go that travels with them.
 func kyseOnly(files []File) []File {
 	var out []File
