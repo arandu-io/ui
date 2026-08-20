@@ -796,7 +796,7 @@ func TestNeitherTokenSurvivesBeingSerialized(t *testing.T) {
 		csrf  = "csrf-token-read-off-a-screenshot"
 	)
 
-	out := runInPublishedKit(t, `
+	out := runInPublishedKit(t, []string{"encoding/json", "log/slog", "os"}, `
 	page := authui.AuthPage{ResetToken: `+strconv.Quote(reset)+`}
 	page.Page.Token = `+strconv.Quote(csrf)+`
 	chrome := authui.ChromeProps{Token: `+strconv.Quote(csrf)+`}
@@ -832,6 +832,240 @@ func TestNeitherTokenSurvivesBeingSerialized(t *testing.T) {
 	}
 }
 
+// registration is one route the published Routes method mounts: how it is
+// reached, and the name a URL can be built from. An empty name is a screen no
+// template can link to without writing the address out.
+type registration struct{ method, path, name string }
+
+// publishedRoutes reads the registrations out of the Routes method the kit
+// publishes, in the order they are written.
+//
+// It reads the statements of that method and not the whole file, because the
+// question is what a project mounts: a registration written anywhere else is one
+// nothing ever calls.
+func publishedRoutes(t *testing.T) []registration {
+	t.Helper()
+
+	source := authFile(t, "Auth/LoginController.go")
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "LoginController.go", source, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("the generated file does not parse: %v", err)
+	}
+
+	var routes *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Routes" {
+			routes = fn
+		}
+	}
+	if routes == nil {
+		t.Fatal("the generated file declares no Routes")
+	}
+
+	verbs := map[string]bool{"Get": true, "Post": true, "Put": true, "Patch": true, "Delete": true}
+
+	var out []registration
+	for _, stmt := range routes.Body.List {
+		expr, ok := stmt.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		call, ok := expr.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+
+		// Name(...) wraps the registration, so the registration is what it is
+		// called on. Unwrapped, the route carries no name at all.
+		name := ""
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Name" {
+			name = stringLiteral(t, call.Args[0])
+			inner, ok := sel.X.(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			call = inner
+		}
+
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || !verbs[sel.Sel.Name] {
+			continue
+		}
+		out = append(out, registration{
+			method: sel.Sel.Name,
+			path:   stringLiteral(t, call.Args[0]),
+			name:   name,
+		})
+	}
+	return out
+}
+
+// stringLiteral is the value of a literal argument, and fails the test on
+// anything else: a path or a name assembled at runtime is one no reader and no
+// tool can follow back to the screen it belongs to.
+func stringLiteral(t *testing.T, expr ast.Expr) string {
+	t.Helper()
+
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		t.Fatalf("expected a string literal and found %T", expr)
+	}
+	value, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+// TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy.
+//
+// The kit takes Routes over from the framework's auth module, and for a long
+// while it named nothing. So "auth.login" resolved in a project that had not run
+// this command and stopped resolving in one that had -- the address unchanged,
+// the name gone, and a template that built a URL from it broken by an install
+// whose promise is that the screens answer where the minimal ones did.
+//
+// The two the framework also mounts carry the framework's names, and that is the
+// whole criterion: a substitution that renames what it replaces changes the
+// contract without saying so. The rest are this kit's own and read the same way.
+//
+// A POST that shares its address with the GET beside it is left unnamed, which
+// is why three rows here have none. The path built from the GET's name is
+// already where the form posts, and a second name for one address is a choice
+// nobody can make correctly.
+//
+// The table is exact, order included, so that a route added to the kit is a row
+// somebody wrote here rather than a screen that quietly arrives unnamed.
+func TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy(t *testing.T) {
+	want := []registration{
+		{"Get", "/login", "auth.login"},
+		{"Post", "/login", ""},
+		{"Post", "/logout", "auth.logout"},
+
+		{"Get", "/password", "auth.password.request"},
+		{"Post", "/password/email", "auth.password.email"},
+		{"Get", "/password/reset", "auth.password.reset"},
+		{"Post", "/password/update", "auth.password.update"},
+		{"Get", "/password/confirm", "auth.password.confirm"},
+		{"Post", "/password/confirm", ""},
+
+		{"Get", "/register", "auth.register"},
+		{"Post", "/register", ""},
+		{"Get", "/verify", "auth.verify.notice"},
+		{"Get", "/verify/confirm", "auth.verify.confirm"},
+		{"Post", "/verify/resend", "auth.verify.resend"},
+	}
+
+	got := publishedRoutes(t)
+	if len(got) != len(want) {
+		t.Fatalf("the kit mounts %d routes and this test knows %d: a screen was added or removed, and the "+
+			"decision about its name belongs in the table above\n%+v", len(got), len(want), got)
+	}
+	for i, route := range got {
+		if route == want[i] {
+			continue
+		}
+		if route.method == want[i].method && route.path == want[i].path {
+			t.Errorf("%s %s is named %q and must be named %q", route.method, route.path, route.name, want[i].name)
+			continue
+		}
+		t.Errorf("route %d is %s %s and this test expects %s %s", i, route.method, route.path,
+			want[i].method, want[i].path)
+	}
+}
+
+// TestTheNamesSurviveTheSubstitution.
+//
+// The half of the question no reading of the source answers: after the kit's
+// module has replaced the framework's, does URL("auth.login") still resolve, and
+// to the same address.
+//
+// The framework's names are read off its own router rather than restated here,
+// so this test keeps agreeing with the framework when the framework changes. The
+// two constants are checked for the same reason: they are what the guards
+// redirect to, and a screen the guards cannot reach is a redirect to a 404.
+//
+// It is skipped where the sibling checkouts are absent, like the other compiled
+// test -- this module is released alone, and its CI has only itself.
+func TestTheNamesSurviveTheSubstitution(t *testing.T) {
+	out := runInPublishedKit(t, []string{
+		"fmt",
+		"github.com/arandu-io/framework/http",
+		"github.com/arandu-io/framework/http/middleware",
+		"github.com/arandu-io/framework/modules/auth",
+	}, `
+	published := http.NewRouter()
+
+	// Nothing here serves a request, so the zero value is the module: Routes
+	// reads one field of it, and only to hand the session store to two guards.
+	(&authui.Module{}).Routes(published)
+
+	// The framework's module, on a router of its own, so that the names it gives
+	// are read and not restated. A service over a nil handle is enough to
+	// register routes, and registering is all this does.
+	bare := http.NewRouter()
+	auth.New(auth.NewService(auth.NewUserRepo(nil), nil, nil), auth.FixedTenant("")).Routes(bare)
+
+	for _, route := range bare.Routes() {
+		name := route.RouteName()
+		if name == "" {
+			continue
+		}
+		was, err := bare.Table().URL(name)
+		if err != nil {
+			panic(err)
+		}
+		now, err := published.Table().URL(name)
+		if err != nil {
+			panic(fmt.Sprintf("the kit answers where %s did and dropped the name: %v", name, err))
+		}
+		if now != was {
+			panic(fmt.Sprintf("%s was %s and the kit moved it to %s", name, was, now))
+		}
+		fmt.Printf("kept %s=%s\n", name, now)
+	}
+
+	for _, name := range []string{
+		"auth.password.request", "auth.password.email", "auth.password.reset",
+		"auth.password.update", "auth.password.confirm",
+		"auth.register", "auth.verify.notice", "auth.verify.confirm", "auth.verify.resend",
+	} {
+		path, err := published.Table().URL(name)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("%s=%s\n", name, path)
+	}
+
+	if got := published.Table().Must("auth.login"); got != middleware.SignInPath {
+		panic(fmt.Sprintf("auth.login is %s and every guard sends people to %s", got, middleware.SignInPath))
+	}
+	if got := published.Table().Must("auth.password.confirm"); got != middleware.PasswordConfirmPath {
+		panic(fmt.Sprintf("auth.password.confirm is %s and RequireConfirmedPassword sends people to %s",
+			got, middleware.PasswordConfirmPath))
+	}
+`)
+
+	for _, want := range []string{
+		"kept auth.login=/auth/login",
+		"kept auth.logout=/auth/logout",
+		"auth.password.request=/auth/password",
+		"auth.password.email=/auth/password/email",
+		"auth.password.reset=/auth/password/reset",
+		"auth.password.update=/auth/password/update",
+		"auth.password.confirm=/auth/password/confirm",
+		"auth.register=/auth/register",
+		"auth.verify.notice=/auth/verify",
+		"auth.verify.confirm=/auth/verify/confirm",
+		"auth.verify.resend=/auth/verify/resend",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q is not among what the published kit resolved:\n%s", want, out)
+		}
+	}
+}
+
 // runInPublishedKit compiles the Go this kit publishes into a module of its own
 // and runs one statement block against it, returning everything the program
 // wrote.
@@ -840,7 +1074,10 @@ func TestNeitherTokenSurvivesBeingSerialized(t *testing.T) {
 // no dependency on the framework, and that is deliberate -- `go run
 // github.com/arandu-io/ui@latest auth` adds nothing to anybody's go.mod, and a
 // dependency taken here for a test would be one taken there for real.
-func runInPublishedKit(t *testing.T, body string) string {
+//
+// imports are the paths the block needs, without an alias -- the published
+// package is always imported, as authui.
+func runInPublishedKit(t *testing.T, imports []string, body string) string {
 	t.Helper()
 
 	replaces := map[string]string{}
@@ -875,8 +1112,12 @@ func runInPublishedKit(t *testing.T, body string) string {
 	}
 	writeInto(t, filepath.Join(root, "go.mod"), []byte(gomod))
 
+	block := ""
+	for _, path := range imports {
+		block += "\t" + strconv.Quote(path) + "\n"
+	}
 	writeInto(t, filepath.Join(root, "cmd", "probe", "main.go"), []byte(
-		"package main\n\nimport (\n\t\"encoding/json\"\n\t\"log/slog\"\n\t\"os\"\n\n\tauthui \""+
+		"package main\n\nimport (\n"+block+"\n\tauthui \""+
 			authSpec().ModulePath+"/app/Http/Controllers/Auth\"\n)\n\nfunc main() {\n"+body+"}\n"))
 
 	cmd := exec.Command("go", "run", "./cmd/probe")

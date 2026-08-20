@@ -200,6 +200,16 @@ func (m *Module) Name() string { return "authui" }
 // was already there, so publishing the kit TOOK A GUARD AWAY from the project
 // it was published into -- and publishing again over a project that had added
 // one by hand took it away a second time.
+//
+// The screens are named, and the two this method takes over carry the names the
+// framework gave them: "auth.login" and "auth.logout". A substitution that
+// dropped them would leave URL("auth.login") resolving in a bare project and
+// failing in the same project once these screens answered instead -- the kit
+// silently taking a name away, in the same shape as the guard above.
+//
+// A POST that shares its address with the GET beside it is deliberately left
+// unnamed. A path built from the GET's name is already where the form posts, so
+// a second name for one address is a choice nobody can make correctly.
 func (m *Module) Routes(r *http.Router) {
 	g := r.Group("/auth")
 
@@ -207,18 +217,18 @@ func (m *Module) Routes(r *http.Router) {
 	// is where signing in lands them too, so the two agree.
 	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
 
-	g.Get("/login", m.showLogin, guest)
+	g.Get("/login", m.showLogin, guest).Name("auth.login")
 	g.Post("/login", m.doLogin)
-	g.Post("/logout", m.doLogout)
+	g.Post("/logout", m.doLogout).Name("auth.logout")
 
 	// arandu:begin custom
 	// The password reset, in PasswordController.go. The kit publishes the three
 	// screens and stops there: the handlers write to your users table and send
 	// through your mailer, so they are yours.
-	g.Get("/password", m.showPasswordRequest)
-	g.Post("/password/email", m.sendPasswordLink)
-	g.Get("/password/reset", m.showPasswordReset)
-	g.Post("/password/update", m.updatePassword)
+	g.Get("/password", m.showPasswordRequest).Name("auth.password.request")
+	g.Post("/password/email", m.sendPasswordLink).Name("auth.password.email")
+	g.Get("/password/reset", m.showPasswordReset).Name("auth.password.reset")
+	g.Post("/password/update", m.updatePassword).Name("auth.password.update")
 
 	// Typing the password again on a session that is already open. The screen
 	// was published from the beginning with no route, no handler and nothing
@@ -231,7 +241,7 @@ func (m *Module) Routes(r *http.Router) {
 	// where middleware.RequireConfirmedPassword sends people -- mount that on
 	// your own sensitive routes and this is the screen they land on.
 	signedIn := middleware.RequireAuth(m.sessions)
-	g.Get("/password/confirm", m.showPasswordConfirm, signedIn)
+	g.Get("/password/confirm", m.showPasswordConfirm, signedIn).Name("auth.password.confirm")
 	g.Post("/password/confirm", m.confirmPassword, signedIn)
 
 	// Registration and address verification, in RegisterController.go.
@@ -241,11 +251,11 @@ func (m *Module) Routes(r *http.Router) {
 	// registering, and the link arrives from a mail client -- and a GET that
 	// sometimes changes state and sometimes does not is one nobody can cache,
 	// log or reason about.
-	g.Get("/register", m.showRegister, guest)
+	g.Get("/register", m.showRegister, guest).Name("auth.register")
 	g.Post("/register", m.doRegister)
-	g.Get("/verify", m.showVerifyNotice)
-	g.Get("/verify/confirm", m.verify)
-	g.Post("/verify/resend", m.resendVerification)
+	g.Get("/verify", m.showVerifyNotice).Name("auth.verify.notice")
+	g.Get("/verify/confirm", m.verify).Name("auth.verify.confirm")
+	g.Post("/verify/resend", m.resendVerification).Name("auth.verify.resend")
 	// arandu:end custom
 }
 `
