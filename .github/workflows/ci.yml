@@ -50,6 +50,13 @@ jobs:
       - name: test
         run: go test -race ./...
 
+      # The layout of the suite, checked by command rather than by review. The
+      # first of its four checks is the one worth a CI step: a file named
+      # PublishTest.go compiles as ordinary code and runs no tests, so the way
+      # this fails is a green build with the suite switched off.
+      - name: test layout
+        run: bash tests/test-layout-guard.sh
+
       # The golden files ARE the product: they are the bytes that land in
       # somebody's project. A change to them has to show up as a diff in review
       # rather than as a surprise in a checkout, so a run that rewrites them and
