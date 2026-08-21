@@ -110,6 +110,15 @@ while IFS= read -r found; do
 done < <(git ls-files | grep -E '(^|/)go\.mod$')
 
 for module in "${modules[@]}"; do
+	# The cache is warmed before anything is measured, and it is not a
+	# convenience. `go list` writes "go: downloading <module> <version>" to
+	# stderr, which is captured here on purpose so that a module that does not
+	# build is reported instead of read as an empty package list -- and those two
+	# words then arrive as package names, which is what "no required module
+	# provides package v0.12.0" is. CI has a cold cache every run, so this failed
+	# there and passed here.
+	(cd "$module" && GOWORK=off go mod download all >/dev/null 2>&1) || true
+
 	if ! listed=$( (cd "$module" && GOWORK=off go list ./... 2>&1) ); then
 		printf '%s\n' "$listed" | head -5
 		echo "[FAILED] go list could not read $module, so nothing under it was checked"
