@@ -25,10 +25,12 @@ go vet ./...
 go test -race ./...
 ```
 
-CI runs exactly this, plus a check that no new dependency entered the core: the
-framework depends on the standard library and `golang.org/x/crypto`, and nothing
-else. A pull request that adds a dependency there needs to argue for it first,
-in an issue.
+CI runs these, and a handful of checks besides that are cheaper there than on
+your machine; `.github/workflows/ci.yml` is the list, and it is the one that
+decides. One of them is worth knowing before you write the change: this module
+takes no dependencies at all. It is run as `go run github.com/arandu-io/ui@latest
+auth` from inside somebody's project, so every require here is something a user
+downloads. A pull request that adds one needs to argue for it first, in an issue.
 
 ## Where a test goes
 
