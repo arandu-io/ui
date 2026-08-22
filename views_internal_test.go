@@ -37,7 +37,7 @@ func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 	}
 
 	if len(screens) != 9 {
-		t.Fatalf("generated %d screens, want the nine of laravel/ui", len(screens))
+		t.Fatalf("generated %d screens, want 9: the layout, home, welcome, and the six auth screens", len(screens))
 	}
 	if len(bodies) != 4 {
 		t.Fatalf("generated %d message bodies, want 4: two messages, both parts each", len(bodies))

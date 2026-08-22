@@ -323,7 +323,7 @@ func typeSpec(t *testing.T, file *ast.File, name string) *ast.TypeSpec {
 // The command used to write four files into modules/authui/ and declare itself
 // with a manifest. It is not a module any more -- it is the project's own code,
 // in the project's own tree, so there is nothing to declare.
-func TestTheStarterKitLandsInTheLaravelTree(t *testing.T) {
+func TestTheStarterKitLandsInTheProjectTree(t *testing.T) {
 	var paths []string
 	for _, f := range mustGenerateAuth(t) {
 		paths = append(paths, filepath.ToSlash(f.Path))
