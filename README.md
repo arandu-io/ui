@@ -30,7 +30,9 @@ from the moment they land: edit them, delete them, rewrite them.
 
 Run it again to take a fix from a newer version: what you wrote inside a
 `arandu:begin custom` block is carried over, and the command says so per file.
-`--views` refreshes only the screens.
+`--views` leaves the flow you edited alone — the controllers and the two
+mailables — and refreshes sixteen files: the thirteen screens plus `page.go`,
+`render.go` and `HomeController`, which they do not compile without.
 
 **Nothing is added to your `go.mod`.** `go run <module>@latest` runs a published
 module without touching the caller's dependency graph, so there is no package to
