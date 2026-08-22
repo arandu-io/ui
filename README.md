@@ -52,7 +52,7 @@ pinned binary. No Node, no bundler, no lockfile.
 ## Learning Arandu
 
 The API reference is generated from the doc comments and lives on
-[pkg.go.dev](https://pkg.go.dev/github.com/arandu-io/framework). Every exported
+[pkg.go.dev](https://pkg.go.dev/github.com/arandu-io/ui). Every exported
 symbol carries one, and that is deliberate: it is the documentation that cannot
 drift from the code, because it sits in the same file.
 
