@@ -34,25 +34,37 @@ downloads. A pull request that adds one needs to argue for it first, in an issue
 
 ## Where a test goes
 
-Beside the code it tests, named `*_test.go`, in the same directory. There is no
-`tests/` directory, and that is not style: `go test` attributes coverage per
-directory, so a test filed elsewhere leaves the package under test reporting
-0% -- and it can only reach what the package exports.
+Under `tests/`, or beside the code named `*_internal_test.go` -- and which of the
+two follows from what the test has to reach, not from taste.
+`tests/test-layout-guard.sh` runs in CI and rejects the third case: a
+`*_test.go` outside `tests/` that does not carry the `_internal` suffix.
 
-Which package the test declares is a real choice, and it answers one question:
+That suffix is a claim, and it is what earns the file its place. A test that
+needs an identifier the package does not export has to compile into that
+package, and a package compiles from a single directory -- so such a test has
+nowhere else it could sit. `go test` attributes coverage per directory, which
+points the same way: filed anywhere else it would leave the package under test
+reporting 0%. The name states that reason in the one place a reader walking the
+tree is certain to look.
 
-| declare | when |
-|---|---|
-| `package X_test` | this is the **contract**. The test sees what a caller sees, which is the point |
-| `package X` | this is the **implementation**, and the test genuinely needs something the package does not export |
+Which package the test declares and where the file lands are one decision, not
+two:
+
+| declare | where it lands | when |
+|---|---|---|
+| `package X_test` | `tests/` | this is the **contract**. The test sees what a caller sees, which is the point |
+| `package X` | beside the code, `*_internal_test.go` | this is the **implementation**, and the test genuinely needs something the package does not export |
 
 Prefer the first. Take the second only when you use it -- `plans/testpackages.go`
 in the arandu-io working tree checks exactly that, by intersecting the
 identifiers a test names with what its package declares unexported, and the
-checklist runs it across every repository.
+checklist runs it across every Go repository in the project.
 
 A `package main` has no external form: it cannot be imported, so its tests are
-internal and that is the end of it.
+internal and that is the end of it. This module is one, so the first row above
+describes nothing here and `tests/` carries the guard rather than a suite -- the
+alternative is a category directory standing empty, which git does not carry and
+for which a placeholder file only invents surface.
 
 ## What the commit message says
 
