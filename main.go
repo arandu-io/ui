@@ -18,9 +18,12 @@
 //
 // # Why there is no preset
 //
-// Arandu has one stack: kyse, HTMX, Alpine and Tailwind v4. An argument with a
-// single legal value is a dimension that does not exist, so the verb is what
-// varies: `auth` today, and whatever scaffolding earns its place later.
+// Arandu has one stack: kyse for the markup, HTMX for the interaction, Tailwind
+// v4 for the styling, and Go for everything else -- including the state, which
+// lives on the server and reaches the browser as the answer to a request. An
+// argument with a single legal value is a dimension that does not exist, so the
+// verb is what varies: `auth` today, and whatever scaffolding earns its place
+// later.
 package main
 
 import (

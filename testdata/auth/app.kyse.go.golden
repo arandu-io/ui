@@ -42,15 +42,22 @@ import "github.com/arandu-io/kyse/components"
 
 	<link rel="stylesheet" href="{{ view.URL("app.css") }}">
 	<script src="{{ view.URL("htmx.min.js") }}" defer></script>
-	{{-- Alpine is not loaded here. Nothing in this layout or the screens under it
-	     uses it, and the collection embeds no alpine.min.js -- so the tag was a
-	     404 on every page of every project that published this kit, which
-	     view.URL answers with /_arandu/assets/missing/alpine.min.js.
+	{{-- Two scripts, and no third. State on this stack lives on the server: a
+	     handler decides and answers markup that is already correct, so there is
+	     no second copy of it here to keep in step. The attributes below say only
+	     where to ask and what to replace, and nothing reads a value back out of
+	     one.
 
-	     It stays the sanctioned way to hold ephemeral client state (RULE 13), and
-	     a project that reaches for it registers the asset and adds the tag back.
-	     Loading it for pages that have none is a request that costs and does
-	     nothing. --}}
+	     What is left for the browser is what dies with the tab and the server
+	     never needs to hear about, and it is written with <details>,
+	     :focus-within or a checkbox. A framework that compiles directives out of
+	     strings cannot help with it here in any case: the policy is
+	     script-src 'self' with no unsafe-eval, so every such directive throws
+	     before it runs.
+
+	     A third tag also has to have something to serve. view.URL answers a name
+	     nothing registered with /_arandu/assets/missing/<name>, which is a 404 on
+	     every page rather than an error anybody sees. --}}
 	<script src="{{ view.URL("basecoat.bundle.js") }}" defer></script>
 	<script src="{{ view.URL("theme.js") }}"></script>
 </head>
