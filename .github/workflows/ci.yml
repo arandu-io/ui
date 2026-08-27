@@ -50,6 +50,24 @@ jobs:
       - name: test
         run: go test -race ./...
 
+      # The one test in the suite that is allowed to skip, run again where a skip
+      # must not read as a pass.
+      #
+      # It compiles the nine Go files this kit publishes against the framework
+      # tag a project actually gets, and it skips when that tag is neither in the
+      # module cache nor reachable. On a laptop with no network that is the
+      # honest answer; here it means the release went out uncompiled, which is
+      # the defect the test exists to prevent.
+      - name: the published kit compiles against the published framework
+        run: |
+          set -euo pipefail
+          go test -v -run '^TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework$' . \
+            | tee "$RUNNER_TEMP/gate.log"
+          if grep -q '^--- SKIP' "$RUNNER_TEMP/gate.log"; then
+            echo "the gate skipped: nothing was compiled against the published framework, and that is not a pass"
+            exit 1
+          fi
+
       # The layout of the suite, checked by command rather than by review. The
       # first of its four checks is the one worth a CI step: a file named
       # PublishTest.go compiles as ordinary code and runs no tests, so the way

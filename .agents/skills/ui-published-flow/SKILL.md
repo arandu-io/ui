@@ -103,10 +103,24 @@ go test . -update && git diff testdata
 ```
 
 `go build ./...` passing here says nothing about the published Go: it is a
-string. What checks it is `TestTheGeneratedGoParses` at
-`publish_internal_test.go:67`, plus `render` in `publish.go:44`, which runs
-`format.Source` over every non-view file and fails generation with *this is a
-bug in this generator* if it does not parse.
+string. Two different things read it, and only one of them is a compiler.
+
+It **parses** in `TestTheGeneratedGoParses` at `publish_internal_test.go:68` and
+in `render` at `publish.go:44`, which runs `format.Source` over every non-view
+file and fails generation with *this is a bug in this generator*. Parsing is not
+enough and never was: a file that calls a method nobody declares parses
+perfectly. `render.go` shipped calling `auth.Service.Names` after the method had
+been renamed to `PublicNames`, and every project that published this kit got a
+file that does not build.
+
+It **compiles** in
+`TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework` at
+`publish_internal_test.go:797`, which lays the nine Go files into a throwaway
+module requiring the framework by published tag — no `replace`, so it is the
+framework a person receives and not the checkout beside this one — and runs
+`go build`. That is the test that fails when a handler calls a symbol the
+framework no longer has, or when a call is added without its import: the
+published templates carry import blocks of their own.
 
 ## What the published handlers must keep doing
 
@@ -121,7 +135,7 @@ never arrive. A handler must go through `http.Redirect(w, r, to)`, which answers
 `HX-Redirect` under HTMX and a 303 with a `Location` otherwise. Setting the
 header directly gives a plain browser form post 200 and an empty body — a blank
 page. `TestTheRedirectSurvivesWithoutJavaScript` at
-`publish_internal_test.go:587` checks both exits.
+`publish_internal_test.go:588` checks both exits.
 
 **Both links are signed, and stored nowhere.** Verification and password reset
 carry a signed token rather than a row, so they survive a restart and a second
@@ -142,7 +156,7 @@ away from publishing it, so `MarshalJSON` and `LogValue` are written by hand.
 `TestNeitherTokenSurvivesBeingSerialized` at `flow_internal_test.go:793`.
 
 **The tenant does not come from the request body**, and the kit does not
-migrate. `publish_internal_test.go:187` and `:203`.
+migrate. `publish_internal_test.go:188` and `:204`.
 
 ## Changing a constructor is the one that breaks strangers
 
@@ -155,10 +169,10 @@ parameters emitted, five passed.
 Two checks stand there, and both must pass before a signature changes:
 
 - `TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes` at
-  `publish_internal_test.go:524` — the printed instruction against the emitted
+  `publish_internal_test.go:525` — the printed instruction against the emitted
   constructor, for `controllers.NewHomeController` and `authui.New`.
 - `TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes` at
-  `publish_internal_test.go:554` — the emitted constructor against
+  `publish_internal_test.go:555` — the emitted constructor against
   `../arandu` and `../examples`. It **skips** when they are not checked out
   beside this module, so a green run on a machine with only this repository
   proves nothing about it. Check the siblings out before changing a signature.

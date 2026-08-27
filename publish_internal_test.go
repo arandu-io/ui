@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -725,5 +726,209 @@ func authFile(t *testing.T, name string) string {
 		}
 	}
 	t.Fatalf("%s was not generated", name)
+	return ""
+}
+
+// The versions a project's go.mod names when this kit publishes into it.
+//
+// They are tags on the proxy and not the checkouts beside this module, which is
+// the whole of what the gate below is for: a `replace` pointed at ../framework
+// compiles the working tree, and the working tree is the one framework nobody
+// receives.
+//
+// These two are what the skeleton pins, so they are what a project starts life
+// with. Bump them together with arandu/go.mod --
+// TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets says so when
+// they drift apart.
+const (
+	publishedFramework = "v0.38.1"
+	publishedKyse      = "v0.12.1"
+)
+
+// TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
+// that was missing on the day render.go shipped unbuildable.
+//
+// SignedInName called auth.Service.Names, which had been renamed to PublicNames
+// and given a different signature, and every project that ran `go run
+// github.com/arandu-io/ui@latest auth` received a file that does not build.
+// Nothing here noticed: this module declares no dependency on the framework, its
+// CI has only itself, and the golden files compare bytes against bytes. A second
+// defect was hiding behind the first -- the published template carries its own
+// import block, so adding a call to security.Subject without adding the import
+// failed one line later.
+//
+// A real `go build`, and not go/parser: a parser accepts a file that names a
+// symbol nothing declares, which is the exact shape of both halves. It accepted
+// them.
+//
+// No `replace`, for the reason written above the two versions. The tree is the
+// published tree and not a flattened copy of it either: RegisterController
+// imports the project's own app/Mail and HomeController imports the package
+// beside it, so the import graph is the real one only when the paths are.
+//
+// # The views are not here
+//
+// A .kyse.go opens with `//go:build kyse`, so no compiler reads one. What a
+// project builds is the Go that `aru view:build` writes under
+// storage/framework/views/, and running that would need the generator -- which is
+// aru/internal/kyse, unimportable from another module by Go's own rule. The only
+// way in is an `aru` binary on PATH, and a gate that skips whenever a binary is
+// absent is what this gate was written to replace.
+//
+// Writing them into the module unbuilt would be worse than leaving them out, and
+// that was measured rather than assumed: `go build ./...` skips a directory whose
+// files are all excluded by a build constraint and exits 0, so a view naming a
+// symbol that does not exist passes green. Leaving them out says what is not
+// covered; writing them in would say the opposite of it.
+//
+// So the expressions inside the thirteen views are the hole in this gate. What
+// they name is held by views_internal_test.go and by
+// TestEveryScreenThisKitPublishesIsDrawnBySomething, and none of that is a type
+// check.
+//
+// # When it skips
+//
+// The modules are resolved before anything is compiled, with the proxy left as
+// the environment set it, so a machine with a network fills a cold cache and a
+// machine without one uses what it already has. If that fails, the test skips
+// saying that nothing was compiled -- a skip that reads as a pass is the defect
+// this exists to prevent. The build then runs with GOPROXY=off, so a fetch
+// cannot happen behind it and a fetch's error cannot be read as a compiler's.
+func TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework(t *testing.T) {
+	tool, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go is not on PATH, so nothing here was compiled and this is not a pass")
+	}
+
+	root := t.TempDir()
+
+	// Every published file the compiler reads, enumerated from the publisher
+	// rather than listed here: a tenth Go file added to the kit is covered the
+	// day it is added, which is the only way this stays true.
+	var published []string
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		if strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		writeInto(t, filepath.Join(root, f.Path), f.Content)
+		published = append(published, path)
+	}
+	if len(published) == 0 {
+		t.Fatal("the kit published no Go, so this gate compiled nothing")
+	}
+
+	// The one file the project owns that a published file names. HomeController
+	// embeds it, and the skeleton is where it comes from -- it is an empty struct
+	// there too, and nothing published calls a method on it. It is written here
+	// rather than read from ../arandu on purpose: a sibling that may be absent
+	// would make this gate skip, which is the thing it exists to replace.
+	writeInto(t, filepath.Join(root, "app", "Http", "Controllers", "Controller.go"),
+		[]byte("package controllers\n\ntype Controller struct{}\n"))
+
+	writeInto(t, filepath.Join(root, "go.mod"), []byte(
+		"module "+authSpec().ModulePath+"\n\ngo "+goDirective(t)+"\n\nrequire (\n"+
+			"\tgithub.com/arandu-io/framework "+publishedFramework+"\n"+
+			"\tgithub.com/arandu-io/kyse "+publishedKyse+"\n)\n"))
+
+	download := exec.Command(tool, "mod", "download", "all")
+	download.Dir = root
+	download.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local")
+	if out, err := download.CombinedOutput(); err != nil {
+		t.Skipf("github.com/arandu-io/framework %s and github.com/arandu-io/kyse %s are not both in the "+
+			"module cache and could not be fetched, so NOTHING WAS COMPILED here and this is not a pass: %v\n%s",
+			publishedFramework, publishedKyse, err, out)
+	}
+
+	build := exec.Command(tool, "build", "./...")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off", "GOTOOLCHAIN=local")
+	out, err := build.CombinedOutput()
+	if err == nil {
+		return
+	}
+
+	named := "none by name -- read the output below"
+	if files := publishedIn(string(out), published); len(files) > 0 {
+		named = strings.Join(files, "\n  ")
+	}
+	t.Fatalf("the Go this kit publishes does not compile against github.com/arandu-io/framework %s.\n\n"+
+		"Every project that runs `go run github.com/arandu-io/ui@latest auth` receives these files, and a "+
+		"project that receives them cannot build.\n\n"+
+		"published file(s) the compiler named:\n  %s\n\n`go build ./...` said:\n%s\n(%v)",
+		publishedFramework, named, out, err)
+}
+
+// publishedIn returns the published paths the compiler's output points at, in
+// the order the kit publishes them.
+//
+// Matched with the colon the position carries, because the compiler writes
+// path:line:column and a bare path also appears in the package header above the
+// errors -- which would name every file of a package for one file's mistake.
+func publishedIn(out string, published []string) []string {
+	var named []string
+	for _, path := range published {
+		if strings.Contains(out, path+":") {
+			named = append(named, path)
+		}
+	}
+	return named
+}
+
+// goDirective is the language version this module declares.
+//
+// Read rather than written again, because the throwaway module above needs one
+// at least as new as the framework asks for, and the day this module is bumped
+// for a framework that needs it is the day that one has to move too.
+func goDirective(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "go "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	t.Fatal("this module's go.mod declares no go directive")
+	return ""
+}
+
+// TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets keeps the gate
+// from going quietly out of date.
+//
+// A pin left behind still compiles, and it stops answering the question it was
+// written for: what a project gets today. The skeleton's go.mod is what a new
+// project starts with, so it is the answer, and this is the one check here that
+// may skip -- the pins are still exercised by the gate above when the skeleton is
+// not beside this module.
+func TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "arandu", "go.mod"))
+	if err != nil {
+		t.Skip("the skeleton is not checked out beside this module, so nothing here says whether the pinned versions are current")
+	}
+
+	for _, want := range []struct{ module, pinned string }{
+		{"github.com/arandu-io/framework", publishedFramework},
+		{"github.com/arandu-io/kyse", publishedKyse},
+	} {
+		got := requiredVersion(string(body), want.module)
+		if got != want.pinned {
+			t.Errorf("a new project gets %s %s and this suite compiles the published files against %s.\n"+
+				"Bump the constant in publish_internal_test.go, and read what the build says about the difference.",
+				want.module, got, want.pinned)
+		}
+	}
+}
+
+// requiredVersion reads the version a go.mod requires for one module path.
+func requiredVersion(gomod, module string) string {
+	for _, line := range strings.Split(gomod, "\n") {
+		fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require "))
+		if len(fields) >= 2 && fields[0] == module {
+			return fields[1]
+		}
+	}
 	return ""
 }

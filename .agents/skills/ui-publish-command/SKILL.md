@@ -139,7 +139,7 @@ because both have shipped wrong:
 - `wiring` is a `const` in `main.go:187` rather than a literal inside the
   `Printf`, so a test can read it.
   `TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes` at
-  `publish_internal_test.go:524` parses both the printed call and the published
+  `publish_internal_test.go:525` parses both the printed call and the published
   constructor and compares the arity. It shipped with three parameters emitted
   and five passed.
 - The blank-import block is computed by `viewImports` in `main.go:46` from what

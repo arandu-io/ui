@@ -39,6 +39,18 @@ bytes that land in somebody's project, so a change to a template has to appear
 as a diff in review rather than as a surprise in a checkout. CI runs `-update`
 and fails if the tree moved.
 
+`go test` is where the published Go is compiled.
+`TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework` lays the
+nine Go files into a throwaway module that requires the framework and the
+component library by **published tag, with no `replace`**, and runs `go build`
+against it. Read its doc comment before touching it: a `replace` pointed at
+`../framework` compiles the working tree, which is the one framework nobody
+receives, and a `.kyse.go` written into that module would pass green because the
+compiler never reads one. If it prints `--- SKIP`, the tags are not in the module
+cache and there is no network — nothing was compiled, and that is not a pass. CI
+runs that one test again on its own and fails on the skip, because a release that
+was never compiled is the defect it exists to prevent.
+
 `aru view:build` and `aru doctor` are **not** gates here, and asking for them is
 a wasted minute:
 
@@ -62,7 +74,7 @@ fixture arrives, the command is already right.
 | 22 files published by `auth` — 13 views and 9 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 16 of those refreshed by `auth --views` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 22 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 59 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
+| 61 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
 | 14 routes mounted by the module it publishes | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
 | 0 dependencies, and that is a CI step | `grep -E '^[[:space:]]*require' go.mod \| wc -l` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
@@ -100,7 +112,7 @@ package clause of a `.kyse.go` is markup that would be printed into an e-mail.
 
 **The golden files are the product.** They are not a convenience for the suite;
 they are the 22 files a project receives. `TestAuthGolden` in
-`publish_internal_test.go:27` compares them byte for byte, and CI regenerates
+`publish_internal_test.go:28` compares them byte for byte, and CI regenerates
 them and fails on a dirty tree.
 
 ## Writing code
