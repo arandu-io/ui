@@ -1202,14 +1202,18 @@ func TestNothingTheLayoutDrawsIsRedrawnInsideASwap(t *testing.T) {
 // a value back out of one.
 //
 // What the browser does own is what dies with the tab and the server never
-// needs to hear about -- a disclosure that is open, a field that has focus --
-// and that is written with <details>, :focus-within or a checkbox. The
-// attributes below are what somebody reaches for instead, and in a view this
-// kit publishes they do nothing at all: the layout loads two scripts, neither
-// of them reads one, and a framework that compiles a directive out of a string
+// needs to hear about -- a menu that is open, a row that is selected -- and it
+// has a home already: ui.js, which the layout loads. It binds on document and
+// dispatches on data- attributes, keeps open and selected in the ARIA the
+// markup already carries, and evaluates nothing, so the DOM is the only copy
+// and swapped-in markup is live where it lands.
+//
+// The attributes below are what somebody reaches for instead, and in a view
+// this kit publishes they do nothing at all: none of the scripts the layout
+// loads reads one, and a framework that compiles a directive out of a string
 // could not run beside them, because the policy is script-src 'self' with no
-// unsafe-eval. A rule of business written in one is a fragment nobody asked
-// the server for.
+// unsafe-eval. A rule of business written in one is a fragment nobody asked the
+// server for.
 func TestNoPublishedViewKeepsStateInTheBrowser(t *testing.T) {
 	held := []string{
 		"x-data", "x-init", "x-effect", "x-model", "x-show", "x-bind",
@@ -1229,11 +1233,11 @@ func TestNoPublishedViewKeepsStateInTheBrowser(t *testing.T) {
 			if attributeIn(body, attribute) {
 				t.Errorf("%s carries %s, which holds a value in the browser.\n"+
 					"What a screen shows came from the server in the answer it is part of, so a copy here is "+
-					"one nothing reconciles. It is also inert: the layout this kit publishes loads two scripts "+
-					"and neither reads that attribute, and a framework that compiles a directive out of a "+
-					"string could not run beside them -- the policy is script-src 'self' with no unsafe-eval.\n"+
-					"Put the decision in a handler and swap the markup, or use <details>, :focus-within or a "+
-					"checkbox for what dies with the tab", path, attribute)
+					"one nothing reconciles. It is also inert: none of the scripts the layout loads reads that "+
+					"attribute, and a framework that compiles a directive out of a string could not run beside "+
+					"them -- the policy is script-src 'self' with no unsafe-eval.\n"+
+					"Put the decision in a handler and swap the markup. What dies with the tab is ui.js's, on "+
+					"a data- attribute, or <details> and :focus-within", path, attribute)
 			}
 		}
 	}
@@ -1298,6 +1302,163 @@ func attributeIn(body, name string) bool {
 // isNamePart reports whether c can appear inside an identifier.
 func isNamePart(c byte) bool {
 	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries.
+//
+// The layout is in `replaced`: publishing overwrites the skeleton's with no flag
+// at all. So an element the skeleton's head had and this one does not is one
+// every project silently loses the first time it runs this command, and losing
+// it is invisible -- the page still renders, and what went is a script nobody
+// looks for in a document that never had it.
+//
+// This test was named in the doc comment of the layout template for a long while
+// and did not exist, and the head had drifted by three elements by the time it
+// was written:
+//
+//   - ui.js, which is where every client behaviour on this stack lives. Without
+//     it a menu does not open and a copy button does not copy, on every screen
+//     of every project that published the kit.
+//   - includeIndicatorStyles, without which htmx injects a <style> element the
+//     policy refuses -- style-src 'self', no unsafe-inline -- once per page.
+//   - the second icon, which is the hazard the layout's own doc comment names.
+//
+// Elements and not bytes: the two files are different designs on purpose, so the
+// navigation, the widths and the wording are theirs to differ on. What may not
+// differ is what the head loads and declares, which is read here as one key per
+// element -- an asset by the name view.URL is given, an icon by its address, a
+// meta by the name or property that identifies it plus its content when that is
+// a constant.
+//
+// What it does not reach: an attribute beside the identifying one. The two icons
+// are compared by address, so a sizes= or a type= dropped from one of them is a
+// difference this passes over. Naming the element is what the hazard is about --
+// a tag that went entirely is the one nobody notices.
+//
+// It skips where the skeleton is not beside this module, like the other checks
+// that read a sibling: this module is released alone and its CI has only itself.
+func TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries(t *testing.T) {
+	skeleton, err := os.ReadFile(filepath.Join("..", "arandu", "resources", "views", "layouts", "app.kyse.go"))
+	if err != nil {
+		t.Skip("the skeleton is not checked out beside this module, so nothing here says whether the head still carries what its own does")
+	}
+
+	want := headElements(string(skeleton))
+	if len(want) == 0 {
+		t.Fatal("the skeleton's layout declares no head elements; either it changed shape or this test is looking in the wrong place")
+	}
+	got := headElements(authView(t, "layouts/app.kyse.go"))
+
+	for _, element := range want {
+		if slices.Contains(got, element) {
+			continue
+		}
+		t.Errorf("the skeleton's layout carries %s in its head and this kit's does not.\n"+
+			"Publishing replaces that file with no flag, so every project loses it the first time this "+
+			"command is run -- and loses it silently, because a document that never had an element does "+
+			"not look wrong.\n"+
+			"Add it here, or take it out of the skeleton: those are the two ways the two agree.", element)
+	}
+}
+
+// headElements is one key per element the <head> of a layout declares.
+//
+// A key and not the line, because the two layouts indent and order differently
+// and neither of those is what this is about. What identifies an element is what
+// it brings: the asset name inside view.URL for a script or a stylesheet, the
+// address for an icon, and the name or property for a meta.
+//
+// Anything inside a kyse comment is skipped, because both files explain in prose
+// the very tags they carry -- and one of them explains a tag it deliberately
+// does not.
+func headElements(layout string) []string {
+	head := layout
+	if at := strings.Index(head, "<head>"); at >= 0 {
+		head = head[at:]
+	}
+	if end := strings.Index(head, "</head>"); end >= 0 {
+		head = head[:end]
+	}
+	head = withoutRegion(head, "{{--", "--}}")
+	head = withoutRegion(head, "<!--", "-->")
+
+	var out []string
+	seen := map[string]bool{}
+	add := func(key string) {
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, key)
+		}
+	}
+	for _, element := range strings.Split(head, "<")[1:] {
+		element = strings.SplitN(element, ">", 2)[0]
+		switch {
+		case strings.HasPrefix(element, "script"), strings.HasPrefix(element, "link"):
+			if name, ok := assetName(element); ok {
+				add(strings.Fields(element)[0] + " " + name)
+				continue
+			}
+			if href, ok := attributeValue(element, "href"); ok {
+				add(strings.Fields(element)[0] + " " + href)
+			}
+		case strings.HasPrefix(element, "meta"):
+			for _, identifier := range []string{"name", "property"} {
+				value, ok := attributeValue(element, identifier)
+				if !ok {
+					continue
+				}
+				// The content joins the key when it is a constant, which
+				// catches a setting that changed as well as a tag that went.
+				// htmx-config is the one that matters -- it decides what a 422
+				// means and whether htmx injects a stylesheet the policy
+				// refuses -- and it is a setting, not a design choice, so the
+				// two files have no business differing on it. A content the
+				// page fills in is left out: og:title is the title, and the
+				// two layouts are not obliged to word it alike.
+				content, filled := attributeValue(element, "content")
+				if filled && !strings.Contains(content, "{{") {
+					value += " " + content
+				}
+				add("meta " + value)
+				break
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// assetName is the name a tag asks view.URL for, and false for a tag that names
+// an address of its own instead.
+func assetName(element string) (string, bool) {
+	const call = `view.URL("`
+	at := strings.Index(element, call)
+	if at < 0 {
+		return "", false
+	}
+	rest := element[at+len(call):]
+	end := strings.IndexByte(rest, '"')
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
+}
+
+// attributeValue is the value of one attribute of a tag, in either quote.
+func attributeValue(element, name string) (string, bool) {
+	for _, quote := range []string{`="`, `='`} {
+		at := strings.Index(element, name+quote)
+		if at < 0 {
+			continue
+		}
+		rest := element[at+len(name)+len(quote):]
+		end := strings.IndexByte(rest, quote[1])
+		if end < 0 {
+			continue
+		}
+		return rest[:end], true
+	}
+	return "", false
 }
 
 // TestTheStateScannersFindTheShapesTheyGuardAgainst.

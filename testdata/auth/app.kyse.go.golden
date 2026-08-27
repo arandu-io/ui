@@ -19,10 +19,20 @@ import "github.com/arandu-io/kyse/components"
 	     kit publishes is a form, so without this line none of them can say why
 	     they refused anything.
 	     422 comes before the catch-all because htmx takes the first entry that
-	     matches. See framework/http/context.go. --}}
-	<meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"422","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+	     matches. See framework/http/context.go.
+
+	     includeIndicatorStyles is false because htmx would otherwise inject a
+	     <style> element of its own on the first request, and the policy is
+	     style-src 'self' with no unsafe-inline: the browser refuses it, once per
+	     page, in a console nobody has open. The classes it would have written are
+	     in the stylesheet already. --}}
+	<meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"422","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
 	<title>{{ .PageTitle() }}</title>
-	<link rel="icon" href="/favicon.ico">
+	{{-- Both icons, because a browser picks by what it is given: the .ico is the
+	     one asked for by address and sizes="any" is what stops a modern browser
+	     rasterising it at one size, and the .png is what everything else takes. --}}
+	<link rel="icon" href="/favicon.ico" sizes="any">
+	<link rel="icon" href="/favicon.png" type="image/png">
 
 	{{-- What a page says about itself, written only when the page filled it in.
 	     An empty description is worse than none: a search engine that finds one
@@ -42,22 +52,27 @@ import "github.com/arandu-io/kyse/components"
 
 	<link rel="stylesheet" href="{{ view.URL("app.css") }}">
 	<script src="{{ view.URL("htmx.min.js") }}" defer></script>
-	{{-- Two scripts, and no third. State on this stack lives on the server: a
-	     handler decides and answers markup that is already correct, so there is
-	     no second copy of it here to keep in step. The attributes below say only
-	     where to ask and what to replace, and nothing reads a value back out of
-	     one.
+	{{-- These four, and no client framework beside them. State on this stack
+	     lives on the server: a handler decides and answers markup that is already
+	     correct, so there is no second copy of it here to keep in step. The hx-
+	     attributes below say only where to ask and what to replace, and nothing
+	     reads a value back out of one.
 
-	     What is left for the browser is what dies with the tab and the server
-	     never needs to hear about, and it is written with <details>,
-	     :focus-within or a checkbox. A framework that compiles directives out of
-	     strings cannot help with it here in any case: the policy is
-	     script-src 'self' with no unsafe-eval, so every such directive throws
-	     before it runs.
+	     What is left is what dies with the tab and the server never needs to hear
+	     about -- a menu that is open, a row that is selected -- and ui.js is where
+	     it lives. It binds once on document and dispatches on data- attributes,
+	     so markup htmx swaps in is live the moment it lands and there is nothing
+	     to initialise; open and selected are kept in the ARIA the markup already
+	     carries, which makes the DOM the only copy. It reads no expression, and
+	     it could not: the policy is script-src 'self' with no unsafe-eval, so
+	     anything compiling a directive out of a string throws before it runs.
 
-	     A third tag also has to have something to serve. view.URL answers a name
-	     nothing registered with /_arandu/assets/missing/<name>, which is a 404 on
-	     every page rather than an error anybody sees. --}}
+	     A fifth tag would also have to have something to serve, and view.URL is
+	     what decides: it panics on a name nothing registered, naming the ones
+	     that are, so a tag for an asset that does not exist takes the request
+	     down rather than 404ing quietly on every page. Register it with
+	     view.RegisterAsset before writing the tag. --}}
+	<script src="{{ view.URL("ui.js") }}" defer></script>
 	<script src="{{ view.URL("basecoat.bundle.js") }}" defer></script>
 	<script src="{{ view.URL("theme.js") }}"></script>
 </head>
