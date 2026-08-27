@@ -42,7 +42,15 @@ import "github.com/arandu-io/kyse/components"
 
 	<link rel="stylesheet" href="{{ view.URL("app.css") }}">
 	<script src="{{ view.URL("htmx.min.js") }}" defer></script>
-	<script src="{{ view.URL("alpine.min.js") }}" defer></script>
+	{{-- Alpine is not loaded here. Nothing in this layout or the screens under it
+	     uses it, and the collection embeds no alpine.min.js -- so the tag was a
+	     404 on every page of every project that published this kit, which
+	     view.URL answers with /_arandu/assets/missing/alpine.min.js.
+
+	     It stays the sanctioned way to hold ephemeral client state (RULE 13), and
+	     a project that reaches for it registers the asset and adds the tag back.
+	     Loading it for pages that have none is a request that costs and does
+	     nothing. --}}
 	<script src="{{ view.URL("basecoat.bundle.js") }}" defer></script>
 	<script src="{{ view.URL("theme.js") }}"></script>
 </head>
