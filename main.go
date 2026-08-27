@@ -140,7 +140,7 @@ func publishAuth(args []string) error {
 	// refusing, because the person believes the flag took.
 	if rest := fs.Args(); len(rest) > 0 {
 		return fmt.Errorf("unknown argument %q.\n"+
-			"There is no preset to choose: the kit publishes one set of screens (ADR 0026).\n"+
+			"There is no preset to choose: the kit publishes one set of screens.\n"+
 			"Run `auth`, optionally with --force, --views or --dry-run", rest[0])
 	}
 
@@ -237,7 +237,7 @@ What this kit does NOT decide is your rules. The handlers are yours from the
 moment they are written: the minimum password length, whether registration is
 open, what a confirmed address is allowed to do. Every one of those is a line
 you can read, in app/Http/Controllers/Auth/, inside a custom block that
-survives a --force. See ADR 0022.
+survives a --force.
 
 The two messages go out through your mailer. In development that is
 MAIL_URL=log://, so the links land in the output of aru dev and the flow works
