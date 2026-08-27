@@ -74,7 +74,7 @@ fixture arrives, the command is already right.
 | 23 files published by `auth` — 14 views and 9 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 17 of those refreshed by `auth --views` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 23 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 62 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
+| 67 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
 | 14 routes mounted by the module it publishes | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
 | 0 dependencies, and that is a CI step | `grep -E '^[[:space:]]*require' go.mod \| wc -l` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
@@ -98,6 +98,29 @@ screen answering that hands htmx a whole document for a form-shaped hole — the
 header, the navigation and a second toaster land inside the card, with a green
 build and a correct status. The kit shipped exactly that on `auth/login.kyse.go`
 until the form moved to `partials/login_form.kyse.go`.
+
+**Who owns which state, and what will fail if you get it wrong.** Four things in
+a published page can hold a value, and what tells them apart is when each is next
+drawn: a component is re-run wherever its caller is and keeps nothing, the layout
+runs once per document and no swap redraws it, a screen is the whole document for
+one request, and a fragment is what is inside one swap target. Three of those
+seams are typed — the layout renders through `view.Layout` and a component is
+handed the page as `components.Page`, so neither can name a field of a screen.
+The fourth is one type, because `@include` hands the page's own data straight
+through, so these read the published bytes instead:
+
+| gate | what it refuses |
+| --- | --- |
+| `TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap` | a field an `m.fragment` call fills that the named part does not draw — the screen around it is not being rendered, so the value is sent and dropped |
+| `TestNothingTheLayoutDrawsIsRedrawnInsideASwap` | a value drawn by the layout and inside a swap target as well, without `hx-swap-oob` — two copies, and only the inner one refreshed |
+| `TestNoPublishedViewKeepsStateInTheBrowser` | `x-data` and its relatives in any published view: nothing the layout loads reads one, and `script-src 'self'` has no `unsafe-eval` |
+| `TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries` | a head element the skeleton's layout has and this one does not — publishing replaces that file with no flag, so a project loses it silently |
+
+What the browser does own is what dies with the tab, and it has a home: `ui.js`,
+loaded by the layout. It binds on `document`, dispatches on `data-` attributes,
+keeps open and selected in the ARIA the markup already carries, and evaluates
+nothing — so the DOM is the only copy and swapped-in markup is live where it
+lands.
 
 ## What does not exist here
 

@@ -53,8 +53,20 @@ Five files are replaced without `--force`: the layout, `page.go`, `home`,
 the layout and everything that extends it are one unit; publishing a new layout
 beside the old pages leaves a project that builds and fails to render.
 
-The stack is HTMX, Alpine and Tailwind v4, with the CSS compiled by a single
-pinned binary. No Node, no bundler, no lockfile.
+The stack is HTMX and Tailwind v4, with the CSS compiled by a single pinned
+binary. No Node, no bundler, no lockfile — and no client framework: the layout
+this kit publishes loads htmx, `ui.js`, the component script and the theme
+switch, and none of them reads an expression out of an attribute. It could not.
+The policy is `script-src 'self'` with no `unsafe-eval`.
+
+So state lives on the server, and the answer to a request is what says so. A
+handler decides and writes markup that is already correct, which leaves nothing
+in the browser to keep in step. What dies with the tab — a menu that is open, a
+row that is selected — is `ui.js`'s, kept in the ARIA the markup already carries,
+so the DOM holds the only copy. The gates that hold the kit to it read the
+published bytes: a fragment may not carry a layout, a handler answering one may
+fill only what it draws, nothing the layout draws is drawn inside a swap as well,
+and no view keeps a value in an `x-` attribute.
 
 ## Learning Arandu
 

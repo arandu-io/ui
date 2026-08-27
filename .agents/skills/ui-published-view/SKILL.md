@@ -16,8 +16,8 @@ is the shape their next form copies.
 
 ## Where each screen lives
 
-`AuthViews` in `views.go:55` is the list, and it is the map from constant to
-published path. Thirteen views come out of it, plus `page.go`, the struct they
+`AuthViews` in `views.go:110` is the list, and it is the map from constant to
+published path. Fourteen views come out of it, plus `page.go`, the struct they
 all render from:
 
 | published path | constant |
@@ -31,6 +31,7 @@ all render from:
 | `resources/views/auth/passwords/confirm.kyse.go` | `authPasswordConfirmViewTemplate` |
 | `resources/views/auth/passwords/email.kyse.go` | `authPasswordEmailViewTemplate` |
 | `resources/views/auth/passwords/reset.kyse.go` | `authPasswordResetViewTemplate` |
+| `resources/views/partials/login_form.kyse.go` | `authLoginFormPartialTemplate` |
 | `app/Http/Controllers/Auth/page.go` | `authPageTemplate` |
 
 The four message bodies are in `views_auth_flow.go`: `verifyMailViewTemplate`,
@@ -60,7 +61,7 @@ clause — the package is the directory's, because the generated Go sits beside
 the source and one directory is one Go package. `auth/login.kyse.go` is
 `package auth`; a file under `resources/views/` itself is `package views`.
 
-**2. Read what the screen is allowed to read.** `AuthPage` in `views.go:135` is
+**2. Read what the screen is allowed to read.** `AuthPage` in `views.go:210` is
 the struct, published to `app/Http/Controllers/Auth/page.go`. It embeds
 `view.Page` for the chrome — title, description, token, navigation — and adds
 the form state: `Status`, `Name`, `Email`, `Remember`, `ResetToken`, the six
@@ -98,19 +99,19 @@ markup error surfaces before somebody else's build.
 
 ## What kyse does not have
 
-`TestTheAuthViewsInventNoDirective` at `views_internal_test.go:148` reads every
+`TestTheAuthViewsInventNoDirective` at `views_internal_test.go:156` reads every
 view and fails on any of these:
 
 `@vite` `@auth` `@guest` `@error` `@can` `@props` `@stack` `@push` `@forelse`
 `@switch` `@fonts` `<x-`
 
-`TestTheAuthViewsReachForNoHelper` at `views_internal_test.go:183` fails on
+`TestTheAuthViewsReachForNoHelper` at `views_internal_test.go:191` fails on
 `config(` `route(` `auth()` `__(` `old(` `session(` `Route::has`. Everything a
 screen shows came from the handler, in the struct. The guest branch of the
 navigation is `@if(!.SignedIn())`; a validation message is asked for by the
 component, through `FieldError`.
 
-What the thirteen views actually use, and it is the whole set they need —
+What the fourteen views actually use, and it is the whole set they need —
 `grep -ho '@[a-z]*' views.go views_auth_flow.go | sort | uniq -c`:
 
 `@extends` `@section`/`@endsection` `@yield` `@if`/`@endif` `@go`/`@endgo`
@@ -120,7 +121,7 @@ which is stripped and never reaches the page. There is no loop in any of them.
 Before reaching for a directive that is on neither list, check the compiler
 rather than this file: it is the CLI's, and its set is closed.
 
-## Four rules that will bite you
+## Rules that will bite you
 
 **Never interpolate where an attribute name goes.** An HTML entity is not
 decoded in an attribute name, so a value written there is read as syntax. Every
@@ -136,7 +137,7 @@ than guarded. A conditional attribute is `@if` around the whole attribute:
 ```
 
 `TestNoScreenInterpolatesWhereAnAttributeNameGoes` at
-`views_internal_test.go:216` holds every screen to it. The kit shipped exactly
+`views_internal_test.go:224` holds every screen to it. The kit shipped exactly
 one such site — a helper answering `checked` or nothing — and nothing could be
 injected through it; it was still wrong to publish, because these screens are
 what a project copies.
@@ -149,10 +150,42 @@ stored cross-site scripting the first time a `Status` comes from a person.
 plus the semantic classes the stylesheet ships — `card`, `btn`, `input`,
 `field`. A class the stylesheet has never heard of renders as nothing at all,
 which looks like a broken build.
-`TestTheAuthViewsCarryNoBootstrap` at `views_internal_test.go:166` names the
+`TestTheAuthViewsCarryNoBootstrap` at `views_internal_test.go:174` names the
 ones that already got in once: `form-control`, `btn btn-`, `btn-primary`,
 `card-body`, `card-header`, `navbar-nav`, `col-md-`, `invalid-feedback`,
 `alert-success`.
+
+**Draw a value on the side of the swap that answers it.** Four things in a
+published page can hold state — a component, the layout, the screen, and the
+fragment a swap puts inside it — and what tells them apart is when each is next
+drawn. The layout runs once per document and no swap redraws it; a screen is
+answered whole or not at all; a fragment is what is inside one swap target.
+
+So a handler answering `partials.login_form` may fill only what that file draws.
+`Status` is drawn by `auth/login.kyse.go`, above the card and outside the form —
+fill it on the fragment path and it is computed, sent and dropped, with a correct
+status and correct markup in the hole.
+`TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap` in
+`publish_internal_test.go` reads which fields each `m.fragment` call fills
+against which fields the named part draws, following the `FieldError`
+indirection. `TestNothingTheLayoutDrawsIsRedrawnInsideASwap` refuses the mirror
+image: a value drawn by the layout *and* inside a swap target is one value with
+two copies, and only the inner one is ever refreshed.
+
+**No `x-data`, and none of its relatives.** State on this stack is the server's.
+Nothing the layout loads reads such an attribute, and nothing could — the policy
+is `script-src 'self'` with no `unsafe-eval`, so a framework compiling a
+directive out of a string throws before it runs. What dies with the tab is
+`ui.js`'s: it binds on `document`, dispatches on `data-` attributes and keeps
+open and selected in the ARIA the markup already carries, so the DOM holds the
+only copy. `TestNoPublishedViewKeepsStateInTheBrowser` in
+`publish_internal_test.go` reads every published view for one.
+
+**The layout's head is not yours to shrink.** It is in `replaced`, so publishing
+overwrites the skeleton's with no flag at all — an element only the skeleton had
+is one every project loses silently.
+`TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries` compares the two heads
+element by element and skips when `../arandu` is not checked out.
 
 **Do not type the framework's name into published markup.** The brand is
 `.BrandName`, filled from the application's own configuration. The verification
