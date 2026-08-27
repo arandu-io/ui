@@ -65,6 +65,30 @@ here: with zero `.kyse.go` files and zero `.go` files under `testdata/`,
 `gofmt -l .` exits 0 too. Keep them anyway — the day a real view or a real Go
 fixture arrives, the command is already right.
 
+## What it refuses to publish into
+
+`auth` reads the `[arandu] aru` line of the project's `arandu.toml` before it
+writes anything, and refuses a project whose floor is below `aruFloor` in
+`publish.go` — today `v0.30.0`, measured by publishing into a copy of the
+skeleton and compiling one view at a time with one installed CLI per tag:
+`v0.29.1` refuses five of the fourteen — `auth/register.kyse.go`, the three
+under `auth/passwords/`, and `partials/login_form.kyse.go`, which share a
+`components.FieldProps` literal written across several lines inside `{!! !!}` —
+and `v0.30.0` through `v0.34.0` each compile all fourteen. Sign-in is one of the
+nine that compile either way, so the set has to be measured and not sampled.
+
+The floor and not the `aru` on PATH. `arandu.mod.toml` declares `exec = false`,
+so this module runs nothing; and a CLI built from source or installed with `go
+install` reports `dev`, which is every CLI anyone working on this project has.
+What the floor answers is the durable question — `aru view:build` reads it
+first and refuses a CLI below it, so a floor set too low switches off the one
+mechanism that would have said "your aru is old" instead of sixty messages
+about markup that is correct.
+
+`--dry-run` is exempt, and the split is the point: it is asked what would be
+written and answers that, which is why the counts below still measure against
+`../arandu` while the skeleton's floor is `v0.29.1` — a floor this kit refuses.
+
 ## What this repository holds
 
 | | measured with |
@@ -74,7 +98,7 @@ fixture arrives, the command is already right.
 | 23 files published by `auth` — 14 views and 9 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 17 of those refreshed by `auth --views` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 23 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 67 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
+| 71 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
 | 14 routes mounted by the module it publishes | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
 | 0 dependencies, and that is a CI step | `grep -E '^[[:space:]]*require' go.mod \| wc -l` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |

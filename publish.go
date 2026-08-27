@@ -128,6 +128,159 @@ func readModulePath(root string) (string, error) {
 	return "", errModulePath
 }
 
+// aruFloor is the oldest released CLI whose view compiler can build the views
+// this kit publishes.
+//
+// It is measured against the tags on the proxy rather than reasoned about.
+// Published into a copy of the skeleton and compiled one view at a time, aru
+// v0.29.1 refuses five of the fourteen -- auth/register.kyse.go, the three
+// under auth/passwords/, and partials/login_form.kyse.go -- each with "the Go
+// generated from ... does not parse -- this is a bug in the generator:
+// kyse-generated:2: missing ',' in composite literal". The five share one
+// shape: a components.FieldProps literal written across several lines inside
+// {!! !!}. The other nine compile, sign-in among them, which is why the whole
+// set has to be measured rather than sampled. v0.30.0, v0.31.0, v0.32.0,
+// v0.33.0 and v0.34.0 each compile all fourteen.
+//
+// Raise it when a view here starts using something an older released CLI
+// cannot compile, and measure the new number the same way: publish into a copy
+// of a project and run `view:build` with one installed CLI per tag. A number
+// that was guessed refuses a CLI that works, or admits one that does not, and
+// neither is visible from here.
+const aruFloor = "v0.30.0"
+
+// aruFloorSection and aruFloorKey are where a project declares the oldest CLI
+// it can be built with.
+const (
+	aruFloorSection = "arandu"
+	aruFloorKey     = "aru"
+)
+
+// declaredAruFloor is the version a project names as the oldest CLI it accepts,
+// and "" for a project that names none.
+//
+// Read line by line rather than parsed: one key of one section is wanted, and a
+// TOML library would be the first dependency this module has ever had -- one
+// downloaded by everybody who runs the command, to read a single string.
+//
+// A key outside [arandu] is passed over rather than refused. This file belongs
+// to the CLI and to `aru font:add`, and a section this function does not own is
+// not a mistake.
+func declaredAruFloor(manifest string) string {
+	var section string
+	for _, raw := range strings.Split(manifest, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.Trim(line, "[]")
+			continue
+		}
+		if section != aruFloorSection {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != aruFloorKey {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(value), `"`)
+	}
+	return ""
+}
+
+// semver reads "v1.2.3" or "1.2.3", and reports whether it read one.
+func semver(s string) ([3]int, bool) {
+	var out [3]int
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(s), "v"), ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+// olderThan reports whether a comes before b.
+func olderThan(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
+// checkAruFloor refuses to publish into a project that would accept a CLI too
+// old to compile the screens about to land in it.
+//
+// The floor and not the CLI on PATH, and the difference is the whole design.
+// This module declares exec = false in arandu.mod.toml: it writes files and
+// runs nothing, so `aru version` is not a question it may ask. Nor would the
+// answer be worth much -- a CLI built from source or installed with `go
+// install` reports "dev", which is every CLI a person working on this project
+// has.
+//
+// What the floor answers instead is the durable question. arandu.toml is
+// already the mechanism: `aru view:build` reads that line first and refuses a
+// CLI below it, naming both versions and the command that fixes it. A floor
+// under aruFloor switches that mechanism off for exactly the CLIs that cannot
+// compile these views, so the person meets the failure the floor exists to
+// prevent -- one message per line, each naming markup that is correct, none of
+// them saying the CLI is what is old. And it answers for everybody who opens
+// the project afterwards, not only for the machine that ran this command.
+//
+// Refused rather than raised here. A published file is the project's, and this
+// kit does not edit a project's configuration behind its back for the same
+// reason it prints the three lines of wiring instead of writing them into
+// bootstrap/app.go: one line somebody reads beats a file that changed while
+// they were not looking.
+func checkAruFloor(root string) error {
+	body, err := os.ReadFile(filepath.Join(root, aruFile))
+	if err != nil {
+		return err
+	}
+
+	declared := declaredAruFloor(string(body))
+	have, ok := semver(declared)
+	want, _ := semver(aruFloor)
+	switch {
+	case declared == "":
+		return fmt.Errorf("this project names no oldest aru, so it accepts any of them, and the screens "+
+			"this kit publishes need aru %s.\n\n%s", aruFloor, aruFloorFix)
+	case !ok:
+		return fmt.Errorf("this project's oldest aru is %q, which is not a version, and the screens this kit "+
+			"publishes need aru %s.\n\n%s", declared, aruFloor, aruFloorFix)
+	case olderThan(have, want):
+		return fmt.Errorf("this project accepts aru %s, and the screens this kit publishes need aru %s.\n\n%s",
+			declared, aruFloor, aruFloorFix)
+	}
+	return nil
+}
+
+// aruFile is the project's manifest, and it is one of the three files that make
+// a directory a project -- so reaching this code means it is there.
+const aruFile = "arandu.toml"
+
+// aruFloorFix is the rest of every refusal above: what the line does, what
+// happens without it, and the one edit that ends the matter.
+const aruFloorFix = `The [` + aruFloorSection + `] ` + aruFloorKey + ` line in ` + aruFile + ` is what tells a CLI that it is
+too old, and ` + "`aru view:build`" + ` reads it before it compiles anything. Set below
+` + aruFloor + `, it lets through a CLI that refuses these views one message per line --
+each naming markup that is correct, and none of them saying the CLI is what
+is old.
+
+In ` + aruFile + `, under [` + aruFloorSection + `]:
+
+    ` + aruFloorKey + ` = "` + aruFloor + `"
+
+A floor and not a pin: a newer CLI is always fine. Nothing has been written.`
+
 // write puts the files in the project.
 //
 // Five of them replace what is there without --force, and that is not a

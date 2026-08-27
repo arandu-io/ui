@@ -286,3 +286,133 @@ func TestViewsOnlyPublishesTheScreensAndTheLayoutUnit(t *testing.T) {
 		}
 	}
 }
+
+// project writes the three files that make a directory a project, with the
+// oldest aru it accepts, and answers its root.
+//
+// A floor of "" leaves the [arandu] section out altogether, which is the shape
+// of every project generated before the line existed.
+func project(t *testing.T, floor string) string {
+	t.Helper()
+	root := t.TempDir()
+	manifest := "# The build tools this project downloads, pinned.\n\n[tools]\ntailwindcss = \"v4.3.3\"\n"
+	if floor != "" {
+		manifest = "[arandu]\naru = \"" + floor + "\"\n\n" + manifest
+	}
+	for name, body := range map[string]string{
+		"go.mod":      "module example.test/shop\n\ngo 1.26\n",
+		"main.go":     "package main\n\nfunc main() {}\n",
+		"arandu.toml": manifest,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// TestTheAruFloorIsReadFromTheSectionThatOwnsIt.
+//
+// arandu.toml has four sections and three owners: [tools] is the Tailwind pin,
+// [fonts.*] belongs to `aru font:add`, and [arandu] is the one this reads. A
+// reader that took the first `aru = ` it saw would answer with a font's key or
+// a line inside a comment, and answer confidently -- which is worse here than
+// answering nothing, because the number decides whether anything is published.
+func TestTheAruFloorIsReadFromTheSectionThatOwnsIt(t *testing.T) {
+	for _, c := range []struct {
+		name, manifest, want string
+	}{
+		{"the shape the skeleton ships", "[arandu]\naru = \"v0.29.1\"\n\n[tools]\ntailwindcss = \"v4.3.3\"\n", "v0.29.1"},
+		{"a project that names none", "[tools]\ntailwindcss = \"v4.3.3\"\n", ""},
+		{"the same key under another section is not it", "[tools]\naru = \"v0.1.0\"\n", ""},
+		{"nor is one under a section that comes after", "[arandu]\n\n[fonts.display]\naru = \"v0.1.0\"\n", ""},
+		{"a commented line is not a declaration", "[arandu]\n# aru = \"v0.1.0\"\n", ""},
+		{"unquoted and spaced reads the same", "[arandu]\n  aru   =   v0.31.0  \n", "v0.31.0"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := declaredAruFloor(c.manifest); got != c.want {
+				t.Errorf("read %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI.
+//
+// The two cases in the middle are why the comparison is numeric. Compared as
+// text, "v0.9.0" sorts after "v0.30.0" and "v0.100.0" sorts before it, so a
+// guard written with a string compare refuses the CLI that works and admits the
+// one that does not -- which is the whole failure, inverted, and green.
+func TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI(t *testing.T) {
+	for _, c := range []struct {
+		name, floor string
+		refused     bool
+	}{
+		{"the floor itself", aruFloor, false},
+		{"a newer one", "v0.34.0", false},
+		{"a newer minor that sorts earlier as text", "v0.100.0", false},
+		{"an older one that sorts later as text", "v0.9.0", true},
+		{"the one the skeleton ships", "v0.29.1", true},
+		{"a project that names none", "", true},
+		{"a floor that is not a version", "latest", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkAruFloor(project(t, c.floor))
+			if c.refused && err == nil {
+				t.Fatalf("a project whose oldest aru is %q was published into, and %s cannot compile these views",
+					c.floor, c.floor)
+			}
+			if !c.refused && err != nil {
+				t.Fatalf("a project whose oldest aru is %q was refused, and that CLI compiles these views: %v",
+					c.floor, err)
+			}
+			if err == nil {
+				return
+			}
+			// The refusal has to carry the edit, not only the complaint. A
+			// message that says no without saying what to type is what sends
+			// somebody to the source of a tool they only wanted to run.
+			for _, want := range []string{aruFloor, "arandu.toml", "[arandu]", `aru = "` + aruFloor + `"`} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not mention %q:\n%v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens is the guard on
+// the path a person actually runs, and it is the half that matters.
+//
+// checkAruFloor answering correctly is worth nothing if the command writes
+// first and asks afterwards: a project would be left holding twenty-three files
+// it cannot build, plus a refusal explaining why. So this drives `auth` itself,
+// from inside a project, and looks at the disk.
+func TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens(t *testing.T) {
+	root := project(t, "v0.29.1")
+	t.Chdir(root)
+
+	if err := publishAuth(nil); err == nil {
+		t.Fatal("auth published into a project whose oldest aru cannot compile the views it writes")
+	}
+
+	for _, gone := range []string{"app", "resources"} {
+		if _, err := os.Stat(filepath.Join(root, gone)); err == nil {
+			t.Errorf("%s/ was written before the project was refused, so the refusal left a tree behind", gone)
+		}
+	}
+}
+
+// TestDryRunAnswersWhatWouldBeWrittenWhateverTheProjectAccepts.
+//
+// The two questions are different and the flag names one of them. --dry-run is
+// asked what this command would write, and the answer does not depend on which
+// CLI the project accepts -- it is the same twenty-three files either way. The
+// floor decides whether they may land, which is the other question, and it is
+// asked where landing happens.
+func TestDryRunAnswersWhatWouldBeWrittenWhateverTheProjectAccepts(t *testing.T) {
+	t.Chdir(project(t, "v0.29.1"))
+	if err := publishAuth([]string{"--dry-run"}); err != nil {
+		t.Fatalf("--dry-run was refused, and it writes nothing to refuse: %v", err)
+	}
+}

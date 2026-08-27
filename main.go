@@ -168,6 +168,16 @@ func publishAuth(args []string) error {
 		return nil
 	}
 
+	// After --dry-run and before the first byte is written, which is where this
+	// question belongs. --dry-run is asked what would be written and answers
+	// that; this is asked whether it may land, and a project that cannot
+	// compile these screens is one they may not land in. Nothing is written
+	// when it refuses, so the two answers never disagree about a half-published
+	// tree.
+	if err := checkAruFloor(root); err != nil {
+		return err
+	}
+
 	fmt.Printf("publishing the sign-in screens into %s\n\n", modulePath)
 	if err := write(root, files, *force, os.Stdout); err != nil {
 		return err
