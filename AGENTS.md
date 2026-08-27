@@ -120,12 +120,12 @@ them is missing by accident; each was considered and refused.
 command is meant to be run again for a fix from a newer version. That only works
 because what somebody wrote inside `arandu:begin custom` … `arandu:end custom`
 is carried forward, and because five files — the layout unit — are the only ones
-replaced without a flag. Nine of the 22 published files carry such a block: five
+replaced without a flag. Nine of the 23 published files carry such a block: five
 in Go comment syntax, four in kyse comment syntax, because a `//` below the
 package clause of a `.kyse.go` is markup that would be printed into an e-mail.
 
 **The golden files are the product.** They are not a convenience for the suite;
-they are the 22 files a project receives. `TestAuthGolden` in
+they are the 23 files a project receives. `TestAuthGolden` in
 `publish_internal_test.go:28` compares them byte for byte, and CI regenerates
 them and fails on a dirty tree.
 
