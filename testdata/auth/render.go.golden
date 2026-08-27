@@ -10,6 +10,7 @@ import (
 	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
+	"github.com/arandu-io/framework/security"
 	"github.com/arandu-io/framework/view"
 )
 
@@ -131,7 +132,10 @@ func SignedInName(ctx context.Context, people *auth.Service, tenant, id string) 
 	if id == "" || people == nil {
 		return ""
 	}
-	names, err := people.Names(ctx, tenant, []string{id})
+	// PublicNames authorizes against the reader rather than taking a tenant
+	// string, so the policy sees who is asking. The reader here is the person
+	// being greeted, scoped to the tenant the caller passed.
+	names, err := people.PublicNames(ctx, security.Subject{Tenant: tenant}, []string{id})
 	if err != nil || names[id] == "" {
 		return id
 	}
