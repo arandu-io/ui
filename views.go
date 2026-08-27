@@ -5,10 +5,11 @@ import (
 	"strings"
 )
 
-// The nine screens of the starter kit.
+// The nine screens of the starter kit, and the one fragment they are answered
+// with.
 //
-// They are the ones every application has, at the paths people look for: the
-// layout, the dashboard, the welcome page, sign in, sign up, email
+// The screens are the ones every application has, at the paths people look for:
+// the layout, the dashboard, the welcome page, sign in, sign up, email
 // verification, and the three password screens. Keeping the names and the tree
 // is the whole point -- somebody looking for the password reset form opens
 // `resources/views/auth/passwords/reset.kyse.go` and finds it there.
@@ -44,14 +45,28 @@ import (
 // a validation message is a field of the Field component. That is more
 // characters and one less language.
 
-// AuthViews returns the nine views plus the struct they render, ready to be
-// written into a project.
+// AuthViews returns the views plus the struct they render, ready to be written
+// into a project.
 //
 // The sources keep the conventional tree under `resources/views`, and
 // `aru view:build` writes the generated Go beside each one -- so `auth/` holds
 // the four files of `auth/` and nothing else. Each directory is its own package,
 // which costs one blank import per directory in bootstrap and is the same
 // registration the whole design is built on.
+//
+// # Three kinds of file, told apart by where they are
+//
+// The directory is the declaration, and nothing else has to be remembered:
+//
+//   - layouts/ is the frame. It yields sections and extends nothing.
+//   - partials/ is a fragment: no layout, so it can be swapped into a page that
+//     is already on screen.
+//   - mail/ is a message body: no layout either, for a different reason -- there
+//     is no navigation and no token in an e-mail.
+//   - everything else is a screen, and extends the layout.
+//
+// TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne reads the published
+// bytes and holds each file to the kind its path claims.
 func AuthViews(m Module) ([]File, error) {
 	dir := filepath.Join("resources", "views")
 
@@ -69,6 +84,12 @@ func AuthViews(m Module) ([]File, error) {
 		{filepath.Join(dir, "auth", "passwords", "confirm.kyse.go"), authPasswordConfirmViewTemplate},
 		{filepath.Join(dir, "auth", "passwords", "email.kyse.go"), authPasswordEmailViewTemplate},
 		{filepath.Join(dir, "auth", "passwords", "reset.kyse.go"), authPasswordResetViewTemplate},
+
+		// The one fragment. It is the sign-in form, because the sign-in form is
+		// the one control in the kit that asks to be answered on its own -- see
+		// authLoginFormPartialTemplate for why that makes it a file with no
+		// layout rather than a section of the screen it is drawn on.
+		{filepath.Join(dir, "partials", "login_form.kyse.go"), authLoginFormPartialTemplate},
 
 		// The message bodies. Both parts of both messages: a mail with no
 		// plain-text part is filed as spam more often, and shows nothing at all
@@ -504,6 +525,10 @@ type WelcomeData = authui.AuthPage
 // password was changed -- and with no block for it the string was computed,
 // passed and thrown away: somebody who had just finished a password reset was
 // shown an ordinary sign-in form with nothing on it to say the reset worked.
+//
+// The form itself is not here. It is a partial, because it is the one control
+// the kit publishes that is answered on its own -- see
+// authLoginFormPartialTemplate.
 const authLoginViewTemplate = `//go:build kyse
 
 package auth
@@ -537,53 +562,130 @@ type LoginData = authui.AuthPage
 				<h1 class="text-base font-semibold tracking-tight">Login</h1>
 			</header>
 
-			{{-- hx-target and hx-swap on the form itself: a rejected login answers
-			     422 with this form and its messages, and the swap puts it back
-			     where it was without a page load. --}}
-			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}"
-				hx-post="{{ .LoginURL }}" hx-target="this" hx-swap="outerHTML">
-				@csrf
-
-				{!! components.Field(components.FieldProps{
-					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Page: .,
-					Autocomplete: "username", Required: true, Autofocus: true,
-				}) !!}
-
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "Password", Type: "password",
-					Page: .,
-					Autocomplete: "current-password", Required: true,
-				}) !!}
-
-				<label class="flex items-center gap-2 text-sm">
-					{{-- checked is a presence attribute: a browser reads the box as
-					     ticked whether the value is "true", "false" or empty, so what
-					     is conditional is the attribute and not its value. @if writes
-					     the whole attribute or none of it, which is how every other
-					     boolean attribute in a kyse view is drawn. --}}
-					<input
-						class="input"
-						type="checkbox"
-						name="remember"
-						value="1"
-						@if(.Remember)
-							checked
-						@endif
-					>
-					Remember me
-				</label>
-
-				<div class="flex items-center justify-between gap-3">
-					<button type="submit" class="btn">Login</button>
-					@if(.HasPasswordReset)
-						<a class="text-muted-foreground text-sm hover:underline" href="{{ .PasswordRequestURL }}">Forgot your password?</a>
-					@endif
-				</div>
-			</form>
+			{{-- The form is a file of its own, and it is the one part of this
+			     screen the server ever answers alone: a rejected sign-in comes
+			     back as the form and nothing else, and htmx puts it where this
+			     one is. @include hands over this page's data unchanged, so the
+			     form reads the same struct whichever of the two drew it. --}}
+			@include('partials.login_form')
 		</section>
 	</div>
 @endsection
+`
+
+// authLoginFormPartialTemplate is the sign-in form, and the one fragment the kit
+// publishes.
+//
+// It is a file of its own because of the two attributes on the form:
+// hx-target="this" and hx-swap="outerHTML" say that a rejected sign-in replaces
+// the form and nothing else. What the server answers has to be the shape of that
+// hole. A view that extends the layout is a whole document, and htmx handed one
+// for a form-shaped hole puts the header, the navigation and a second toaster
+// inside the card -- with a green build, a correct status and a page that looks
+// like it rendered twice.
+//
+// So the rule is mechanical rather than remembered: a view under partials/ has
+// no layout, every other screen has one, and
+// TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne reads the bytes of every
+// published view to keep the two apart. It is the same shape the portal already
+// uses for the marks it draws over and over.
+//
+// The screen draws it with @include, which hands over the page's own data
+// unchanged, and the handler answers it directly with Module.fragment. AuthPage
+// either way, so the form reads the same fields whichever one rendered it.
+const authLoginFormPartialTemplate = `//go:build kyse
+
+// Package partials holds the parts of a screen the server answers on their own.
+//
+// A file here draws exactly its own markup and no layout around it, which is
+// what lets it be swapped into the middle of a page that is already on screen.
+// A file that draws a whole document belongs beside the screens instead.
+//
+// # Where state lives
+//
+// On the server, and the answer to a request is what says so. A handler reads
+// the form, decides, and writes markup that is already correct -- so there is no
+// second copy of the truth in the browser to keep in step, and nothing to
+// reconcile when the two disagree.
+//
+// An hx- attribute holds no state. It says where to ask (hx-post), what to
+// replace (hx-target) and how (hx-swap), and that is a routing decision about
+// the DOM: nothing reads a value back out of one to decide anything.
+//
+// The browser owns what dies with the tab and the server never needs to hear
+// about -- a disclosure that is open, a field that has focus. There is no client
+// framework here to hold it: the policy is script-src 'self' with no
+// unsafe-eval, so anything that compiles a directive from a string throws before
+// it runs. What needs that shape is written with <details>, :focus-within or a
+// checkbox; what does not fit is an endpoint.
+//
+// A form value is not client state. The address still in the box after a
+// rejected sign-in came back from the server in the answer below.
+package partials
+
+import (
+	"github.com/arandu-io/kyse/components"
+
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+// LoginFormData is what the sign-in form draws.
+//
+// It is the sign-in screen's own struct: @include hands the page's data
+// straight through, and the handler that answers this form alone fills the same
+// one.
+type LoginFormData = authui.AuthPage
+@endgo
+
+{{-- One element, and deliberately: hx-swap="outerHTML" replaces the target with
+     everything this file draws, so a second top-level element here would land
+     beside the form rather than inside it.
+
+     method="post" and action are the path with scripts off. htmx never reaches
+     them, and without them a browser that is not running it has nothing to
+     submit. --}}
+<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}"
+	hx-post="{{ .LoginURL }}" hx-target="this" hx-swap="outerHTML">
+	@csrf
+
+	{!! components.Field(components.FieldProps{
+		Name: "email", Label: "Email", Type: "email",
+		Value: .Email, Page: .,
+		Autocomplete: "username", Required: true, Autofocus: true,
+	}) !!}
+
+	{!! components.Field(components.FieldProps{
+		Name: "password", Label: "Password", Type: "password",
+		Page: .,
+		Autocomplete: "current-password", Required: true,
+	}) !!}
+
+	<label class="flex items-center gap-2 text-sm">
+		{{-- checked is a presence attribute: a browser reads the box as ticked
+		     whether the value is "true", "false" or empty, so what is conditional
+		     is the attribute and not its value. @if writes the whole attribute or
+		     none of it, which is how every other boolean attribute in a kyse view
+		     is drawn. --}}
+		<input
+			class="input"
+			type="checkbox"
+			name="remember"
+			value="1"
+			@if(.Remember)
+				checked
+			@endif
+		>
+		Remember me
+	</label>
+
+	<div class="flex items-center justify-between gap-3">
+		<button type="submit" class="btn">Login</button>
+		@if(.HasPasswordReset)
+			<a class="text-muted-foreground text-sm hover:underline" href="{{ .PasswordRequestURL }}">Forgot your password?</a>
+		@endif
+	</div>
+</form>
 `
 
 // authRegisterViewTemplate is the sign-up screen.

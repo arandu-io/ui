@@ -70,20 +70,34 @@ fixture arrives, the command is already right.
 | | measured with |
 | --- | --- |
 | 5 Go source files, one package, no subdirectories | `ls *.go \| grep -v _test.go \| wc -l` |
-| 22 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
-| 22 files published by `auth` — 13 views and 9 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
-| 16 of those refreshed by `auth --views` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
-| 22 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 61 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
+| 23 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
+| 23 files published by `auth` — 14 views and 9 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
+| 17 of those refreshed by `auth --views` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
+| 23 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
+| 62 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
 | 14 routes mounted by the module it publishes | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
 | 0 dependencies, and that is a CI step | `grep -E '^[[:space:]]*require' go.mod \| wc -l` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
 
-Of the 13 views, 9 are screens — the layout, home, welcome, and the six auth
-screens — and 4 are message bodies, an HTML part and a plain-text part for each
-of the two messages the flow sends. A mail body is not a screen: it has no
-layout, no navigation and no token, and `TestTheAuthViewsAreNineAndWellFormed`
-in `views_internal_test.go:20` counts the two groups separately for that reason.
+Of the 14 views, 9 are screens — the layout, home, welcome, and the six auth
+screens — 4 are message bodies, an HTML part and a plain-text part for each of
+the two messages the flow sends, and 1 is a fragment. The three are counted
+separately by `TestTheAuthViewsAreNineAndWellFormed` in
+`views_internal_test.go:20`, because they are different things: a mail body has
+no layout, no navigation and no token, and a fragment has no layout either but
+for the opposite reason — it is swapped **into** a page that already drew one.
+
+**The directory says which, and the source has to agree.** `layouts/` yields
+sections, `partials/` and `mail/` carry no layout, everything else under
+`resources/views/` extends one, and
+`TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne` in
+`publish_internal_test.go` reads the published bytes to hold each file to the
+kind its path claims. It also refuses `hx-target` or `hx-swap` anywhere but in a
+fragment: an element carrying one asks the server for its own markup back, and a
+screen answering that hands htmx a whole document for a form-shaped hole — the
+header, the navigation and a second toaster land inside the card, with a green
+build and a correct status. The kit shipped exactly that on `auth/login.kyse.go`
+until the form moved to `partials/login_form.kyse.go`.
 
 ## What does not exist here
 

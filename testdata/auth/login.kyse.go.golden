@@ -31,50 +31,12 @@ type LoginData = authui.AuthPage
 				<h1 class="text-base font-semibold tracking-tight">Login</h1>
 			</header>
 
-			{{-- hx-target and hx-swap on the form itself: a rejected login answers
-			     422 with this form and its messages, and the swap puts it back
-			     where it was without a page load. --}}
-			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}"
-				hx-post="{{ .LoginURL }}" hx-target="this" hx-swap="outerHTML">
-				@csrf
-
-				{!! components.Field(components.FieldProps{
-					Name: "email", Label: "Email", Type: "email",
-					Value: .Email, Page: .,
-					Autocomplete: "username", Required: true, Autofocus: true,
-				}) !!}
-
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "Password", Type: "password",
-					Page: .,
-					Autocomplete: "current-password", Required: true,
-				}) !!}
-
-				<label class="flex items-center gap-2 text-sm">
-					{{-- checked is a presence attribute: a browser reads the box as
-					     ticked whether the value is "true", "false" or empty, so what
-					     is conditional is the attribute and not its value. @if writes
-					     the whole attribute or none of it, which is how every other
-					     boolean attribute in a kyse view is drawn. --}}
-					<input
-						class="input"
-						type="checkbox"
-						name="remember"
-						value="1"
-						@if(.Remember)
-							checked
-						@endif
-					>
-					Remember me
-				</label>
-
-				<div class="flex items-center justify-between gap-3">
-					<button type="submit" class="btn">Login</button>
-					@if(.HasPasswordReset)
-						<a class="text-muted-foreground text-sm hover:underline" href="{{ .PasswordRequestURL }}">Forgot your password?</a>
-					@endif
-				</div>
-			</form>
+			{{-- The form is a file of its own, and it is the one part of this
+			     screen the server ever answers alone: a rejected sign-in comes
+			     back as the form and nothing else, and htmx puts it where this
+			     one is. @include hands over this page's data unchanged, so the
+			     form reads the same struct whichever of the two drew it. --}}
+			@include('partials.login_form')
 		</section>
 	</div>
 @endsection

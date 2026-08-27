@@ -710,8 +710,17 @@ func TestEveryScreenThisKitPublishesIsDrawnBySomething(t *testing.T) {
 // between two screens with one -- and one step is where it stops: a name this
 // test cannot see is a name the next reader cannot see either.
 func renderedNames(fn *ast.FuncDecl) []string {
-	// Where the view's name sits in each of the three calls that draw one.
-	position := map[string]int{"ctx.View": 0, "m.screen": 2, "m.screenStatus": 3}
+	// Where a view's name sits in each of the calls that draw one. m.fragment
+	// carries two, and both count: it is given the screen and the one part of it
+	// that is answered alone, and it draws whichever the request asked for. A
+	// table with only the first would report the fragment as published and drawn
+	// by nothing, which is the defect this whole test is about.
+	position := map[string][]int{
+		"ctx.View":       {0},
+		"m.screen":       {2},
+		"m.screenStatus": {3},
+		"m.fragment":     {3, 4},
+	}
 
 	var out []string
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -720,14 +729,19 @@ func renderedNames(fn *ast.FuncDecl) []string {
 			return true
 		}
 		at, ok := position[types.ExprString(call.Fun)]
-		if !ok || len(call.Args) <= at {
+		if !ok {
 			return true
 		}
-		switch arg := call.Args[at].(type) {
-		case *ast.BasicLit:
-			out = append(out, strings.Trim(arg.Value, `"`))
-		case *ast.Ident:
-			out = append(out, literalsAssignedTo(fn, arg.Name)...)
+		for _, i := range at {
+			if len(call.Args) <= i {
+				continue
+			}
+			switch arg := call.Args[i].(type) {
+			case *ast.BasicLit:
+				out = append(out, strings.Trim(arg.Value, `"`))
+			case *ast.Ident:
+				out = append(out, literalsAssignedTo(fn, arg.Name)...)
+			}
 		}
 		return true
 	})

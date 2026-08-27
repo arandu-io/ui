@@ -32,14 +32,14 @@ func TestAuthGolden(t *testing.T) {
 	}
 	// The count is here so that adding a file is a decision somebody made rather
 	// than one that arrived: six controllers and page.go, two mailables, the
-	// nine screens and the four message bodies.
+	// nine screens, the one fragment and the four message bodies.
 	//
 	// It was thirteen, and the missing nine were the ones that made the kit a
 	// flow: register.kyse.go and verify.kyse.go posted to addresses nobody
 	// registered, and the password reset stopped one step short of writing the
 	// password.
-	if len(files) != 22 {
-		t.Fatalf("generated %d files, want 22", len(files))
+	if len(files) != 23 {
+		t.Fatalf("generated %d files, want 23", len(files))
 	}
 
 	for _, f := range files {
@@ -141,7 +141,9 @@ func TestTheFailureMessageDoesNotEnumerateAccounts(t *testing.T) {
 // has to bring a usable CSRF token, or the second attempt fails the check for
 // reasons nobody can see from the browser.
 func TestTheFormCarriesAFreshToken(t *testing.T) {
-	views := authFile(t, "auth/login.kyse.go")
+	// The form, which is a file of its own: it is what comes back on a rejection,
+	// so it is where the token, the swap and the absent password have to be.
+	views := authFile(t, "partials/login_form.kyse.go")
 
 	// The token is issued in render.go now, which is the one place every screen
 	// of the kit goes through. It used to be issued in each handler, and the
@@ -318,8 +320,8 @@ func typeSpec(t *testing.T, file *ast.File, name string) *ast.TypeSpec {
 	return nil
 }
 
-// The nine views land at the nine paths people look for, and the controller
-// lands beside them.
+// The nine screens land at the nine paths people look for, the fragment lands
+// under partials/, and the controller lands beside them.
 //
 // The command used to write four files into modules/authui/ and declare itself
 // with a manifest. It is not a module any more -- it is the project's own code,
@@ -345,6 +347,8 @@ func TestTheStarterKitLandsInTheProjectTree(t *testing.T) {
 		"resources/views/auth/passwords/confirm.kyse.go",
 		"resources/views/auth/passwords/email.kyse.go",
 		"resources/views/auth/passwords/reset.kyse.go",
+		// The one fragment, under the directory that makes it one.
+		"resources/views/partials/login_form.kyse.go",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("%s was not generated", want)
@@ -781,10 +785,12 @@ const (
 // symbol that does not exist passes green. Leaving them out says what is not
 // covered; writing them in would say the opposite of it.
 //
-// So the expressions inside the thirteen views are the hole in this gate. What
-// they name is held by views_internal_test.go and by
+// So the expressions inside the views are the hole in this gate. What they name
+// is held by views_internal_test.go and by
 // TestEveryScreenThisKitPublishesIsDrawnBySomething, and none of that is a type
-// check.
+// check. The one structural question that CAN be answered without a compiler --
+// whether a view draws a document or a piece of one -- is answered right below,
+// by TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne.
 //
 // # When it skips
 //
@@ -857,6 +863,164 @@ func TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework(t *testi
 		"project that receives them cannot build.\n\n"+
 		"published file(s) the compiler named:\n  %s\n\n`go build ./...` said:\n%s\n(%v)",
 		publishedFramework, named, out, err)
+}
+
+// TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne is the gate over the
+// half of the kit the compiler above cannot read.
+//
+// A fragment is not a fragment because a handler calls it one. The framework's
+// Context.View and Context.Fragment are the same three lines around the same
+// renderer -- the status differs and nothing else does -- so naming a full page
+// where a fragment was wanted compiles, runs, answers the right status, and
+// hands htmx a whole document for a hole the size of a form. htmx strips the
+// <head> and swaps the <body>'s children in, so what lands inside the card is
+// the header, the navigation and a second toaster: a page inside the page.
+//
+// This kit shipped exactly that. auth/login.kyse.go carried the form with
+// hx-target="this" hx-swap="outerHTML", and Module.rejected answered "auth.login"
+// -- the whole screen -- on every mistyped password.
+//
+// # What makes a view a fragment, mechanically
+//
+// The directory it is published in, and the source has to agree with it:
+//
+//	layouts/    the frame           @yield, and no layout of its own
+//	partials/   a fragment          no layout and no @yield: it draws its own markup
+//	mail/       a message body      no layout either -- there is no chrome in an e-mail
+//	everything else, a screen       a layout, always
+//
+// Two other candidates were considered and are worse. "A view with no layout is
+// a fragment" is what the kyse compiler already sees -- File.Extends is empty --
+// but it is not enough on its own: a layout has none either, and neither does a
+// mail body, so the same property covers three different things. A name suffix
+// travels with the file but says nothing about where it lives, and the tree is
+// what somebody opening the project reads first. The directory is the only one
+// of the three that a person, this test and `aru doctor` can all see without
+// opening the file.
+//
+// # And the rule that catches the defect above
+//
+// A narrowed swap belongs only in a fragment. An element carrying hx-target or
+// hx-swap is asking for its own markup back rather than a document, and the view
+// that draws that element is the view the server has to answer with. Written on
+// a screen, it is a request no published view can satisfy -- which is exactly
+// what auth/login.kyse.go was asking for.
+//
+// It is a sibling of the compile gate rather than lines inside it, for one
+// reason: that one skips when the framework is not in the module cache and there
+// is no network. This reads bytes the kit generates in-process. It must never
+// have a reason to skip, and folding it in would give it one.
+func TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne(t *testing.T) {
+	var checked int
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		checked++
+
+		kind, wantsLayout, wantsYield := viewKind(path)
+		body := viewBody(f.Content)
+
+		switch hasLayout := strings.Contains(body, "@extends("); {
+		case wantsLayout && !hasLayout:
+			t.Errorf("%s is a %s and extends no layout: it answers a bare piece of markup where a whole "+
+				"document was asked for, so a browser sent there gets a form with no header, no navigation "+
+				"and no way out", path, kind)
+		case !wantsLayout && hasLayout:
+			t.Errorf("%s is a %s and extends a layout: what it draws is a whole document, and swapping one "+
+				"into a page puts the header, the navigation and a second toaster inside it.\n"+
+				"Take the @extends out, or publish it beside the screens instead", path, kind)
+		}
+
+		switch hasYield := strings.Contains(body, "@yield("); {
+		case wantsYield && !hasYield:
+			t.Errorf("%s is a %s and yields nothing: no view that extends it can put anything on the page", path, kind)
+		case !wantsYield && hasYield:
+			t.Errorf("%s is a %s and yields a section: @yield is what a layout does, and a second layout "+
+				"is a second answer to what a page looks like", path, kind)
+		}
+
+		// The narrowed swap. Checked on the markup with the kyse comments taken
+		// out, because the layout explains the toaster by naming the attribute
+		// that fills it -- and a guard that read comments would report the
+		// sentence describing the rule as a breach of it.
+		if kind == "fragment" {
+			continue
+		}
+		for _, attribute := range []string{"hx-target=", "hx-swap="} {
+			if strings.Contains(body, attribute) {
+				t.Errorf("%s is a %s and carries %s: that asks the server for a piece of a page, and this "+
+					"file is the whole page.\n"+
+					"Whatever answers it has to be a view with no layout -- publish that part under "+
+					"resources/views/partials/ and draw it here with @include", path, kind, attribute)
+			}
+		}
+	}
+
+	if checked == 0 {
+		t.Fatal("the kit published no views, so this gate read nothing")
+	}
+}
+
+// viewKind says what a published view is, from where the kit publishes it, and
+// what the source has to look like to be that.
+//
+// The path decides and the file has to agree. It is not read off the contents,
+// and that is the point: a rule inferred from what a file happens to contain
+// cannot be broken, because whatever the file contains becomes the rule.
+func viewKind(path string) (kind string, wantsLayout, wantsYield bool) {
+	switch {
+	case strings.Contains(path, "/views/layouts/"):
+		return "layout", false, true
+	case strings.Contains(path, "/views/partials/"):
+		return "fragment", false, false
+	case strings.Contains(path, "/views/mail/"):
+		return "message body", false, false
+	default:
+		return "screen", true, false
+	}
+}
+
+// viewBody is the markup of a published view: everything below the package
+// clause, with the @go blocks and the kyse comments taken out.
+//
+// All three of those hold prose, and every published file here carries prose
+// about the rules it follows. A guard that read them would report the file that
+// EXPLAINS a directive as a file that USES one, and the fix would be to delete
+// the explanation.
+func viewBody(content []byte) string {
+	body := string(content)
+
+	// The header is Go: a build tag, a package comment, the clause, an import
+	// block. Cutting at the clause drops the comment with it.
+	if at := strings.Index(body, "\npackage "); at >= 0 {
+		if end := strings.IndexByte(body[at+1:], '\n'); end >= 0 {
+			body = body[at+1+end:]
+		}
+	}
+
+	body = withoutRegion(body, "@go", "@endgo")
+	return withoutRegion(body, "{{--", "--}}")
+}
+
+// withoutRegion removes every open..close region, including the delimiters.
+//
+// Every one of them, and not the first: the layout carries several kyse
+// comments, and a version that stopped after one left the rest of the file
+// reading as markup.
+func withoutRegion(body, opener, closer string) string {
+	for {
+		start := strings.Index(body, opener)
+		if start < 0 {
+			return body
+		}
+		end := strings.Index(body[start:], closer)
+		if end < 0 {
+			return body[:start]
+		}
+		body = body[:start] + body[start+end+len(closer):]
+	}
 }
 
 // publishedIn returns the published paths the compiler's output points at, in

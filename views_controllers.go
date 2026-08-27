@@ -58,9 +58,10 @@ func GenerateAuth(m Module) ([]File, error) {
 		out = append(out, File{Path: t.path, Content: content})
 	}
 
-	// And the nine views, which are the point of the command: the screens every
-	// application has, at the paths people look for. Inside them it is kyse,
-	// Tailwind and HTMX -- typed markup, utilities and hypermedia.
+	// And the views, which are the point of the command: the screens every
+	// application has, at the paths people look for, plus the one fragment they
+	// are answered with. Inside them it is kyse, Tailwind and HTMX -- typed
+	// markup, utilities and hypermedia.
 	views, err := AuthViews(m)
 	if err != nil {
 		return nil, err
@@ -405,7 +406,14 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	fhttp.Redirect(w, r, to)
 }
 
-// rejected re-renders just the form, which is what HTMX swaps back in.
+// rejected answers the form again, with the reason on it.
+//
+// Just the form under HTMX, and the whole screen without it -- Module.fragment
+// makes that choice, and the two names it is given are what the address draws
+// and what the one control on it draws. This used to name the screen alone: the
+// form asks for its own markup back with hx-target="this", and what came was the
+// document, so every rejected sign-in drew the header, the navigation and a
+// second toaster inside the card.
 //
 // The token is reissued because the session id may have changed, and the email
 // and the remember-me box are kept because retyping either after a rejection is
@@ -416,7 +424,7 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 	// The status is explicit: HTMX swaps the body of a 422 and of a 200 alike,
 	// so answering 200 for a rejection would make the browser, the logs and
 	// every metric agree that it worked.
-	m.screenStatus(w, r, status, "auth.login", AuthPage{
+	m.fragment(w, r, status, "auth.login", "partials.login_form", AuthPage{
 		Page:       m.page(r, "Sign in"),
 		Email:      email,
 		Remember:   remember,

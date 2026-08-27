@@ -21,23 +21,31 @@ func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 	// Only the .kyse.go. AuthViews also publishes resources/views/page.go, which
 	// is plain Go -- the struct the layout is read through, not a view.
 	//
-	// Nine SCREENS, plus the four message bodies -- two messages, an HTML part
-	// and a text part each. A mail body is not a screen: it has no layout, no
-	// navigation and no token, and counting them together would make the number
-	// meaningless.
+	// Nine SCREENS, one fragment, and four message bodies -- two messages, an
+	// HTML part and a text part each. Three counts and not one, because the three
+	// are different things: a mail body has no layout, no navigation and no
+	// token, and a fragment has no layout either but for the opposite reason --
+	// it is swapped INTO a page that already drew one. Counting them together
+	// would make the number meaningless.
 	views := kyseOnly(mustAuthViews(t))
 
-	var screens, bodies []File
+	var screens, fragments, bodies []File
 	for _, v := range views {
-		if strings.Contains(filepath.ToSlash(v.Path), "/mail/") {
+		switch path := filepath.ToSlash(v.Path); {
+		case strings.Contains(path, "/mail/"):
 			bodies = append(bodies, v)
-			continue
+		case strings.Contains(path, "/partials/"):
+			fragments = append(fragments, v)
+		default:
+			screens = append(screens, v)
 		}
-		screens = append(screens, v)
 	}
 
 	if len(screens) != 9 {
 		t.Fatalf("generated %d screens, want 9: the layout, home, welcome, and the six auth screens", len(screens))
+	}
+	if len(fragments) != 1 {
+		t.Fatalf("generated %d fragments, want 1: the sign-in form", len(fragments))
 	}
 	if len(bodies) != 4 {
 		t.Fatalf("generated %d message bodies, want 4: two messages, both parts each", len(bodies))
@@ -229,7 +237,7 @@ func TestNoScreenInterpolatesWhereAnAttributeNameGoes(t *testing.T) {
 // checked="{{ .Remember }}" would come back ticked after every rejected sign-in,
 // including the ones where the person had left it alone.
 func TestTheRememberBoxIsTickedByTheAttributeAndNotByItsValue(t *testing.T) {
-	box := elementCarrying(t, markupOf(authView(t, "auth/login.kyse.go")), `name="remember"`)
+	box := elementCarrying(t, markupOf(authView(t, "partials/login_form.kyse.go")), `name="remember"`)
 
 	if strings.Contains(box, "checked=") {
 		t.Errorf("the remember-me box gives checked a value, which ticks it either way:\n%s", box)
@@ -439,7 +447,7 @@ func markupOf(body string) string {
 	return body[:start] + body[end+len("@endgo"):]
 }
 
-// authView returns one of the nine by its path under resources/views.
+// authView returns one published view by its path under resources/views.
 func authView(t *testing.T, want string) string {
 	t.Helper()
 	for _, f := range kyseOnly(mustAuthViews(t)) {

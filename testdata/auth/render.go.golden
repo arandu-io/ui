@@ -187,6 +187,32 @@ func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, dat
 	m.screenStatus(w, r, http.StatusOK, name, data)
 }
 
+// fragment answers one part of a screen when htmx asked for one, and the whole
+// screen otherwise.
+//
+// A control that carries hx-target is asking for its own markup back, not a
+// document. Answering a page into that hole puts the header, the navigation and
+// a second toaster inside it -- the status is right, the build is green, and the
+// screen looks like it rendered twice. So the two names are given together here:
+// what the address draws on its own, and what one control of it draws.
+//
+// The branch is content negotiation and not a second way to answer. It is the
+// same question fhttp.Redirect already asks for itself, and it is asked once,
+// here, so a handler never has to.
+//
+// Boosted requests take the page. hx-boost swaps the whole body, so a fragment
+// answered to one leaves the person on a document that is a bare form -- no
+// header, no navigation, no way out. It cannot happen while the form carries an
+// explicit hx-post, and it is one line to keep it from happening to whoever
+// deletes that attribute.
+func (m *Module) fragment(w http.ResponseWriter, r *http.Request, status int, screen, part string, data AuthPage) {
+	name := screen
+	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") != "true" {
+		name = part
+	}
+	m.screenStatus(w, r, status, name, data)
+}
+
 // screenStatus is screen with the status code spelled out.
 //
 // A rejected form answers 422 and not 200. HTMX swaps the fragment either way,

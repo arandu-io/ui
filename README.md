@@ -20,18 +20,25 @@
 go run github.com/arandu-io/ui@latest auth
 ```
 
-Thirteen views, written in kyse: the layout, the dashboard, the welcome page,
-sign in, sign up, e-mail verification, the three password screens, and both
-parts — HTML and plain text — of the two messages the flow sends. Alongside
-them land nine Go files: the controllers that answer the routes, the two
-mailables, and the page struct every screen renders through — twenty-two files
-in all — and they are yours
-from the moment they land: edit them, delete them, rewrite them.
+Fourteen views, written in kyse: the layout, the dashboard, the welcome page,
+sign in, sign up, e-mail verification, the three password screens, the sign-in
+form as a fragment of its own, and both parts — HTML and plain text — of the two
+messages the flow sends. Alongside them land nine Go files: the controllers that
+answer the routes, the two mailables, and the page struct every screen renders
+through — twenty-three files in all — and they are yours from the moment they
+land: edit them, delete them, rewrite them.
+
+The fragment is under `resources/views/partials/`, and the directory is what
+makes it one: a file there draws its own markup and no layout around it, so it
+can be swapped into a page that is already on screen. A rejected sign-in is
+answered with it, and with the whole screen when htmx is not running. Everything
+else under `resources/views/` extends the layout, and a test refuses a file that
+is in the wrong one of the two.
 
 Run it again to take a fix from a newer version: what you wrote inside a
 `arandu:begin custom` block is carried over, and the command says so per file.
 `--views` leaves the flow you edited alone — the controllers and the two
-mailables — and refreshes sixteen files: the thirteen screens plus `page.go`,
+mailables — and refreshes seventeen files: the fourteen views plus `page.go`,
 `render.go` and `HomeController`, which they do not compile without.
 
 **Nothing is added to your `go.mod`.** `go run <module>@latest` runs a published
