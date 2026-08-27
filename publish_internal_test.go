@@ -941,19 +941,20 @@ func TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne(t *testing.T) {
 				"is a second answer to what a page looks like", path, kind)
 		}
 
-		// The narrowed swap. Checked on the markup with the kyse comments taken
-		// out, because the layout explains the toaster by naming the attribute
-		// that fills it -- and a guard that read comments would report the
-		// sentence describing the rule as a breach of it.
+		// The narrowed swap, in both spellings it has. Checked on the markup
+		// with the kyse comments taken out, because the layout explains the
+		// toaster by naming the attribute that fills it -- and a guard that read
+		// comments would report the sentence describing the rule as a breach of
+		// it.
 		if kind == "fragment" {
 			continue
 		}
-		for _, attribute := range []string{"hx-target=", "hx-swap="} {
-			if strings.Contains(body, attribute) {
+		for _, spelling := range narrowedSwap {
+			if strings.Contains(body, spelling) {
 				t.Errorf("%s is a %s and carries %s: that asks the server for a piece of a page, and this "+
 					"file is the whole page.\n"+
 					"Whatever answers it has to be a view with no layout -- publish that part under "+
-					"resources/views/partials/ and draw it here with @include", path, kind, attribute)
+					"resources/views/partials/ and draw it here with @include", path, kind, spelling)
 			}
 		}
 	}
@@ -962,6 +963,31 @@ func TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne(t *testing.T) {
 		t.Fatal("the kit published no views, so this gate read nothing")
 	}
 }
+
+// narrowedSwap is every way a published view can ask for a piece of the page
+// back instead of a document.
+//
+// Two spellings, and the second is the one this gate was blind to. The first is
+// the attribute a view writes itself. The second is a prop of a kyse component:
+//
+//	{!! components.Button(components.ButtonProps{HxPost: ..., HxTarget: "#form"}) !!}
+//
+// renders hx-target= into the served document and puts neither literal string
+// in this file. The gate read the source for the attribute alone, so a screen
+// that narrowed its swap through a component passed -- and passed silently,
+// because the attribute exists only in a rendered page and nothing here renders
+// one.
+//
+// The props are a closed set, read off the component library rather than
+// guessed: ButtonProps.HxTarget, ButtonProps.HxSwap and MenuItem.HxTarget are
+// every field there that renders one of the two attributes. HxPost, HxGet and
+// HxConfirm are deliberately not here -- they say where to ask and what to
+// confirm first, and neither narrows what comes back.
+//
+// The prop names carry no colon, so no amount of space between the name and the
+// value gets a screen past this. Nothing else in a published view can hold one:
+// a kyse comment and an @go block are both cut before this reads anything.
+var narrowedSwap = []string{"hx-target=", "hx-swap=", "HxTarget", "HxSwap"}
 
 // viewKind says what a published view is, from where the kit publishes it, and
 // what the source has to look like to be that.

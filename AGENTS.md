@@ -116,12 +116,24 @@ sections, `partials/` and `mail/` carry no layout, everything else under
 `resources/views/` extends one, and
 `TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne` in
 `publish_internal_test.go` reads the published bytes to hold each file to the
-kind its path claims. It also refuses `hx-target` or `hx-swap` anywhere but in a
+kind its path claims. It also refuses a narrowed swap anywhere but in a
 fragment: an element carrying one asks the server for its own markup back, and a
 screen answering that hands htmx a whole document for a form-shaped hole — the
 header, the navigation and a second toaster land inside the card, with a green
 build and a correct status. The kit shipped exactly that on `auth/login.kyse.go`
 until the form moved to `partials/login_form.kyse.go`.
+
+A narrowed swap has **two spellings**, and `narrowedSwap` in that file carries
+both. `hx-target=`/`hx-swap=` is the attribute a view writes; `HxTarget`/`HxSwap`
+is a prop of a kyse component, and
+`components.Button(components.ButtonProps{HxTarget: "#form"})` renders the
+attribute into the served document while putting neither literal in the source.
+The gate read the attribute alone and passed that screen — silently, since
+nothing here renders a page. The props are read off the component library and
+are a closed set: `ButtonProps.HxTarget`, `ButtonProps.HxSwap` and
+`MenuItem.HxTarget` are every field there that renders one of the two.
+`HxPost`, `HxGet` and `HxConfirm` are not among them — they say where to ask,
+not what comes back.
 
 **Who owns which state, and what will fail if you get it wrong.** Four things in
 a published page can hold a value, and what tells them apart is when each is next
