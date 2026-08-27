@@ -24,6 +24,20 @@ import (
 // person are fields the handler filled in, so a name that drifts is a compile
 // error instead of a blank link -- and a form can never carry another session's
 // token under load.
+//
+// # Which side of a swap a field is on
+//
+// The form under resources/views/partials/ renders from this same struct:
+// @include hands the page's data through unchanged, so both the screen and the
+// one part of it that is answered alone read these fields. Nothing in the type
+// separates them, and the two are not refreshed together -- what the form draws
+// is replaced when the form is swapped, and what only the screen around it
+// draws is not redrawn at all.
+//
+// It decides what a handler may fill. Answering the form alone with a field
+// only the screen draws sends the value inside a response whose other half the
+// browser discards: the right status, the right markup in the hole, and a
+// sentence nobody ever reads. Fill what the form draws, or answer the screen.
 type AuthPage struct {
 	view.Page
 

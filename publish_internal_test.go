@@ -1023,6 +1023,336 @@ func withoutRegion(body, opener, closer string) string {
 	}
 }
 
+// TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap is the state half of
+// the gate above, and it covers the one boundary of the four with no compiler
+// behind it.
+//
+// Four things in a published page can hold a value, and what tells them apart is
+// when each is next drawn: a component holds nothing and is re-run wherever its
+// caller is, the layout is drawn once per document and no swap redraws it, a
+// screen is the whole document for one request, and a fragment is what is inside
+// one swap target. Three of those seams are typed. A layout renders through
+// view.Layout and a component is handed the page as components.Page, so neither
+// can name a field of a screen and neither compiles if it tries. The fourth --
+// the screen and the piece of it answered alone -- is one type: @include hands
+// the page's own data straight through, so the fragment names the same struct
+// and nothing separates page state from fragment state.
+//
+// What that costs is a defect with no symptom. Module.fragment answers the part
+// when htmx asked for one, and on that branch the screen around it is not
+// rendered at all. So a handler that fills a field only the screen draws sends
+// the value inside a response whose other half the browser never had: the status
+// is right, the markup in the hole is right, and the sentence is gone. Status is
+// the field this would happen to first -- login.kyse.go draws it above the card,
+// outside the form, which is exactly where a swap of the form does not reach.
+//
+// So the check is per call and not per file: for every m.fragment in the
+// published Go, every field of the AuthPage literal it is given has to be one
+// the named part draws. Page is skipped, because it is the chrome and the
+// paragraph below is about it.
+//
+// A validation message is not drawn by its own name and is still drawn: the
+// components ask the page through FieldError, so EmailError reaches the reader
+// wherever an input is called "email". That indirection is followed here rather
+// than worked around, which is what makes this stricter than a search for the
+// field name and not weaker.
+func TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap(t *testing.T) {
+	files := mustGenerateAuth(t)
+
+	views := map[string]string{}
+	for _, f := range files {
+		if path := filepath.ToSlash(f.Path); strings.HasSuffix(path, ".kyse.go") {
+			views[path] = viewBody(f.Content)
+		}
+	}
+	byInput := fieldErrorNames(t, authFile(t, "page.go"))
+
+	var checked int
+	for _, f := range files {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Base(path), f.Content, parser.AllErrors)
+		if err != nil {
+			t.Fatalf("%s does not parse: %v", path, err)
+		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || types.ExprString(call.Fun) != "m.fragment" || len(call.Args) != 6 {
+				return true
+			}
+
+			part, ok := call.Args[4].(*ast.BasicLit)
+			if !ok || part.Kind != token.STRING {
+				t.Errorf("%s answers with a part whose name is built rather than written, so nothing "+
+					"can follow it back to the view it draws", path)
+				return true
+			}
+			name := strings.Trim(part.Value, `"`)
+			source := "resources/views/" + strings.ReplaceAll(name, ".", "/") + ".kyse.go"
+			body, published := views[source]
+			if !published {
+				t.Errorf("%s answers with %q and this kit publishes no %s", path, name, source)
+				return true
+			}
+			checked++
+
+			literal, ok := call.Args[5].(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			drawn := fieldsRead(body)
+			for _, elt := range literal.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := kv.Key.(*ast.Ident)
+				// Page is the chrome. It is filled on every path because the
+				// other branch of this same call renders the whole screen, and
+				// on this one the layout is not redrawn either -- so it is
+				// outside the target by design rather than by mistake.
+				if !ok || key.Name == "Page" {
+					continue
+				}
+				if slices.Contains(drawn, key.Name) {
+					continue
+				}
+				if input, mapped := byInput[key.Name]; mapped && strings.Contains(body, `Name: "`+input+`"`) {
+					continue
+				}
+				t.Errorf("%s answers %s with AuthPage.%s filled in, and %s does not draw it.\n"+
+					"htmx replaces the target and keeps the rest of the page, so the screen that would have "+
+					"drawn it is not being rendered: the value is computed, sent and dropped, with a correct "+
+					"status and correct markup in the hole.\n"+
+					"Draw it in %s, or answer the whole screen.", path, name, key.Name, source, source)
+			}
+			return true
+		})
+	}
+
+	if checked == 0 {
+		t.Fatal("no published handler answers with a fragment, so this gate read nothing")
+	}
+}
+
+// TestNothingTheLayoutDrawsIsRedrawnInsideASwap is the other half of the same
+// contract, one level out.
+//
+// The layout runs once per document. A swap replaces markup inside the page and
+// never re-runs it, so every value the chrome shows is the one the server gave
+// when the document was fetched, for as long as the tab stays open. A value
+// drawn there and again inside a swap target is therefore one value with two
+// copies, and only the inner one is ever refreshed -- the page then shows both
+// answers at once, and the stale one is the one in the header.
+//
+// hx-swap-oob is the exception and it stays one: it is the only way an answer
+// reaches outside its own target, and writing it is a decision somebody takes
+// rather than one they arrive at.
+func TestNothingTheLayoutDrawsIsRedrawnInsideASwap(t *testing.T) {
+	var layout string
+	fragments := map[string]string{}
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		switch kind, _, _ := viewKind(path); kind {
+		case "layout":
+			layout = viewBody(f.Content)
+		case "fragment":
+			fragments[path] = viewBody(f.Content)
+		}
+	}
+	if layout == "" {
+		t.Fatal("the kit published no layout, so this gate read nothing")
+	}
+	if len(fragments) == 0 {
+		t.Fatal("the kit published no fragment, so this gate read nothing")
+	}
+
+	chrome := fieldsRead(layout)
+	for path, body := range fragments {
+		if strings.Contains(body, "hx-swap-oob") {
+			continue
+		}
+		for _, name := range fieldsRead(body) {
+			if !slices.Contains(chrome, name) {
+				continue
+			}
+			t.Errorf("%s draws .%s and so does the layout.\n"+
+				"The layout is rendered once, with the document, and no swap re-runs it -- so the copy in the "+
+				"chrome keeps whatever it said then while this one is replaced on every answer, and the page "+
+				"shows two values for one fact.\n"+
+				"Draw it in one of the two, or reach the other with hx-swap-oob.", path, name)
+		}
+	}
+}
+
+// TestNoPublishedViewKeepsStateInTheBrowser holds the last corner of the
+// contract: the client owns nothing a framework would hold for it.
+//
+// State on this stack is the server's. A handler reads the form, decides, and
+// answers markup that is already correct, so there is no second copy in the
+// browser to keep in step and nothing to reconcile when the two disagree. An
+// hx- attribute is not a counter-example and cannot become one: hx-post,
+// hx-target and hx-swap say where to ask and what to replace, and nothing reads
+// a value back out of one.
+//
+// What the browser does own is what dies with the tab and the server never
+// needs to hear about -- a disclosure that is open, a field that has focus --
+// and that is written with <details>, :focus-within or a checkbox. The
+// attributes below are what somebody reaches for instead, and in a view this
+// kit publishes they do nothing at all: the layout loads two scripts, neither
+// of them reads one, and a framework that compiles a directive out of a string
+// could not run beside them, because the policy is script-src 'self' with no
+// unsafe-eval. A rule of business written in one is a fragment nobody asked
+// the server for.
+func TestNoPublishedViewKeepsStateInTheBrowser(t *testing.T) {
+	held := []string{
+		"x-data", "x-init", "x-effect", "x-model", "x-show", "x-bind",
+		"x-text", "x-html", "x-ref", "x-for", "x-if", "x-on:", "$store",
+	}
+
+	var checked int
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		checked++
+
+		body := viewBody(f.Content)
+		for _, attribute := range held {
+			if attributeIn(body, attribute) {
+				t.Errorf("%s carries %s, which holds a value in the browser.\n"+
+					"What a screen shows came from the server in the answer it is part of, so a copy here is "+
+					"one nothing reconciles. It is also inert: the layout this kit publishes loads two scripts "+
+					"and neither reads that attribute, and a framework that compiles a directive out of a "+
+					"string could not run beside them -- the policy is script-src 'self' with no unsafe-eval.\n"+
+					"Put the decision in a handler and swap the markup, or use <details>, :focus-within or a "+
+					"checkbox for what dies with the tab", path, attribute)
+			}
+		}
+	}
+
+	if checked == 0 {
+		t.Fatal("the kit published no views, so this gate read nothing")
+	}
+}
+
+// fieldsRead is every name a view draws off the struct it renders from.
+//
+// A dot opens one only when what precedes it is not part of an identifier:
+// `{{ .PageTitle() }}` and `@if(!.SignedIn())` are the page, and view.URL,
+// components.FieldProps and "htmx.min.js" are not. That is why this is one scan
+// rather than a search per name -- searching for Email finds it inside
+// EmailError, and a field then reads as drawn because a different one is.
+func fieldsRead(body string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for i := 0; i < len(body); i++ {
+		if body[i] != '.' || (i > 0 && isNamePart(body[i-1])) {
+			continue
+		}
+		end := i + 1
+		for end < len(body) && isNamePart(body[end]) {
+			end++
+		}
+		if end == i+1 {
+			continue
+		}
+		if name := body[i+1 : end]; !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+		i = end - 1
+	}
+	slices.Sort(out)
+	return out
+}
+
+// attributeIn reports whether the markup carries this attribute, rather than a
+// longer one ending in its name.
+//
+// The character before it is the whole check: without it hx-data would report
+// x-data, and the difference between an attribute that routes a swap and one
+// that holds a value is the subject of the test that calls this.
+func attributeIn(body, name string) bool {
+	for at := 0; at < len(body); {
+		i := strings.Index(body[at:], name)
+		if i < 0 {
+			return false
+		}
+		i += at
+		if i == 0 || (!isNamePart(body[i-1]) && body[i-1] != '-') {
+			return true
+		}
+		at = i + len(name)
+	}
+	return false
+}
+
+// isNamePart reports whether c can appear inside an identifier.
+func isNamePart(c byte) bool {
+	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// TestTheStateScannersFindTheShapesTheyGuardAgainst.
+//
+// Both scanners above answer a question about text, and a scanner that answers
+// "nothing here" for every input passes on a tree that is full of what it is
+// looking for -- reading as a green check either way. So each is given the shape
+// it exists to find and the shapes it must not mistake for it.
+//
+// The pairs that matter are the last two of each: .Email must not be found
+// inside .EmailError, because a field would then read as drawn when a different
+// one is; and x-data must not be found inside hx-data, because the whole subject
+// here is the difference between an attribute that routes a swap and one that
+// holds a value.
+func TestTheStateScannersFindTheShapesTheyGuardAgainst(t *testing.T) {
+	t.Run("fieldsRead", func(t *testing.T) {
+		for _, c := range []struct {
+			name, markup string
+			want         []string
+		}{
+			{"an interpolated method is the page", "<title>{{ .PageTitle() }}</title>", []string{"PageTitle"}},
+			{"so is a field in a directive", "@if(!.SignedIn())", []string{"SignedIn"}},
+			{"a selector on a package is not", `<link href="{{ view.URL("htmx.min.js") }}">`, nil},
+			{"and neither is the page handed on as a whole", "{!! components.Field(components.FieldProps{Page: .}) !!}", nil},
+			{"a longer name does not hide inside a shorter one", "{{ .EmailError }}", []string{"EmailError"}},
+			{"nor a shorter one inside a longer", "{{ .Email }}{{ .EmailError }}", []string{"Email", "EmailError"}},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				got := fieldsRead(c.markup)
+				if !slices.Equal(got, c.want) {
+					t.Errorf("read %v, want %v", got, c.want)
+				}
+			})
+		}
+	})
+
+	t.Run("attributeIn", func(t *testing.T) {
+		for _, c := range []struct {
+			name, markup, attribute string
+			want                    bool
+		}{
+			{"the attribute itself", `<div x-data="{ open: false }">`, "x-data", true},
+			{"written on a line of its own", "<div\n\tx-show=\"open\">", "x-show", true},
+			{"an htmx attribute is not it", `<form hx-swap="outerHTML" hx-data="">`, "x-data", false},
+			{"and neither is a longer name ending in it", `<div data-x-data="">`, "x-data", false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				if got := attributeIn(c.markup, c.attribute); got != c.want {
+					t.Errorf("found %v, want %v", got, c.want)
+				}
+			})
+		}
+	})
+}
+
 // publishedIn returns the published paths the compiler's output points at, in
 // the order the kit publishes them.
 //

@@ -26,6 +26,19 @@
 //
 // A form value is not client state. The address still in the box after a
 // rejected sign-in came back from the server in the answer below.
+//
+// # What a file here may hold
+//
+// What is inside its own swap target, and nothing outside it. hx-target="this"
+// with hx-swap="outerHTML" makes the target this form, so an answer replaces
+// everything the file draws and reaches nothing else: the header, the tray and
+// whatever the screen draws around the @include all keep what they already had.
+//
+// So a handler answering this file alone may fill only what this file draws. A
+// field the screen draws and this one does not is computed, sent and dropped --
+// the response carried it, the browser kept the part it asked for, and nothing
+// failed. A value that has to be seen is drawn here, or the whole screen is
+// what answers.
 package partials
 
 import (

@@ -85,6 +85,14 @@ import "github.com/arandu-io/kyse/components"
 			</nav>
 		</header>
 
+		{{-- The boundary. Everything outside this element is drawn once, when the
+		     document is fetched: a swap replaces markup inside the page and never
+		     re-runs this file, so the header, the token above and the tray below
+		     keep saying what they said then, for as long as the tab is open.
+
+		     A value that changes on an interaction belongs inside the target that
+		     changes it, and not here. Drawn in both places it is one value with
+		     two copies, and only the inner one is ever refreshed. --}}
 		<main class="mx-auto w-full max-w-5xl grow px-6 py-10">
 			@yield('content')
 		</main>

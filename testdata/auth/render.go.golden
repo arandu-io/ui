@@ -205,6 +205,19 @@ func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, dat
 // header, no navigation, no way out. It cannot happen while the form carries an
 // explicit hx-post, and it is one line to keep it from happening to whoever
 // deletes that attribute.
+//
+// # What a caller may fill
+//
+// Only what the part draws. The two names are one view and a piece of it, and
+// on the branch that answers the piece the rest of the screen is not rendered
+// at all -- so a field the screen draws and the part does not is a value this
+// call sends and nobody ever sees. Nothing reports it: the status is right, the
+// markup in the hole is right, and the sentence is gone.
+//
+// The chrome is the same story one level out. data.Page is filled on every
+// path because the screen needs it on the other branch, and on this one the
+// layout is not re-rendered either, so what the header shows is what it showed
+// when the document was fetched.
 func (m *Module) fragment(w http.ResponseWriter, r *http.Request, status int, screen, part string, data AuthPage) {
 	name := screen
 	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") != "true" {

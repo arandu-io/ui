@@ -67,6 +67,40 @@ import (
 //
 // TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne reads the published
 // bytes and holds each file to the kind its path claims.
+//
+// # Who owns which state
+//
+// Four things here can hold a value, and what separates them is not what each
+// is allowed to know. It is when each is next drawn:
+//
+//   - A component holds nothing. It is a function from props to markup, run
+//     wherever the markup that calls it is run, and it reads the page through
+//     an interface -- so it cannot name a field, and there is nothing for it to
+//     carry from one call to the next.
+//   - The layout holds the chrome, and only what cannot change without a full
+//     load. It is drawn once per document and no swap redraws it, so whatever
+//     it says stays what it said when the document arrived.
+//   - A screen holds the state of the whole document for one request. The part
+//     of it outside a swap target is frozen at the first swap, exactly like the
+//     layout's chrome.
+//   - A fragment holds what is inside its own swap target and nothing else.
+//     What it draws is replaced whole by the next answer.
+//
+// The rule at the boundary follows from the last two: a handler answering with
+// a fragment may fill only what that fragment draws. A field that only the
+// screen around it draws is computed, sent and thrown away, because the screen
+// is not being redrawn -- and nothing fails, which is what makes it worth a
+// test rather than a sentence.
+//
+// Two of those three seams have a compiler behind them already. A layout
+// renders through view.Layout, an interface, so naming a screen's field there
+// does not build; a component is handed the page as components.Page, another
+// interface, so it cannot name one either. The third has none: @include passes
+// the page's own data straight through, and the fragment names that same
+// struct, so page state and fragment state are one type and nothing keeps them
+// apart. TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap and
+// TestNothingTheLayoutDrawsIsRedrawnInsideASwap read the published bytes where
+// the compiler cannot.
 func AuthViews(m Module) ([]File, error) {
 	dir := filepath.Join("resources", "views")
 
@@ -153,6 +187,20 @@ import (
 // person are fields the handler filled in, so a name that drifts is a compile
 // error instead of a blank link -- and a form can never carry another session's
 // token under load.
+//
+// # Which side of a swap a field is on
+//
+// The form under resources/views/partials/ renders from this same struct:
+// @include hands the page's data through unchanged, so both the screen and the
+// one part of it that is answered alone read these fields. Nothing in the type
+// separates them, and the two are not refreshed together -- what the form draws
+// is replaced when the form is swapped, and what only the screen around it
+// draws is not redrawn at all.
+//
+// It decides what a handler may fill. Answering the form alone with a field
+// only the screen draws sends the value inside a response whose other half the
+// browser discards: the right status, the right markup in the hole, and a
+// sentence nobody ever reads. Fill what the form draws, or answer the screen.
 type AuthPage struct {
 	view.Page
 
@@ -350,6 +398,25 @@ func (p AuthPage) LogValue() slog.Value {
 //
 // The head here is checked against the skeleton's, element by element, in
 // TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries.
+//
+// # What it may hold
+//
+// The chrome, and nothing that changes without a full load. This file runs once
+// per document: a swap replaces markup inside the page and never re-runs the
+// layout, so every value here is the one the server gave when the document was
+// fetched, for as long as the tab stays open.
+//
+// The token in hx-headers is the case worth reading, because it looks like a
+// counter-example and is not. It is frozen with the rest, and it keeps working
+// because the issuer signs a nonce and an expiry against the session id rather
+// than recording one token per session -- any token issued for that session
+// validates until it expires. A token bound to something that changed, such as
+// the id a sign-in rotates, would be stale here with nothing to say so; that
+// path answers a redirect, and a redirect fetches this file again.
+//
+// TestNothingTheLayoutDrawsIsRedrawnInsideASwap keeps the other half: a value
+// drawn here and again inside a swap target is one value with two copies, and
+// only one of them is ever refreshed.
 const authLayoutViewTemplate = `//go:build kyse
 
 package layouts
@@ -437,6 +504,14 @@ import "github.com/arandu-io/kyse/components"
 			</nav>
 		</header>
 
+		{{-- The boundary. Everything outside this element is drawn once, when the
+		     document is fetched: a swap replaces markup inside the page and never
+		     re-runs this file, so the header, the token above and the tray below
+		     keep saying what they said then, for as long as the tab is open.
+
+		     A value that changes on an interaction belongs inside the target that
+		     changes it, and not here. Drawn in both places it is one value with
+		     two copies, and only the inner one is ever refreshed. --}}
 		<main class="mx-auto w-full max-w-5xl grow px-6 py-10">
 			@yield('content')
 		</main>
@@ -600,6 +675,16 @@ type LoginData = authui.AuthPage
 // The screen draws it with @include, which hands over the page's own data
 // unchanged, and the handler answers it directly with Module.fragment. AuthPage
 // either way, so the form reads the same fields whichever one rendered it.
+//
+// That last sentence is also the hole. One struct for both sides means nothing
+// in the type says which fields survive a swap of this file and which are drawn
+// by the screen around it and therefore are not redrawn at all. A narrower
+// struct here would not close it either: @include passes the page's own data
+// through untouched, so the generated function would assert a type it was never
+// given and fail at render rather than at build.
+// TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap is what checks it
+// instead, by reading which fields each handler fills against which fields this
+// file draws.
 const authLoginFormPartialTemplate = `//go:build kyse
 
 // Package partials holds the parts of a screen the server answers on their own.
@@ -628,6 +713,19 @@ const authLoginFormPartialTemplate = `//go:build kyse
 //
 // A form value is not client state. The address still in the box after a
 // rejected sign-in came back from the server in the answer below.
+//
+// # What a file here may hold
+//
+// What is inside its own swap target, and nothing outside it. hx-target="this"
+// with hx-swap="outerHTML" makes the target this form, so an answer replaces
+// everything the file draws and reaches nothing else: the header, the tray and
+// whatever the screen draws around the @include all keep what they already had.
+//
+// So a handler answering this file alone may fill only what this file draws. A
+// field the screen draws and this one does not is computed, sent and dropped --
+// the response carried it, the browser kept the part it asked for, and nothing
+// failed. A value that has to be seen is drawn here, or the whole screen is
+// what answers.
 package partials
 
 import (
