@@ -1,0 +1,35 @@
+//go:build kyse
+
+package twofactor
+
+import (
+	"github.com/arandu-io/kyse/components"
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
+
+@go
+type RecoveryData = authui.AuthPage
+@endgo
+
+@extends('layouts.app')
+
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Use a recovery code</h1>
+			</header>
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .TwoFactorRecoveryURL }}">
+				@csrf
+				{!! components.Field(components.FieldProps{
+					Name: "recovery_code", Label: "Recovery code",
+					Page: ., Autocomplete: "off", Required: true, Autofocus: true,
+				}) !!}
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" class="btn">Continue</button>
+					<a class="text-muted-foreground text-sm hover:underline" href="{{ .TwoFactorChallengeURL }}">Use an authenticator code</a>
+				</div>
+			</form>
+		</section>
+	</div>
+@endsection

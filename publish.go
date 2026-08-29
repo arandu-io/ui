@@ -131,23 +131,19 @@ func readModulePath(root string) (string, error) {
 // aruFloor is the oldest released CLI whose view compiler can build the views
 // this kit publishes.
 //
-// It is measured against the tags on the proxy rather than reasoned about.
-// Published into a copy of the skeleton and compiled one view at a time, aru
-// v0.29.1 refuses five of the fourteen -- auth/register.kyse.go, the three
-// under auth/passwords/, and partials/login_form.kyse.go -- each with "the Go
-// generated from ... does not parse -- this is a bug in the generator:
-// kyse-generated:2: missing ',' in composite literal". The five share one
-// shape: a components.FieldProps literal written across several lines inside
-// {!! !!}. The other nine compile, sign-in among them, which is why the whole
-// set has to be measured rather than sampled. v0.30.0, v0.31.0, v0.32.0,
-// v0.33.0 and v0.34.0 each compile all fourteen.
+// It is measured against released compilers rather than reasoned about. Aru
+// v0.34.0 and below compile view.Page through the former framework/view alias;
+// application-owned native pages use hesape/view.Page, so those CLIs reject or
+// panic on the generated page even when the markup itself is valid. The v0.35.0
+// compiler emits the native page contract and compiles all eighteen published
+// views, including the four two-factor screens.
 //
 // Raise it when a view here starts using something an older released CLI
 // cannot compile, and measure the new number the same way: publish into a copy
 // of a project and run `view:build` with one installed CLI per tag. A number
 // that was guessed refuses a CLI that works, or admits one that does not, and
 // neither is visible from here.
-const aruFloor = "v0.30.0"
+const aruFloor = "v0.35.0"
 
 // aruFloorSection and aruFloorKey are where a project declares the oldest CLI
 // it can be built with.

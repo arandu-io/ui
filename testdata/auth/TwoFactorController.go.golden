@@ -1,0 +1,251 @@
+package authui
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/arandu-io/framework/observability"
+	twofactor "github.com/arandu-io/hesape/2fa"
+	"github.com/arandu-io/hesape/otp"
+	"github.com/arandu-io/hesape/qr"
+
+	models "example.test/project/app/Models"
+)
+
+const (
+	pendingPurpose = "two-factor-pending"
+	pendingTTL     = 5 * time.Minute
+)
+
+type pendingSignIn struct {
+	Tenant              string `json:"tenant"`
+	UserID              string `json:"user_id"`
+	PasswordFingerprint string `json:"password_fingerprint"`
+	Remember            bool   `json:"remember"`
+}
+
+func (m *Module) writePending(w http.ResponseWriter, u models.User, remember bool) error {
+	payload, err := json.Marshal(pendingSignIn{
+		Tenant: u.TenantID, UserID: u.ID,
+		PasswordFingerprint: u.PasswordFingerprint(), Remember: remember,
+	})
+	if err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: pendingPurpose, Value: m.signer.Sign(pendingPurpose, string(payload), pendingTTL),
+		Path: "/auth/two-factor", Expires: time.Now().Add(pendingTTL),
+		MaxAge: int(pendingTTL / time.Second), HttpOnly: true, Secure: m.secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return nil
+}
+
+func (m *Module) readPending(r *http.Request) (models.User, bool, error) {
+	cookie, err := r.Cookie(pendingPurpose)
+	if err != nil {
+		return models.User{}, false, err
+	}
+	encoded, err := m.signer.Verify(pendingPurpose, cookie.Value)
+	if err != nil {
+		return models.User{}, false, err
+	}
+	var pending pendingSignIn
+	if err := json.Unmarshal([]byte(encoded), &pending); err != nil || pending.Tenant == "" || pending.UserID == "" || pending.PasswordFingerprint == "" {
+		return models.User{}, false, errors.New("invalid pending sign-in")
+	}
+	u, err := m.users.FindForAuthentication(r.Context(), pending.Tenant, pending.UserID)
+	if err != nil {
+		return models.User{}, false, err
+	}
+	if subtle.ConstantTimeCompare([]byte(u.PasswordFingerprint()), []byte(pending.PasswordFingerprint)) != 1 {
+		return models.User{}, false, errors.New("password changed during pending sign-in")
+	}
+	return u, pending.Remember, nil
+}
+
+func (m *Module) clearPending(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: pendingPurpose, Path: "/auth/two-factor", MaxAge: -1,
+		Expires: time.Unix(1, 0), HttpOnly: true, Secure: m.secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (m *Module) showTwoFactorChallenge(w http.ResponseWriter, r *http.Request) {
+	if _, _, err := m.readPending(r); err != nil {
+		m.clearPending(w)
+		redirect(w, r, "/auth/login")
+		return
+	}
+	m.screen(w, r, "auth.two-factor.challenge", AuthPage{Page: m.page(r, "Two-factor challenge")})
+}
+
+func (m *Module) verifyTwoFactorChallenge(w http.ResponseWriter, r *http.Request) {
+	u, remember, err := m.readPending(r)
+	if err != nil {
+		m.clearPending(w)
+		redirect(w, r, "/auth/login")
+		return
+	}
+	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
+	if code == "" {
+		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.challenge", AuthPage{
+			Page: m.page(r, "Two-factor challenge"), AuthenticatorCodeError: "that code is not valid",
+		})
+		return
+	}
+	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, code); err != nil {
+		if errors.Is(err, twofactor.ErrInvalidCode) {
+			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.challenge", AuthPage{
+				Page: m.page(r, "Two-factor challenge"), AuthenticatorCodeError: "that code is not valid",
+			})
+			return
+		}
+		observability.Log(r.Context()).Error("verifying the authenticator code", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	m.finishSignIn(w, r, u, remember)
+}
+
+func (m *Module) showRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
+	if _, _, err := m.readPending(r); err != nil {
+		m.clearPending(w)
+		redirect(w, r, "/auth/login")
+		return
+	}
+	m.screen(w, r, "auth.two-factor.recovery", AuthPage{Page: m.page(r, "Use a recovery code")})
+}
+
+func (m *Module) verifyRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
+	u, remember, err := m.readPending(r)
+	if err != nil {
+		m.clearPending(w)
+		redirect(w, r, "/auth/login")
+		return
+	}
+	code := strings.TrimSpace(r.PostFormValue("recovery_code"))
+	if code == "" {
+		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.recovery", AuthPage{
+			Page: m.page(r, "Use a recovery code"), RecoveryCodeError: "that recovery code is not valid",
+		})
+		return
+	}
+	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, code); err != nil {
+		if errors.Is(err, twofactor.ErrInvalidCode) {
+			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.recovery", AuthPage{
+				Page: m.page(r, "Use a recovery code"), RecoveryCodeError: "that recovery code is not valid",
+			})
+			return
+		}
+		observability.Log(r.Context()).Error("consuming the recovery code", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	m.finishSignIn(w, r, u, remember)
+}
+
+func (m *Module) showTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
+	m.screen(w, r, "auth.two-factor.setup", AuthPage{Page: m.page(r, "Set up two-factor authentication")})
+}
+
+func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
+	subject, err := m.sessions.Load(r.Context(), r)
+	if err != nil {
+		redirect(w, r, "/auth/login")
+		return
+	}
+	provisioning, err := m.factors.Begin(r.Context(), subject, m.appName)
+	if err != nil {
+		observability.Log(r.Context()).Error("starting two-factor setup", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	uri, err := provisioning.URI()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	code, err := qr.Encode(uri)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	svg, err := code.SVG(qr.Options{})
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	m.screen(w, r, "auth.two-factor.setup", AuthPage{
+		Page:      m.page(r, "Set up two-factor authentication"),
+		QRCodeSVG: svg, SecretKey: otp.EncodeSecret(provisioning.Secret),
+	})
+}
+
+func (m *Module) confirmTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
+	subject, err := m.sessions.Load(r.Context(), r)
+	if err != nil {
+		redirect(w, r, "/auth/login")
+		return
+	}
+	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
+	if code == "" {
+		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.setup", AuthPage{
+			Page: m.page(r, "Set up two-factor authentication"), AuthenticatorCodeError: "that code is not valid",
+		})
+		return
+	}
+	recoveryCodes, err := m.factors.Confirm(r.Context(), subject, code)
+	if err != nil {
+		if errors.Is(err, twofactor.ErrInvalidCode) {
+			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.setup", AuthPage{
+				Page: m.page(r, "Set up two-factor authentication"), AuthenticatorCodeError: "that code is not valid",
+			})
+			return
+		}
+		observability.Log(r.Context()).Error("confirming two-factor setup", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	m.showRecoveryCodes(w, r, recoveryCodes)
+}
+
+func (m *Module) disableTwoFactor(w http.ResponseWriter, r *http.Request) {
+	subject, err := m.sessions.Load(r.Context(), r)
+	if err != nil {
+		redirect(w, r, "/auth/login")
+		return
+	}
+	if err := m.factors.Disable(r.Context(), subject); err != nil {
+		observability.Log(r.Context()).Error("disabling two-factor authentication", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	redirect(w, r, "/")
+}
+
+func (m *Module) regenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	subject, err := m.sessions.Load(r.Context(), r)
+	if err != nil {
+		redirect(w, r, "/auth/login")
+		return
+	}
+	codes, err := m.factors.RegenerateRecoveryCodes(r.Context(), subject)
+	if err != nil {
+		observability.Log(r.Context()).Error("regenerating recovery codes", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	m.showRecoveryCodes(w, r, codes)
+}
+
+func (m *Module) showRecoveryCodes(w http.ResponseWriter, r *http.Request, codes []string) {
+	m.screen(w, r, "auth.two-factor.recovery-codes", AuthPage{
+		Page: m.page(r, "Recovery codes"), RecoveryCodesText: strings.Join(codes, "\n"),
+	})
+}

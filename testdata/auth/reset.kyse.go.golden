@@ -24,11 +24,9 @@ type ResetData = authui.AuthPage
 
 			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordUpdateURL }}">
 				@csrf
-				{{-- The one-time token from the link. It is a hidden field rather
-				     than a query string so it stays out of the referer header and
-				     out of the browser history. --}}
-				<input type="hidden" name="token" value="{{ .ResetToken }}">
-
+				@if(.Status != "")
+					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
 					Value: .Email, Page: .,
@@ -36,10 +34,16 @@ type ResetData = authui.AuthPage
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
+					Name: "email_code", Label: "Email code",
+					Page: .,
+					Autocomplete: "one-time-code", Required: true, Autofocus: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "New password", Type: "password",
 					Page: .,
 					Hint: "At least twelve characters.",
-					Autocomplete: "new-password", Required: true, Autofocus: true,
+					Autocomplete: "new-password", Required: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{

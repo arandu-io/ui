@@ -9,7 +9,7 @@ import (
 )
 
 @go
-// EmailData is what the "send me a link" screen draws.
+// EmailData is what the "send me a code" screen draws.
 type EmailData = authui.AuthPage
 @endgo
 
@@ -32,12 +32,12 @@ type EmailData = authui.AuthPage
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
 					Value: .Email, Page: .,
-					Hint: "We will send a link if the address is registered.",
+					Hint: "We will send a code if the address is registered.",
 					Autocomplete: "email", Required: true, Autofocus: true,
 				}) !!}
 
 				<div>
-					<button type="submit" class="btn">Send the link</button>
+					<button type="submit" class="btn">Send the code</button>
 				</div>
 			</form>
 		</section>

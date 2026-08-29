@@ -17,11 +17,11 @@ func kyseOnly(files []File) []File {
 	return out
 }
 
-func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
+func TestTheAuthViewsAreEighteenAndWellFormed(t *testing.T) {
 	// Only the .kyse.go. AuthViews also publishes resources/views/page.go, which
 	// is plain Go -- the struct the layout is read through, not a view.
 	//
-	// Nine SCREENS, one fragment, and four message bodies -- two messages, an
+	// Thirteen screens, one fragment, and four message bodies -- two messages, an
 	// HTML part and a text part each. Three counts and not one, because the three
 	// are different things: a mail body has no layout, no navigation and no
 	// token, and a fragment has no layout either but for the opposite reason --
@@ -41,8 +41,8 @@ func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 		}
 	}
 
-	if len(screens) != 9 {
-		t.Fatalf("generated %d screens, want 9: the layout, home, welcome, and the six auth screens", len(screens))
+	if len(screens) != 13 {
+		t.Fatalf("generated %d screens, want 13: the layout, home, welcome, six base auth and four two-factor screens", len(screens))
 	}
 	if len(fragments) != 1 {
 		t.Fatalf("generated %d fragments, want 1: the sign-in form", len(fragments))
@@ -72,7 +72,8 @@ func TestTheAuthViewsAreNineAndWellFormed(t *testing.T) {
 		// the source and one directory is one Go package. `auth/login.kyse.go`
 		// is `package auth`, and a file that says `package views` there stops
 		// compiling the moment `aru view:build` writes `auth/login.go`.
-		want := "\npackage " + filepath.Base(filepath.Dir(f.Path)) + "\n"
+		packageName := strings.ReplaceAll(filepath.Base(filepath.Dir(f.Path)), "-", "")
+		want := "\npackage " + packageName + "\n"
 		if strings.HasSuffix(filepath.ToSlash(f.Path), "resources/views/"+filepath.Base(f.Path)) {
 			want = "\npackage views\n"
 		}

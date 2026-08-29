@@ -5,244 +5,167 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
 	"github.com/arandu-io/framework/security"
 	"github.com/arandu-io/framework/validation"
+	"github.com/arandu-io/hesape/onetime"
 
 	appmail "example.test/project/app/Mail"
+	models "example.test/project/app/Models"
+	services "example.test/project/app/Services"
 )
 
-// Registration and address verification.
-//
-// # Why the link is signed rather than stored
-//
-// A verification token is a row in a table in most frameworks, and then there is
-// a cleanup job, and a decision about what a click means once the row is gone --
-// which is usually "this link is not valid", three months later, to somebody who
-// verified correctly the first time.
-//
-// This one carries the user id and the address it was mailed to
-// (auth.VerificationPayload), signed with the application key
-// (security.Signer). Nothing is written when the mail goes out, the link says
-// "expired" when it has expired rather than "unknown", and a second instance
-// behind a load balancer accepts a link the first one issued. The reset link in
-// PasswordController is built the same way, and was not: it lived in a map in
-// this process, so it worked on whichever replica issued it and a restart threw
-// it away.
-//
-// The purpose is part of the signature, so a verification link is not a password
-// reset link even though the same key signed both.
-//
-// # What verification is worth
-//
-// It proves control of the address it was sent to, and nothing else. So the
-// handler takes the payload of the signed token and lets the service read the
-// row: no name, no role and no tenant arrives from the URL, and the service
-// refuses the link when the account's address is no longer the one in it.
-//
-// It is not a login. Clicking the link marks the address verified and sends the
-// person to the sign-in screen -- a link in an e-mail that opens an authenticated
-// session is a session anybody who reads that inbox, or that forwarded message,
-// can have.
+const (
+	verifyPurpose    = "verify-email"
+	verificationSent = "If that address is registered, a code is on its way."
+)
 
-// verifyPurpose scopes the signature. Changing this string invalidates every
-// link already in an inbox, which is the correct behaviour for a change of
-// meaning and a nuisance for a rename -- so it does not get renamed.
-const verifyPurpose = "verify-email"
+type registrationInput struct {
+	Name                 string
+	Email                string
+	Password             string
+	PasswordConfirmation string
+}
 
-// showRegister draws the sign-up form.
 func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.register", AuthPage{Page: m.page(r, "Create an account")})
 }
 
-// doRegister validates, creates the user and sends the verification link.
 func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
-	in := auth.RegisterRequest{
-		Name:                 r.PostFormValue("name"),
-		Email:                r.PostFormValue("email"),
+	in := registrationInput{
+		Name:                 strings.TrimSpace(r.PostFormValue("name")),
+		Email:                strings.TrimSpace(r.PostFormValue("email")),
 		Password:             r.PostFormValue("password"),
 		PasswordConfirmation: r.PostFormValue("password_confirmation"),
 	}
+	errs := validation.Errors{}
+	if in.Name == "" {
+		errs["name"] = []string{"type your name"}
+	}
+	if in.Email == "" {
+		errs["email"] = []string{"type your email address"}
+	}
+	if len([]rune(in.Password)) < security.MinPasswordLen {
+		errs["password"] = []string{"the password is too short"}
+	}
+	if in.Password != in.PasswordConfirmation {
+		errs["password_confirmation"] = []string{"the two passwords do not match"}
+	}
+	if len(errs) != 0 {
+		m.rejectedRegistration(w, r, in, errs)
+		return
+	}
 
-	// Roles are not read from the form, and RegisterRequest has no field for
-	// them. The policy refuses a candidate carrying any, which is the check that
-	// still holds if somebody adds the field here.
-
-	u, err := m.auth.Register(r.Context(), m.tenant(r), in)
+	u, err := m.users.Register(r.Context(), m.tenant(r), in.Name, in.Email, in.Password)
 	if err != nil {
-		var invalid validation.Errors
-		if errors.As(err, &invalid) {
-			m.rejectedRegistration(w, r, in, invalid)
-			return
-		}
-		if errors.Is(err, auth.ErrEmailTaken) {
-			// Registration is the one form where "this address is taken" cannot
-			// be avoided: the person has to be told why they cannot continue.
-			// The sign-in screen is the honest next step, and it is the same
-			// answer somebody would get by trying to sign in.
+		if errors.Is(err, services.ErrEmailTaken) {
 			m.rejectedRegistration(w, r, in, validation.Errors{
 				"email": {"that address is already registered. Sign in instead."},
 			})
+			return
+		}
+		var invalid validation.Errors
+		if errors.As(err, &invalid) {
+			m.rejectedRegistration(w, r, in, invalid)
 			return
 		}
 		observability.Log(r.Context()).Error("registration failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	m.sendVerification(r, u)
-
-	// To the notice, not to the inbox. The person is told what to do next on the
-	// screen they are already looking at; the mail is the second half.
+	if err := m.sendVerification(r, u); err != nil {
+		observability.Log(r.Context()).Error("sending the verification code", "error", err)
+	}
 	redirect(w, r, "/auth/verify")
 }
 
-// showVerifyNotice is the "check your inbox" page.
 func (m *Module) showVerifyNotice(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.verify", AuthPage{
-		Page:                  m.page(r, "Confirm your address"),
-		VerificationResendURL: "/auth/verify/resend",
-		Resent:                r.URL.Query().Get("resent") == "1",
+		Page:  m.page(r, "Confirm your address"),
+		Email: strings.TrimSpace(r.URL.Query().Get("email")),
 	})
 }
 
-// verify consumes the link.
-//
-// A GET that changes state, which is the one thing about this flow that is not
-// ideal and is not avoidable: what arrives is a click in a mail client, and a
-// mail client sends GET. It is safe to repeat -- the second click reports
-// "already confirmed" rather than failing -- and it grants nothing, so a prefetch
-// that follows it costs the verification and no more.
+// verify is deliberately POST-only. The code is bound to purpose, tenant and
+// user, and MarkVerified repeats the captured address condition at the write.
 func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
-	payload, err := m.signer.Verify(verifyPurpose, r.URL.Query().Get("token"))
-	if err != nil {
-		status := "That link is not valid."
-		if errors.Is(err, security.ErrExpired) {
-			// The one failure a person can act on, so it is the one that gets
-			// its own sentence.
-			status = "That link has expired. Sign in and we will send another."
-		}
-		// 422 and not 200. A dead verification link answered 200 with the
-		// "check your inbox" page and a message under it, so the browser, the
-		// log and every dashboard agreed that a forged token was a confirmed
-		// address -- and nothing looked wrong until somebody asked why the
-		// verification rate was 100%.
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.verify", AuthPage{
-			Page:       m.page(r, "Confirm your address"),
-			EmailError: status,
-		})
+	email := strings.TrimSpace(r.PostFormValue("email"))
+	code := strings.TrimSpace(r.PostFormValue("email_code"))
+	if email == "" || code == "" {
+		m.rejectedVerification(w, r, email, "type the code from your email")
 		return
 	}
-
-	_, first, err := m.auth.MarkVerified(r.Context(), m.tenant(r), payload)
+	u, err := m.users.Lookup(r.Context(), m.tenant(r), email)
+	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), code) != nil {
+		m.rejectedVerification(w, r, email, "that code is not valid")
+		return
+	}
+	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
 	if err != nil {
 		observability.Log(r.Context()).Error("marking an address verified", "error", err)
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.verify", AuthPage{
-			Page:       m.page(r, "Confirm your address"),
-			EmailError: "That link is not valid.",
-		})
+		m.rejectedVerification(w, r, email, "that code is not valid")
 		return
 	}
-
-	// Both answers are a success. Clicking the link a second time -- in another
-	// mail client, or because the first tab was closed -- is the common case,
-	// and answering it with an error reads as the link being broken.
-	message := "Your address is confirmed. Welcome."
-	if !first {
-		message = "That address was already confirmed. Sign in."
+	status := "That address was already confirmed. Sign in."
+	if firstVerification {
+		status = "Your address is confirmed. Welcome."
 	}
 	m.screen(w, r, "auth.login", AuthPage{
-		Page:   m.page(r, "Sign in"),
-		Status: message,
+		Page: m.page(r, "Sign in"), Email: u.Email, Status: status,
 	})
 }
 
-// resendVerification issues another link for the signed-in person.
-//
-// It requires a session on purpose. A resend form that takes an address is a
-// form that mails anybody on request, from this application's domain, as many
-// times as it is asked -- and the reputation of a sending domain is not
-// something to hand to whoever finds the URL.
+// resendVerification does not reveal whether the address exists. The native
+// CodeStore applies expiry, cooldown, attempt limits and atomic consumption.
 func (m *Module) resendVerification(w http.ResponseWriter, r *http.Request) {
-	subject, err := m.sessions.Load(r.Context(), r)
-	if err != nil {
-		redirect(w, r, "/auth/login")
-		return
+	email := strings.TrimSpace(r.PostFormValue("email"))
+	if u, err := m.users.Lookup(r.Context(), m.tenant(r), email); err == nil && !u.Verified() {
+		if err := m.sendVerification(r, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
+			observability.Log(r.Context()).Error("resending the verification code", "error", err)
+		}
 	}
-
-	u, err := m.auth.FindForVerification(r.Context(), subject.Tenant, subject.ID)
-	if err != nil {
-		observability.Log(r.Context()).Error("reading the user to resend verification", "error", err)
-		redirect(w, r, "/auth/verify")
-		return
-	}
-	if u.Verified() {
-		redirect(w, r, "/")
-		return
-	}
-
-	m.sendVerification(r, u)
-	redirect(w, r, "/auth/verify?resent=1")
+	m.screen(w, r, "auth.verify", AuthPage{
+		Page: m.page(r, "Confirm your address"), Email: email,
+		Status: verificationSent, Resent: true,
+	})
 }
 
-// sendVerification signs a link and mails it.
-//
-// A failure is logged and not returned to the caller: the account exists either
-// way, and a registration that answers 500 because a provider was rate limiting
-// is a registration the person repeats, which fails on the address being taken.
-// The resend button is the recovery, and it is on the next screen.
-func (m *Module) sendVerification(r *http.Request, u auth.User) {
-	// The id AND the address, so the link stops verifying once the address it
-	// was sent to is no longer the account's. Signing the id alone made a link
-	// mailed to an old address confirm a new one somebody else controls.
-	token := m.signer.Sign(verifyPurpose, auth.VerificationPayload(u), verifyTTL)
-
-	// The origin comes from configuration and never from the Host header: a link
-	// built from what the client sent is a link the client chose the destination
-	// of, delivered by us, to the address of somebody who trusts us.
-	link := m.base + "/auth/verify/confirm?token=" + token
-
-	// The brand travels with the message, from the configuration this module was
-	// built with. It is not a literal in the mail view: a starter kit that types
-	// its own name there sends every project's verification mail signed with the
-	// framework's name, to people who have never heard of it.
-	if err := m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
-		Name:      firstWord(u.Name),
-		Link:      link,
-		BrandName: m.appName,
-	}); err != nil {
-		observability.Log(r.Context()).Error("sending the verification link",
-			"error", err, "user", u)
+func (m *Module) sendVerification(r *http.Request, u models.User) error {
+	code, err := m.codes.Issue(r.Context(), verifyPurpose, emailCodeSubject(u))
+	if err != nil {
+		return err
 	}
+	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
+		Name: firstWord(u.Name), Code: code, BrandName: m.appName,
+	})
 }
 
-// rejectedRegistration re-renders the form with the messages, per field.
-//
-// What was typed comes back, except the passwords. Retyping a name and an
-// address because one box was wrong is how a sign-up form loses somebody.
-func (m *Module) rejectedRegistration(w http.ResponseWriter, r *http.Request, in auth.RegisterRequest, errs validation.Errors) {
+func emailCodeSubject(u models.User) string {
+	return u.TenantID + "\x00" + u.ID + "\x00" + services.NormalizeEmail(u.Email)
+}
+
+func (m *Module) rejectedVerification(w http.ResponseWriter, r *http.Request, email, message string) {
+	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.verify", AuthPage{
+		Page: m.page(r, "Confirm your address"), Email: email, EmailCodeError: message,
+	})
+}
+
+func (m *Module) rejectedRegistration(w http.ResponseWriter, r *http.Request, in registrationInput, errs validation.Errors) {
 	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.register", AuthPage{
-		Page:  m.page(r, "Create an account"),
-		Name:  in.Name,
-		Email: in.Email,
-
-		NameError:                 first(errs["name"]),
-		EmailError:                first(errs["email"]),
+		Page: m.page(r, "Create an account"), Name: in.Name, Email: in.Email,
+		NameError: first(errs["name"]), EmailError: first(errs["email"]),
 		PasswordError:             first(errs["password"]),
 		PasswordConfirmationError: first(errs["password_confirmation"]),
 	})
 }
 
-func first(msgs []string) string {
-	if len(msgs) == 0 {
+func first(messages []string) string {
+	if len(messages) == 0 {
 		return ""
 	}
-	return msgs[0]
+	return messages[0]
 }
 
-// firstWord is the greeting. "Hello Ada" reads better than "Hello Ada Lovelace",
-// and an empty name greets nobody rather than greeting "".
 func firstWord(name string) string {
 	name = strings.TrimSpace(name)
 	if i := strings.IndexByte(name, ' '); i > 0 {

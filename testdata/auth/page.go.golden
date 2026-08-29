@@ -10,9 +10,9 @@ import (
 
 // AuthPage is what every screen of the starter kit renders from.
 //
-// One struct for the nine screens rather than one per page: they share a layout
+// One struct for the thirteen screens rather than one per page: they share a layout
 // and a shape, and a field a given screen does not use stays at its zero value
-// and is never read. That is cheaper than nine structs repeating the same form
+// and is never read. That is cheaper than thirteen structs repeating the same form
 // state, and it is why each view names this one in a single line.
 //
 // The chrome is not repeated here at all: the embedded view.Page carries the
@@ -48,17 +48,24 @@ type AuthPage struct {
 
 	// The addresses these screens post to and link to, beyond the navigation
 	// view.Page already carries. They come from the router, through the handler.
-	DashboardURL          string
-	PasswordRequestURL    string
-	PasswordEmailURL      string
-	PasswordUpdateURL     string
-	PasswordConfirmURL    string
-	VerificationResendURL string
+	DashboardURL             string
+	PasswordRequestURL       string
+	PasswordEmailURL         string
+	PasswordUpdateURL        string
+	PasswordConfirmURL       string
+	VerificationConfirmURL   string
+	VerificationResendURL    string
+	TwoFactorChallengeURL    string
+	TwoFactorRecoveryURL     string
+	TwoFactorSetupURL        string
+	TwoFactorSetupConfirmURL string
+	TwoFactorDisableURL      string
+	RecoveryCodesURL         string
 
 	// Status is the one-shot message a redirect left behind, such as the
-	// confirmation that a reset link was sent. Empty means nothing to say.
+	// confirmation that a reset code was sent. Empty means nothing to say.
 	Status string
-	// Resent says a fresh verification link just went out.
+	// Resent says a fresh verification code just went out.
 	Resent bool
 
 	// Name, Email and Remember are what the person typed on the attempt that
@@ -67,13 +74,19 @@ type AuthPage struct {
 	Email    string
 	Remember bool
 
-	// ResetToken is the one-time token carried by the link in the reset email.
-	ResetToken string
+	// Provisioning material is rendered once and deliberately omitted from
+	// MarshalJSON and LogValue.
+	QRCodeSVG         string
+	SecretKey         string
+	RecoveryCodesText string
 
 	// The validation messages, one field at a time. Empty means the field was
 	// accepted -- there is no @error directive to ask a bag on the side.
 	NameError                 string
 	EmailError                string
+	EmailCodeError            string
+	AuthenticatorCodeError    string
+	RecoveryCodeError         string
 	PasswordError             string
 	PasswordConfirmationError string
 }
@@ -106,6 +119,12 @@ func (p AuthPage) FieldError(name string) string {
 		return p.NameError
 	case "email":
 		return p.EmailError
+	case "email_code":
+		return p.EmailCodeError
+	case "authenticator_code":
+		return p.AuthenticatorCodeError
+	case "recovery_code":
+		return p.RecoveryCodeError
 	case "password":
 		return p.PasswordError
 	case "password_confirmation":
@@ -113,6 +132,10 @@ func (p AuthPage) FieldError(name string) string {
 	}
 	return p.Page.First(name)
 }
+
+// QRCode returns trusted SVG produced by hesape/qr. Views call this method at
+// the raw-output site so arbitrary string fields cannot bypass escaping.
+func (p AuthPage) QRCode() string { return p.QRCodeSVG }
 
 // redacted is what a secret looks like once it has left this package.
 //
@@ -127,18 +150,15 @@ func redacted(secret string) string {
 	return "[redacted]"
 }
 
-// MarshalJSON keeps the two tokens this page carries out of anything that
-// serializes it. Without it a single observability.Dump(ctx, "page", data)
-// publishes the password reset token on the debug page, and whoever reads it
-// there can set that account's password.
+// MarshalJSON keeps the CSRF token and two-factor provisioning material out of
+// anything that serializes the page.
 //
 // It names the fields that may leave, rather than the ones that may not. A
 // field added to the struct later does not appear until it is named here, which
 // is the direction that cannot leak by accident -- the reverse spelling grows a
 // hole every time somebody adds a field and does not think about this method.
 //
-// The two tokens are named, and carry the marker instead of the value, so a
-// dump still answers whether they were filled in. See redacted.
+// The CSRF token carries a marker; provisioning material is omitted entirely.
 func (p AuthPage) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Title         string
@@ -148,13 +168,20 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		UserName      string
 		Token         string
 
-		HasPasswordReset      bool
-		DashboardURL          string
-		PasswordRequestURL    string
-		PasswordEmailURL      string
-		PasswordUpdateURL     string
-		PasswordConfirmURL    string
-		VerificationResendURL string
+		HasPasswordReset         bool
+		DashboardURL             string
+		PasswordRequestURL       string
+		PasswordEmailURL         string
+		PasswordUpdateURL        string
+		PasswordConfirmURL       string
+		VerificationConfirmURL   string
+		VerificationResendURL    string
+		TwoFactorChallengeURL    string
+		TwoFactorRecoveryURL     string
+		TwoFactorSetupURL        string
+		TwoFactorSetupConfirmURL string
+		TwoFactorDisableURL      string
+		RecoveryCodesURL         string
 
 		Status   string
 		Resent   bool
@@ -162,10 +189,11 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		Email    string
 		Remember bool
 
-		ResetToken string
-
 		NameError                 string
 		EmailError                string
+		EmailCodeError            string
+		AuthenticatorCodeError    string
+		RecoveryCodeError         string
 		PasswordError             string
 		PasswordConfirmationError string
 	}{
@@ -176,13 +204,20 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		UserName:      p.Page.UserName,
 		Token:         redacted(p.Page.Token),
 
-		HasPasswordReset:      p.HasPasswordReset,
-		DashboardURL:          p.DashboardURL,
-		PasswordRequestURL:    p.PasswordRequestURL,
-		PasswordEmailURL:      p.PasswordEmailURL,
-		PasswordUpdateURL:     p.PasswordUpdateURL,
-		PasswordConfirmURL:    p.PasswordConfirmURL,
-		VerificationResendURL: p.VerificationResendURL,
+		HasPasswordReset:         p.HasPasswordReset,
+		DashboardURL:             p.DashboardURL,
+		PasswordRequestURL:       p.PasswordRequestURL,
+		PasswordEmailURL:         p.PasswordEmailURL,
+		PasswordUpdateURL:        p.PasswordUpdateURL,
+		PasswordConfirmURL:       p.PasswordConfirmURL,
+		VerificationConfirmURL:   p.VerificationConfirmURL,
+		VerificationResendURL:    p.VerificationResendURL,
+		TwoFactorChallengeURL:    p.TwoFactorChallengeURL,
+		TwoFactorRecoveryURL:     p.TwoFactorRecoveryURL,
+		TwoFactorSetupURL:        p.TwoFactorSetupURL,
+		TwoFactorSetupConfirmURL: p.TwoFactorSetupConfirmURL,
+		TwoFactorDisableURL:      p.TwoFactorDisableURL,
+		RecoveryCodesURL:         p.RecoveryCodesURL,
 
 		Status:   p.Status,
 		Resent:   p.Resent,
@@ -190,10 +225,11 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		Email:    p.Email,
 		Remember: p.Remember,
 
-		ResetToken: redacted(p.ResetToken),
-
 		NameError:                 p.NameError,
 		EmailError:                p.EmailError,
+		EmailCodeError:            p.EmailCodeError,
+		AuthenticatorCodeError:    p.AuthenticatorCodeError,
+		RecoveryCodeError:         p.RecoveryCodeError,
 		PasswordError:             p.PasswordError,
 		PasswordConfirmationError: p.PasswordConfirmationError,
 	})

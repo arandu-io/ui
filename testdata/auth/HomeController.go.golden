@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"github.com/arandu-io/framework/http"
-	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
@@ -37,13 +36,13 @@ type HomeController struct {
 	//
 	// The tenant is whose rows are read. It comes from the configuration,
 	// through bootstrap/app.go, and never from the request.
-	people *auth.Service
+	people authui.UserNames
 	tenant string
 }
 
 // NewHomeController returns the controller. bootstrap/app.go builds it and hands
 // it to the routes.
-func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF, people *auth.Service, tenant string) *HomeController {
+func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF, people authui.UserNames, tenant string) *HomeController {
 	return &HomeController{
 		appName: appName, sessions: sessions, csrf: csrf,
 		people: people, tenant: tenant,
@@ -78,7 +77,7 @@ func (c *HomeController) Index(ctx *http.Context) error {
 
 	// arandu:begin custom
 	// The name to greet, through the helper the kit's own screens greet with, so
-	// this page and the nine beside it answer the same way when the lookup fails.
+	// this page and the thirteen beside it answer the same way when the lookup fails.
 	name := authui.SignedInName(ctx.Ctx(), c.people, c.tenant, subject.ID)
 
 	// Which of the two published screens the front page is.
@@ -119,7 +118,7 @@ func (c *HomeController) Index(ctx *http.Context) error {
 		DashboardURL: "/",
 
 		// The reset is wired: this kit publishes PasswordController, mounts its
-		// three routes and mails a signed link. The link on the sign-in screen
+		// routes and mails a single-use code. The link on the sign-in screen
 		// is drawn because the handler behind it exists, which is the only
 		// reason a link is ever drawn.
 		HasPasswordReset: true,

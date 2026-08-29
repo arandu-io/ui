@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// The nine screens of the starter kit, and the one fragment they are answered
+// The thirteen screens of the starter kit, and the one fragment they are answered
 // with.
 //
 // The screens are the ones every application has, at the paths people look for:
@@ -124,6 +124,10 @@ func AuthViews(m Module) ([]File, error) {
 		{filepath.Join(dir, "auth", "passwords", "confirm.kyse.go"), authPasswordConfirmViewTemplate},
 		{filepath.Join(dir, "auth", "passwords", "email.kyse.go"), authPasswordEmailViewTemplate},
 		{filepath.Join(dir, "auth", "passwords", "reset.kyse.go"), authPasswordResetViewTemplate},
+		{filepath.Join(dir, "auth", "two-factor", "challenge.kyse.go"), authTwoFactorChallengeViewTemplate},
+		{filepath.Join(dir, "auth", "two-factor", "recovery.kyse.go"), authTwoFactorRecoveryViewTemplate},
+		{filepath.Join(dir, "auth", "two-factor", "setup.kyse.go"), authTwoFactorSetupViewTemplate},
+		{filepath.Join(dir, "auth", "two-factor", "recovery-codes.kyse.go"), authRecoveryCodesViewTemplate},
 
 		// The one fragment. It is the sign-in form, because the sign-in form is
 		// the one control in the kit that asks to be answered on its own -- see
@@ -151,7 +155,7 @@ func AuthViews(m Module) ([]File, error) {
 	return out, nil
 }
 
-// authPageTemplate is the struct the nine screens render from.
+// authPageTemplate is the struct the thirteen screens render from.
 //
 // It is Go, not kyse, and it lives with the controller rather than with the
 // views. That is where the fields are set, so a field that is added and never
@@ -162,11 +166,8 @@ func AuthViews(m Module) ([]File, error) {
 // description, the token and the navigation come from there, declared once in
 // the framework instead of once per project.
 //
-// It also carries the two methods that keep a token off the debug page. Two
-// tokens reach this struct -- the CSRF token of the session, through the
-// embedded view.Page, and the one-time token of a password reset link -- and a
-// type that holds either and serializes itself whole is one Dump away from
-// publishing it.
+// It also keeps the CSRF token and all two-factor provisioning material out of
+// serialized diagnostics.
 const authPageTemplate = `package authui
 
 import (
@@ -179,9 +180,9 @@ import (
 
 // AuthPage is what every screen of the starter kit renders from.
 //
-// One struct for the nine screens rather than one per page: they share a layout
+// One struct for the thirteen screens rather than one per page: they share a layout
 // and a shape, and a field a given screen does not use stays at its zero value
-// and is never read. That is cheaper than nine structs repeating the same form
+// and is never read. That is cheaper than thirteen structs repeating the same form
 // state, and it is why each view names this one in a single line.
 //
 // The chrome is not repeated here at all: the embedded view.Page carries the
@@ -222,12 +223,19 @@ type AuthPage struct {
 	PasswordEmailURL      string
 	PasswordUpdateURL     string
 	PasswordConfirmURL    string
+	VerificationConfirmURL string
 	VerificationResendURL string
+	TwoFactorChallengeURL string
+	TwoFactorRecoveryURL string
+	TwoFactorSetupURL string
+	TwoFactorSetupConfirmURL string
+	TwoFactorDisableURL string
+	RecoveryCodesURL string
 
 	// Status is the one-shot message a redirect left behind, such as the
-	// confirmation that a reset link was sent. Empty means nothing to say.
+	// confirmation that a reset code was sent. Empty means nothing to say.
 	Status string
-	// Resent says a fresh verification link just went out.
+	// Resent says a fresh verification code just went out.
 	Resent bool
 
 	// Name, Email and Remember are what the person typed on the attempt that
@@ -236,13 +244,19 @@ type AuthPage struct {
 	Email    string
 	Remember bool
 
-	// ResetToken is the one-time token carried by the link in the reset email.
-	ResetToken string
+	// Provisioning material is rendered once and deliberately omitted from
+	// MarshalJSON and LogValue.
+	QRCodeSVG        string
+	SecretKey        string
+	RecoveryCodesText string
 
 	// The validation messages, one field at a time. Empty means the field was
 	// accepted -- there is no @error directive to ask a bag on the side.
 	NameError                 string
 	EmailError                string
+	EmailCodeError            string
+	AuthenticatorCodeError    string
+	RecoveryCodeError         string
 	PasswordError             string
 	PasswordConfirmationError string
 }
@@ -275,6 +289,12 @@ func (p AuthPage) FieldError(name string) string {
 		return p.NameError
 	case "email":
 		return p.EmailError
+	case "email_code":
+		return p.EmailCodeError
+	case "authenticator_code":
+		return p.AuthenticatorCodeError
+	case "recovery_code":
+		return p.RecoveryCodeError
 	case "password":
 		return p.PasswordError
 	case "password_confirmation":
@@ -282,6 +302,10 @@ func (p AuthPage) FieldError(name string) string {
 	}
 	return p.Page.First(name)
 }
+
+// QRCode returns trusted SVG produced by hesape/qr. Views call this method at
+// the raw-output site so arbitrary string fields cannot bypass escaping.
+func (p AuthPage) QRCode() string { return p.QRCodeSVG }
 
 // redacted is what a secret looks like once it has left this package.
 //
@@ -296,18 +320,15 @@ func redacted(secret string) string {
 	return "[redacted]"
 }
 
-// MarshalJSON keeps the two tokens this page carries out of anything that
-// serializes it. Without it a single observability.Dump(ctx, "page", data)
-// publishes the password reset token on the debug page, and whoever reads it
-// there can set that account's password.
+// MarshalJSON keeps the CSRF token and two-factor provisioning material out of
+// anything that serializes the page.
 //
 // It names the fields that may leave, rather than the ones that may not. A
 // field added to the struct later does not appear until it is named here, which
 // is the direction that cannot leak by accident -- the reverse spelling grows a
 // hole every time somebody adds a field and does not think about this method.
 //
-// The two tokens are named, and carry the marker instead of the value, so a
-// dump still answers whether they were filled in. See redacted.
+// The CSRF token carries a marker; provisioning material is omitted entirely.
 func (p AuthPage) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Title         string
@@ -323,7 +344,14 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		PasswordEmailURL      string
 		PasswordUpdateURL     string
 		PasswordConfirmURL    string
+		VerificationConfirmURL string
 		VerificationResendURL string
+		TwoFactorChallengeURL string
+		TwoFactorRecoveryURL string
+		TwoFactorSetupURL string
+		TwoFactorSetupConfirmURL string
+		TwoFactorDisableURL string
+		RecoveryCodesURL string
 
 		Status   string
 		Resent   bool
@@ -331,10 +359,11 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		Email    string
 		Remember bool
 
-		ResetToken string
-
 		NameError                 string
 		EmailError                string
+		EmailCodeError            string
+		AuthenticatorCodeError    string
+		RecoveryCodeError         string
 		PasswordError             string
 		PasswordConfirmationError string
 	}{
@@ -351,7 +380,14 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		PasswordEmailURL:      p.PasswordEmailURL,
 		PasswordUpdateURL:     p.PasswordUpdateURL,
 		PasswordConfirmURL:    p.PasswordConfirmURL,
+		VerificationConfirmURL: p.VerificationConfirmURL,
 		VerificationResendURL: p.VerificationResendURL,
+		TwoFactorChallengeURL: p.TwoFactorChallengeURL,
+		TwoFactorRecoveryURL: p.TwoFactorRecoveryURL,
+		TwoFactorSetupURL: p.TwoFactorSetupURL,
+		TwoFactorSetupConfirmURL: p.TwoFactorSetupConfirmURL,
+		TwoFactorDisableURL: p.TwoFactorDisableURL,
+		RecoveryCodesURL: p.RecoveryCodesURL,
 
 		Status:   p.Status,
 		Resent:   p.Resent,
@@ -359,10 +395,11 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		Email:    p.Email,
 		Remember: p.Remember,
 
-		ResetToken: redacted(p.ResetToken),
-
 		NameError:                 p.NameError,
 		EmailError:                p.EmailError,
+		EmailCodeError:            p.EmailCodeError,
+		AuthenticatorCodeError:    p.AuthenticatorCodeError,
+		RecoveryCodeError:         p.RecoveryCodeError,
 		PasswordError:             p.PasswordError,
 		PasswordConfirmationError: p.PasswordConfirmationError,
 	})
@@ -909,25 +946,33 @@ type VerifyData = authui.AuthPage
 			</header>
 
 			<div class="flex flex-col gap-4 px-6 py-6 text-sm">
-				{{-- A link that was not valid, or has expired. It is an error about
-				     something that already happened, so it is a banner rather than a
-				     message under a field: there is no field it belongs to. --}}
-				@if(.EmailError != "")
-					{!! components.Alert(components.AlertProps{Title: .EmailError, Variant: "destructive"}) !!}
-				@endif
-
 				@if(.Resent)
 					{!! components.Alert(components.AlertProps{
-						Title: "A fresh link is on its way",
+						Title: "A fresh code is on its way",
 						Message: "Check the address you registered with.",
 					}) !!}
 				@endif
 
-				<p class="text-muted-foreground">Before going on, follow the link we sent you. If it did not arrive, ask for another.</p>
+				@if(.Status != "")
+					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
 
-				<form method="post" action="{{ .VerificationResendURL }}">
+				<p class="text-muted-foreground">Type the single-use code sent to your email address.</p>
+
+				<form class="flex flex-col gap-4" method="post" action="{{ .VerificationConfirmURL }}">
 					@csrf
-					<button type="submit" class="btn">Send it again</button>
+					{!! components.Field(components.FieldProps{
+						Name: "email", Label: "Email", Type: "email",
+						Value: .Email, Page: ., Autocomplete: "email", Required: true,
+					}) !!}
+					{!! components.Field(components.FieldProps{
+						Name: "email_code", Label: "Email code",
+						Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+					}) !!}
+					<div class="flex items-center gap-3">
+						<button type="submit" class="btn">Confirm address</button>
+						<button type="submit" class="btn" data-variant="outline" formaction="{{ .VerificationResendURL }}">Send another code</button>
+					</div>
 				</form>
 			</div>
 		</section>
@@ -935,7 +980,7 @@ type VerifyData = authui.AuthPage
 @endsection
 `
 
-// authPasswordEmailViewTemplate asks for the address to send the reset link to.
+// authPasswordEmailViewTemplate asks for the address to send the reset code to.
 const authPasswordEmailViewTemplate = `//go:build kyse
 
 package passwords
@@ -947,7 +992,7 @@ import (
 )
 
 @go
-// EmailData is what the "send me a link" screen draws.
+// EmailData is what the "send me a code" screen draws.
 type EmailData = authui.AuthPage
 @endgo
 
@@ -970,12 +1015,12 @@ type EmailData = authui.AuthPage
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
 					Value: .Email, Page: .,
-					Hint: "We will send a link if the address is registered.",
+					Hint: "We will send a code if the address is registered.",
 					Autocomplete: "email", Required: true, Autofocus: true,
 				}) !!}
 
 				<div>
-					<button type="submit" class="btn">Send the link</button>
+					<button type="submit" class="btn">Send the code</button>
 				</div>
 			</form>
 		</section>
@@ -1010,11 +1055,9 @@ type ResetData = authui.AuthPage
 
 			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordUpdateURL }}">
 				@csrf
-				{{-- The one-time token from the link. It is a hidden field rather
-				     than a query string so it stays out of the referer header and
-				     out of the browser history. --}}
-				<input type="hidden" name="token" value="{{ .ResetToken }}">
-
+				@if(.Status != "")
+					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
 					Value: .Email, Page: .,
@@ -1022,10 +1065,16 @@ type ResetData = authui.AuthPage
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
+					Name: "email_code", Label: "Email code",
+					Page: .,
+					Autocomplete: "one-time-code", Required: true, Autofocus: true,
+				}) !!}
+
+				{!! components.Field(components.FieldProps{
 					Name: "password", Label: "New password", Type: "password",
 					Page: .,
 					Hint: "At least twelve characters.",
-					Autocomplete: "new-password", Required: true, Autofocus: true,
+					Autocomplete: "new-password", Required: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
@@ -1038,6 +1087,167 @@ type ResetData = authui.AuthPage
 					<button type="submit" class="btn">Change it</button>
 				</div>
 			</form>
+		</section>
+	</div>
+@endsection
+`
+
+const authTwoFactorChallengeViewTemplate = `//go:build kyse
+
+package twofactor
+
+import (
+	"github.com/arandu-io/kyse/components"
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+type ChallengeData = authui.AuthPage
+@endgo
+
+@extends('layouts.app')
+
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Two-factor authentication</h1>
+			</header>
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .TwoFactorChallengeURL }}">
+				@csrf
+				<p class="text-muted-foreground text-sm">Type the code from your authenticator application.</p>
+				{!! components.Field(components.FieldProps{
+					Name: "authenticator_code", Label: "Authenticator code",
+					Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+				}) !!}
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" class="btn">Continue</button>
+					<a class="text-muted-foreground text-sm hover:underline" href="{{ .TwoFactorRecoveryURL }}">Use a recovery code</a>
+				</div>
+			</form>
+		</section>
+	</div>
+@endsection
+`
+
+const authTwoFactorRecoveryViewTemplate = `//go:build kyse
+
+package twofactor
+
+import (
+	"github.com/arandu-io/kyse/components"
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+type RecoveryData = authui.AuthPage
+@endgo
+
+@extends('layouts.app')
+
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Use a recovery code</h1>
+			</header>
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .TwoFactorRecoveryURL }}">
+				@csrf
+				{!! components.Field(components.FieldProps{
+					Name: "recovery_code", Label: "Recovery code",
+					Page: ., Autocomplete: "off", Required: true, Autofocus: true,
+				}) !!}
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" class="btn">Continue</button>
+					<a class="text-muted-foreground text-sm hover:underline" href="{{ .TwoFactorChallengeURL }}">Use an authenticator code</a>
+				</div>
+			</form>
+		</section>
+	</div>
+@endsection
+`
+
+const authTwoFactorSetupViewTemplate = `//go:build kyse
+
+package twofactor
+
+import (
+	"github.com/arandu-io/kyse/components"
+	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+)
+
+@go
+type SetupData = authui.AuthPage
+@endgo
+
+@extends('layouts.app')
+
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Set up two-factor authentication</h1>
+			</header>
+			<div class="flex flex-col gap-4 px-6 py-6">
+				@if(.AuthenticatorCodeError != "")
+					{!! components.Alert(components.AlertProps{Title: .AuthenticatorCodeError, Variant: "destructive"}) !!}
+				@endif
+				@if(.SecretKey == "")
+					<p class="text-muted-foreground text-sm">Start setup to create a new authenticator secret.</p>
+					<form method="post" action="{{ .TwoFactorSetupURL }}">
+						@csrf
+						<button type="submit" class="btn">Start setup</button>
+					</form>
+				@endif
+				@if(.SecretKey != "")
+					<div class="mx-auto max-w-64">{!! .QRCode() !!}</div>
+					<p class="text-muted-foreground text-sm">If the camera cannot scan the code, type this key:</p>
+					<code class="rounded border p-3 text-sm break-all">{{ .SecretKey }}</code>
+					<form class="flex flex-col gap-4" method="post" action="{{ .TwoFactorSetupConfirmURL }}">
+						@csrf
+						{!! components.Field(components.FieldProps{
+							Name: "authenticator_code", Label: "Authenticator code",
+							Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+						}) !!}
+						<button type="submit" class="btn">Confirm setup</button>
+					</form>
+				@endif
+				<form method="post" action="{{ .TwoFactorDisableURL }}">
+					@csrf
+					<button type="submit" class="btn" data-variant="destructive">Disable two-factor authentication</button>
+				</form>
+			</div>
+		</section>
+	</div>
+@endsection
+`
+
+const authRecoveryCodesViewTemplate = `//go:build kyse
+
+package twofactor
+
+import authui "<% .ModulePath %>/app/Http/Controllers/Auth"
+
+@go
+type RecoveryCodesData = authui.AuthPage
+@endgo
+
+@extends('layouts.app')
+
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Recovery codes</h1>
+			</header>
+			<div class="flex flex-col gap-4 px-6 py-6">
+				<p class="text-muted-foreground text-sm">Store these codes somewhere safe. Each code works once.</p>
+				<pre class="overflow-x-auto rounded border p-4 text-sm">{{ .RecoveryCodesText }}</pre>
+				<form method="post" action="{{ .RecoveryCodesURL }}">
+					@csrf
+					<button type="submit" class="btn" data-variant="outline">Generate new recovery codes</button>
+				</form>
+			</div>
 		</section>
 	</div>
 @endsection

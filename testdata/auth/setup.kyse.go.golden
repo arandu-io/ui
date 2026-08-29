@@ -1,0 +1,53 @@
+//go:build kyse
+
+package twofactor
+
+import (
+	"github.com/arandu-io/kyse/components"
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
+
+@go
+type SetupData = authui.AuthPage
+@endgo
+
+@extends('layouts.app')
+
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Set up two-factor authentication</h1>
+			</header>
+			<div class="flex flex-col gap-4 px-6 py-6">
+				@if(.AuthenticatorCodeError != "")
+					{!! components.Alert(components.AlertProps{Title: .AuthenticatorCodeError, Variant: "destructive"}) !!}
+				@endif
+				@if(.SecretKey == "")
+					<p class="text-muted-foreground text-sm">Start setup to create a new authenticator secret.</p>
+					<form method="post" action="{{ .TwoFactorSetupURL }}">
+						@csrf
+						<button type="submit" class="btn">Start setup</button>
+					</form>
+				@endif
+				@if(.SecretKey != "")
+					<div class="mx-auto max-w-64">{!! .QRCode() !!}</div>
+					<p class="text-muted-foreground text-sm">If the camera cannot scan the code, type this key:</p>
+					<code class="rounded border p-3 text-sm break-all">{{ .SecretKey }}</code>
+					<form class="flex flex-col gap-4" method="post" action="{{ .TwoFactorSetupConfirmURL }}">
+						@csrf
+						{!! components.Field(components.FieldProps{
+							Name: "authenticator_code", Label: "Authenticator code",
+							Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+						}) !!}
+						<button type="submit" class="btn">Confirm setup</button>
+					</form>
+				@endif
+				<form method="post" action="{{ .TwoFactorDisableURL }}">
+					@csrf
+					<button type="submit" class="btn" data-variant="destructive">Disable two-factor authentication</button>
+				</form>
+			</div>
+		</section>
+	</div>
+@endsection

@@ -42,26 +42,19 @@ func bodyOf(t *testing.T, source, function string) string {
 	return ""
 }
 
-// TestTheResetLinkIsSignedAndHeldNowhere.
-//
-// The store was a package-level map guarded by a mutex, and it cost four things
-// at once: a restart threw away every link in flight, a second replica refused
-// the link the first one issued, every address anybody typed left an entry that
-// only a click could remove, and asking twice left two live links. What answers
-// all four is here -- a token signed with the application key, carrying what it
-// needs, stored nowhere.
-func TestTheResetLinkIsSignedAndHeldNowhere(t *testing.T) {
+// TestTheResetUsesOnlyPurposeBoundNativeCodes rejects every remnant of the
+// former signed-link protocol and pins the native single-use CodeStore seam.
+func TestTheResetUsesOnlyPurposeBoundNativeCodes(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
 
-	for _, gone := range []string{"sync.Mutex", "map[string]", "byHash", "crypto/rand"} {
+	for _, gone := range []string{"m.signer.Sign", "ResetPayload", "ResetToken", `name="token"`, `?token=`} {
 		if strings.Contains(source, gone) {
-			t.Errorf("the reset still keeps %s: a token this process holds is a token the other replica has never "+
-				"heard of, and one a restart throws away", gone)
+			t.Errorf("the reset still publishes the legacy signed-link boundary %q", gone)
 		}
 	}
-	if !strings.Contains(source, "m.signer.Sign(resetPurpose, auth.ResetPayload(u), resetTTL)") {
-		t.Error("the link is not signed with the reset purpose and the payload: the purpose is what keeps a " +
-			"verification link from working as a password reset, since the same key signs both")
+	if !strings.Contains(source, `m.codes.Issue(r.Context(), resetPurpose, resetCodeSubject(u))`) ||
+		!strings.Contains(source, `resetPurpose = "reset-password"`) {
+		t.Error("password reset is not issued through the purpose-bound native CodeStore")
 	}
 }
 
@@ -74,8 +67,8 @@ func TestTheResetLinkIsSignedAndHeldNowhere(t *testing.T) {
 func TestNothingIsMailedToAnAddressNobodyLookedUp(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
 
-	send := bodyOf(t, source, "sendPasswordLink")
-	if !strings.Contains(send, "m.auth.FindForReset(") {
+	send := bodyOf(t, source, "sendPasswordCode")
+	if !strings.Contains(send, "m.users.Lookup(") {
 		t.Fatal("the handler mails without looking the account up first")
 	}
 	if strings.Contains(send, ".Send(") {
@@ -95,13 +88,10 @@ func TestNothingIsMailedToAnAddressNobodyLookedUp(t *testing.T) {
 func TestTheResetIsThrottledByTheCounterSigningInAlreadyUses(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
 
-	if !strings.Contains(source, "middleware.KeyByIP(r)") {
-		t.Error("nothing keys the reset by where the request came from, so it is not throttled at all")
+	if !strings.Contains(source, "m.codes.Issue(") || !strings.Contains(source, "m.codes.Consume(") {
+		t.Error("the reset bypasses the native store that owns cooldown, attempts, expiry and atomic consumption")
 	}
-	if !strings.Contains(source, "auth.TooManyAttemptsError") {
-		t.Error("the screen never answers a lockout, so a throttled request would look like a link that was sent")
-	}
-	for _, second := range []string{"time.Ticker", "attempts[", "map[string]int"} {
+	for _, second := range []string{"time.Ticker", "attempts[", "map[string]int", "sync.Mutex"} {
 		if strings.Contains(source, second) {
 			t.Errorf("the screen keeps %s: a second counter beside the framework's is a second answer to "+
 				"\"how often may this be asked\"", second)
@@ -120,16 +110,16 @@ func TestNothingIsConsumedUntilThePasswordIsAcceptable(t *testing.T) {
 
 	length := strings.Index(body, "security.MinPasswordLen")
 	match := strings.Index(body, "password != confirmation")
-	verify := strings.Index(body, "m.signer.Verify(")
-	write := strings.Index(body, "m.auth.ResetPassword(")
+	consume := strings.Index(body, "m.codes.Consume(")
+	write := strings.Index(body, "m.users.ResetPassword(")
 
 	switch {
-	case length < 0 || match < 0 || verify < 0 || write < 0:
-		t.Fatalf("updatePassword no longer does all four of match, length, verify and write:\n%s", body)
-	case match > verify || length > verify:
-		t.Error("the link is verified before the password is checked, so a rejected password spends the link")
-	case verify > write:
-		t.Error("the password is written before the signature is checked")
+	case length < 0 || match < 0 || consume < 0 || write < 0:
+		t.Fatalf("updatePassword no longer does all four of match, length, consume and write:\n%s", body)
+	case match > consume || length > consume:
+		t.Error("the code is consumed before the password is acceptable")
+	case consume > write:
+		t.Error("the password is written before the one-time code is consumed")
 	}
 }
 
@@ -165,7 +155,7 @@ func TestTheResetSaysTheSameThingWhetherTheAddressIsRegisteredOrNot(t *testing.T
 	// And the one sentence it does answer with is written once, so the two
 	// branches cannot drift apart the first time somebody rewords one of them.
 	source := authFile(t, "PasswordController.go")
-	if strings.Count(source, `"If that address is registered, a link is on its way."`) != 1 {
+	if strings.Count(source, `"If that address is registered, a code is on its way."`) != 1 {
 		t.Error("the answer is spelled more than once: two literals a hundred lines apart are two answers")
 	}
 }
@@ -182,7 +172,7 @@ func TestAResetEndsTheAccountsOtherSessions(t *testing.T) {
 	if !strings.Contains(body, "m.sessions.DestroyOthers(") {
 		t.Fatal("a completed reset leaves every session of the account signed in")
 	}
-	if !strings.Contains(body, `DestroyOthers(r.Context(), auth.SubjectOf(u), "")`) {
+	if !strings.Contains(body, `DestroyOthers(r.Context(), subjectOf(u), "")`) {
 		t.Error("the reset keeps a session: there is none on this request worth keeping, and the one that must " +
 			"stop working belongs to whoever forced the reset")
 	}
@@ -196,8 +186,8 @@ func TestAResetEndsTheAccountsOtherSessions(t *testing.T) {
 func TestTheResetFormCarriesTheAddressItWasSentTo(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
 
-	if !strings.Contains(bodyOf(t, source, "showPasswordReset"), "auth.ResetAddress(payload)") {
-		t.Error("the reset form is drawn without the address the link was minted for")
+	if !strings.Contains(bodyOf(t, source, "showPasswordReset"), `r.URL.Query().Get("email")`) {
+		t.Error("the reset form does not accept the address as non-secret convenience data")
 	}
 	if !strings.Contains(bodyOf(t, source, "updatePassword"), `r.PostFormValue("email")`) {
 		t.Error("the address the form asks for is discarded, which makes a Required input decoration")
@@ -233,7 +223,7 @@ func TestTheConfirmationScreenHasARouteAHandlerAndAnAddressToPostTo(t *testing.T
 	}
 	// Through the service, not through Authenticate: that one is the sign-in
 	// path and takes an address rather than a subject.
-	if !strings.Contains(source, "m.auth.ConfirmPassword(") {
+	if !strings.Contains(source, "m.users.ConfirmPassword(") {
 		t.Error("the confirmation does not go through the service, so it is not throttled -- an unlimited " +
 			"\"is this the password?\" behind a session is a password oracle for a stolen cookie")
 	}
@@ -352,7 +342,8 @@ func TestNothingTheKitPublishesIsBrandedWithItsOwnName(t *testing.T) {
 	}
 
 	for _, view := range []string{"verify-email.kyse.go", "password-reset.kyse.go"} {
-		if !strings.Contains(authFile(t, view), "Brand:     .BrandName") {
+		body := authFile(t, view)
+		if !strings.Contains(body, "Brand:") || !strings.Contains(body, ".BrandName") {
 			t.Errorf("%s does not draw the brand from the message it renders, so whatever name it shows "+
 				"is one this file decided for every project", view)
 		}
@@ -598,10 +589,10 @@ func messageFields(t *testing.T, page string) []string {
 // The fallback has to stay a fallback. TakeIntended proves the address is local
 // before it hands it back, so the destination is never a URL somebody else chose.
 func TestSigningInLandsOnThePageTheGuardTurnedAwayFrom(t *testing.T) {
-	body := bodyOf(t, authFile(t, "LoginController_handlers.go"), "doLogin")
+	body := bodyOf(t, authFile(t, "LoginController_handlers.go"), "finishSignIn")
 
 	if !strings.Contains(body, `m.sessions.TakeIntended(w, r, "/")`) {
-		t.Error("doLogin does not spend the address the guard remembered.\n" +
+		t.Error("the final sign-in seam does not spend the address the guard remembered.\n" +
 			"Every RequireAuth refusal writes one, and this is the only handler that reads it: " +
 			"without this, following a link while signed out and then signing in ends on the front page, " +
 			"and the person has to find the page again.")
@@ -615,7 +606,7 @@ func TestSigningInLandsOnThePageTheGuardTurnedAwayFrom(t *testing.T) {
 //
 // The layout draws Login and Register, or the name and a sign-out form, from
 // view.Page.Authenticated -- and Module.page left it at false for every one of
-// the nine screens. Two of them are only ever reached WITH a session:
+// the thirteen screens. Two of them are only ever reached WITH a session:
 // /auth/password/confirm sits behind middleware.RequireAuth, and the verify
 // notice is where an unverified account is sent. The screen whose entire job is
 // to ask somebody to prove they are still there offered them a Login button.
@@ -790,13 +781,11 @@ func screenName(path string) (string, bool) {
 
 // TestNeitherTokenSurvivesBeingSerialized.
 //
-// Two of the types this kit publishes hold a secret. AuthPage carries the
-// one-time token of a password reset link, which is the whole credential --
-// whoever reads it sets that account's password -- and it carries the session's
-// CSRF token through the view.Page it embeds. ChromeProps carries that same CSRF
+// AuthPage carries authenticator provisioning material and the session's CSRF
+// token through the view.Page it embeds. ChromeProps carries that same CSRF
 // token. Both are ordinary structs a handler holds for the length of a request,
 // and the debug page prints a recorded value with json.MarshalIndent, so one
-// observability.Dump of either one published a token somebody can spend.
+// observability.Dump must not publish a secret somebody can spend.
 //
 // It is proved by running the published bytes and not by reading them: the
 // question is what json.Marshal and slog actually produce, and a method that
@@ -806,12 +795,18 @@ func screenName(path string) (string, bool) {
 // only itself.
 func TestNeitherTokenSurvivesBeingSerialized(t *testing.T) {
 	const (
-		reset = "reset-token-a-stranger-can-spend"
-		csrf  = "csrf-token-read-off-a-screenshot"
+		secret   = "authenticator-secret-read-off-a-dump"
+		qr       = "svg-provisioning-material"
+		recovery = "single-use-recovery-codes"
+		csrf     = "csrf-token-read-off-a-screenshot"
 	)
 
 	out := runInPublishedKit(t, []string{"encoding/json", "log/slog", "os"}, `
-	page := authui.AuthPage{ResetToken: `+strconv.Quote(reset)+`}
+	page := authui.AuthPage{
+		SecretKey: `+strconv.Quote(secret)+`,
+		QRCodeSVG: `+strconv.Quote(qr)+`,
+		RecoveryCodesText: `+strconv.Quote(recovery)+`,
+	}
 	page.Page.Token = `+strconv.Quote(csrf)+`
 	chrome := authui.ChromeProps{Token: `+strconv.Quote(csrf)+`}
 
@@ -829,17 +824,16 @@ func TestNeitherTokenSurvivesBeingSerialized(t *testing.T) {
 	slog.New(slog.NewTextHandler(os.Stdout, nil)).Info("dump", "page", page, "chrome", chrome)
 `)
 
-	for _, secret := range []string{reset, csrf} {
+	for _, secret := range []string{secret, qr, recovery, csrf} {
 		if strings.Contains(out, secret) {
 			t.Errorf("a token reaches the output of the published kit:\n%s", out)
 		}
 	}
 
-	// The marker, so that a program which printed nothing at all cannot pass:
-	// both types name their token and give it the marker rather than dropping
-	// it, because a field that vanished reads exactly like one nobody filled in.
-	if want := `"ResetToken":"[redacted]"`; !strings.Contains(out, want) {
-		t.Errorf("the reset token is not reported as %s; the page serialized to:\n%s", want, out)
+	for _, key := range []string{"SecretKey", "QRCodeSVG", "RecoveryCodesText"} {
+		if strings.Contains(out, key) {
+			t.Errorf("provisioning field %s is present in serialized output:\n%s", key, out)
+		}
 	}
 	if want := `"Token":"[redacted]"`; !strings.Contains(out, want) {
 		t.Errorf("the CSRF token is not reported as %s; the page serialized to:\n%s", want, out)
@@ -934,11 +928,9 @@ func stringLiteral(t *testing.T, expr ast.Expr) string {
 
 // TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy.
 //
-// The kit takes Routes over from the framework's auth module, and for a long
-// while it named nothing. So "auth.login" resolved in a project that had not run
-// this command and stopped resolving in one that had -- the address unchanged,
-// the name gone, and a template that built a URL from it broken by an install
-// whose promise is that the screens answer where the minimal ones did.
+// The application-owned module preserves the established route-name contract.
+// An address unchanged but a name gone still breaks every template that builds
+// its URL by name.
 //
 // The two the framework also mounts carry the framework's names, and that is the
 // whole criterion: a substitution that renames what it replaces changes the
@@ -967,8 +959,18 @@ func TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy(t *testing.T) {
 		{"Get", "/register", "auth.register"},
 		{"Post", "/register", ""},
 		{"Get", "/verify", "auth.verify.notice"},
-		{"Get", "/verify/confirm", "auth.verify.confirm"},
+		{"Post", "/verify/confirm", "auth.verify.confirm"},
 		{"Post", "/verify/resend", "auth.verify.resend"},
+
+		{"Get", "/two-factor/challenge", "auth.two-factor.challenge"},
+		{"Post", "/two-factor/challenge", ""},
+		{"Get", "/two-factor/recovery", "auth.two-factor.recovery"},
+		{"Post", "/two-factor/recovery", ""},
+		{"Get", "/two-factor/setup", "auth.two-factor.setup"},
+		{"Post", "/two-factor/setup", ""},
+		{"Post", "/two-factor/setup/confirm", "auth.two-factor.setup.confirm"},
+		{"Post", "/two-factor/disable", "auth.two-factor.disable"},
+		{"Post", "/two-factor/recovery-codes", "auth.two-factor.recovery-codes"},
 	}
 
 	got := publishedRoutes(t)
@@ -1007,7 +1009,6 @@ func TestTheNamesSurviveTheSubstitution(t *testing.T) {
 		"fmt",
 		"github.com/arandu-io/framework/http",
 		"github.com/arandu-io/framework/http/middleware",
-		"github.com/arandu-io/framework/modules/auth",
 	}, `
 	published := http.NewRouter()
 
@@ -1015,35 +1016,13 @@ func TestTheNamesSurviveTheSubstitution(t *testing.T) {
 	// reads one field of it, and only to hand the session store to two guards.
 	(&authui.Module{}).Routes(published)
 
-	// The framework's module, on a router of its own, so that the names it gives
-	// are read and not restated. A service over a nil handle is enough to
-	// register routes, and registering is all this does.
-	bare := http.NewRouter()
-	auth.New(auth.NewService(auth.NewUserRepo(nil), nil, nil), auth.FixedTenant("")).Routes(bare)
-
-	for _, route := range bare.Routes() {
-		name := route.RouteName()
-		if name == "" {
-			continue
-		}
-		was, err := bare.Table().URL(name)
-		if err != nil {
-			panic(err)
-		}
-		now, err := published.Table().URL(name)
-		if err != nil {
-			panic(fmt.Sprintf("the kit answers where %s did and dropped the name: %v", name, err))
-		}
-		if now != was {
-			panic(fmt.Sprintf("%s was %s and the kit moved it to %s", name, was, now))
-		}
-		fmt.Printf("kept %s=%s\n", name, now)
-	}
-
 	for _, name := range []string{
+		"auth.login", "auth.logout",
 		"auth.password.request", "auth.password.email", "auth.password.reset",
 		"auth.password.update", "auth.password.confirm",
 		"auth.register", "auth.verify.notice", "auth.verify.confirm", "auth.verify.resend",
+		"auth.two-factor.challenge", "auth.two-factor.recovery", "auth.two-factor.setup",
+		"auth.two-factor.setup.confirm", "auth.two-factor.disable", "auth.two-factor.recovery-codes",
 	} {
 		path, err := published.Table().URL(name)
 		if err != nil {
@@ -1062,8 +1041,8 @@ func TestTheNamesSurviveTheSubstitution(t *testing.T) {
 `)
 
 	for _, want := range []string{
-		"kept auth.login=/auth/login",
-		"kept auth.logout=/auth/logout",
+		"auth.login=/auth/login",
+		"auth.logout=/auth/logout",
 		"auth.password.request=/auth/password",
 		"auth.password.email=/auth/password/email",
 		"auth.password.reset=/auth/password/reset",
@@ -1073,6 +1052,12 @@ func TestTheNamesSurviveTheSubstitution(t *testing.T) {
 		"auth.verify.notice=/auth/verify",
 		"auth.verify.confirm=/auth/verify/confirm",
 		"auth.verify.resend=/auth/verify/resend",
+		"auth.two-factor.challenge=/auth/two-factor/challenge",
+		"auth.two-factor.recovery=/auth/two-factor/recovery",
+		"auth.two-factor.setup=/auth/two-factor/setup",
+		"auth.two-factor.setup.confirm=/auth/two-factor/setup/confirm",
+		"auth.two-factor.disable=/auth/two-factor/disable",
+		"auth.two-factor.recovery-codes=/auth/two-factor/recovery-codes",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("%q is not among what the published kit resolved:\n%s", want, out)
@@ -1118,9 +1103,29 @@ func runInPublishedKit(t *testing.T, imports []string, body string) string {
 		}
 		writeInto(t, filepath.Join(root, f.Path), f.Content)
 	}
+	writeInto(t, filepath.Join(root, "app", "Models", "User.go"), []byte(`package models
+
+import "time"
+
+type User struct {
+	ID string
+	TenantID string
+	Name string
+	Email string
+	Password string
+	Roles []string
+	VerifiedAt *time.Time
+	CreatedAt time.Time
+}
+
+func (u User) Verified() bool { return u.VerifiedAt != nil }
+func (u User) PasswordFingerprint() string { return u.Password }
+`))
+	writeInto(t, filepath.Join(root, "app", "Services", "errors.go"),
+		[]byte("package services\n\nimport (\"errors\"; \"strings\")\n\nvar ErrEmailTaken = errors.New(\"email taken\")\nfunc NormalizeEmail(v string) string { return strings.ToLower(strings.TrimSpace(v)) }\n"))
 
 	gomod := "module " + authSpec().ModulePath + "\n\ngo 1.26\n\nrequire (\n" +
-		"\tgithub.com/arandu-io/framework v0.0.0\n\tgithub.com/arandu-io/kyse v0.0.0\n)\n\n"
+		"\tgithub.com/arandu-io/framework v0.0.0\n\tgithub.com/arandu-io/hesape v0.0.0\n\tgithub.com/arandu-io/kyse v0.0.0\n)\n\n"
 	for _, name := range []string{"framework", "kyse", "hesape"} {
 		gomod += "replace github.com/arandu-io/" + name + " => " + replaces[name] + "\n"
 	}

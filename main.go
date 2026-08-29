@@ -112,7 +112,7 @@ func usage() {
 usage:
   go run github.com/arandu-io/ui@latest auth [--force]
 
-  auth       the nine authentication screens, in kyse
+  auth       the authentication and two-factor screens, in kyse
   version    which kit this is
   help       this
 
@@ -203,22 +203,23 @@ the framework's. The import:
 
     authui "%s/app/Http/Controllers/Auth"
 
-and, in the k.Register(...) list, in place of auth.New:
+and, in the k.Register(...) list:
 
-    authui.New(authService, sessions, csrf, mailer, fw.App.Key,
-        cfg.App.Name, cfg.App.URL, auth.FixedTenant(cfg.Auth.Tenant)),
+    authui.New(userService, twoFactorService, emailCodes, sessions, csrf,
+        mailer, fw.App.Key, cfg.App.Name,
+        authui.FixedTenant(cfg.Auth.Tenant), cfg.Session.Secure),
 
 The landing page is published too, because a page renders with the type of its
 layout and this command replaces the layout. It is built in the same file, and
-it takes the auth service and the tenant so the header can greet by name rather
+it takes the application-owned user service and tenant so the header can greet by name rather
 than by the id in the session:
 
     controllers.NewHomeController(cfg.App.Name, sessions, csrf,
-        authService, cfg.Auth.Tenant),
+        userService, cfg.Auth.Tenant),
 
-Register one or the other, never both: they answer the same path. The
-framework's has the minimum markup that exists so authentication could be
-tested at all; this one has a page.
+Remove any former framework authentication module registration before adding
+this one: both answer the same paths, and native account policy and storage now
+belong to the application services passed above.
 
 Every view is its own Go package, and a package nobody imports registers
 nothing -- so bootstrap/app.go needs these beside the ones already there. The
@@ -232,10 +233,9 @@ Then:
     aru migrate
 
 Every screen has a route and every route has a handler. Registration, e-mail
-verification, the password reset and the password confirmation are wired. Both
-links in the two messages are signed rather than stored, so they survive a
-restart and a second replica, and the reset link stops working the moment the
-password changes -- there is no table of tokens to sweep.
+verification, password reset, password confirmation and two-factor
+authentication are wired. E-mail flows use purpose-bound, single-use native
+codes. Only the short two-factor pending attempt is signed.
 
 To ask for the password again before something that matters, mount
 middleware.RequireConfirmedPassword on that route. It sends people to
@@ -245,11 +245,11 @@ still the Policy's answer.
 
 What this kit does NOT decide is your rules. The handlers are yours from the
 moment they are written: the minimum password length, whether registration is
-open, what a confirmed address is allowed to do. Every one of those is a line
-you can read, in app/Http/Controllers/Auth/, inside a custom block that
-survives a --force.
+open, what a confirmed address is allowed to do. Required routes remain outside
+the marked custom block so --force can carry security fixes; application-specific
+routes placed inside that block survive a republish.
 
 The two messages go out through your mailer. In development that is
-MAIL_URL=log://, so the links land in the output of aru dev and the flow works
+MAIL_URL=log://, so the codes land in the output of aru dev and the flow works
 with nothing installed.
 `

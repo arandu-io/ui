@@ -1,175 +1,129 @@
-// Package authui holds the sign-in screens.
-//
-// Published by "go run github.com/arandu-io/ui@latest auth", and yours from
-// that moment on: edit it, delete what you do not want, restyle it. Nothing in
-// the framework imports it back.
-//
-// Not "aru make:auth". That command does not exist and will not: two ways to
-// install one scaffolding diverge, and the second one is the one nobody
-// maintains.
-//
-// The authentication itself stays in the framework's auth module -- password
-// verification, the timing-equalized failure path, session rotation. This package
-// owns what a screen owns, which is the markup and the two handlers that drive it.
+// Package authui holds the authentication screens
+// published into this application. The domain and schema stay in app/.
 package authui
 
 import (
-	"github.com/arandu-io/framework/http"
+	"context"
+	stdhttp "net/http"
+
+	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/kernel"
 	"github.com/arandu-io/framework/mail"
-	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
+	twofactor "github.com/arandu-io/hesape/2fa"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/encryption"
+	"github.com/arandu-io/hesape/onetime"
+
+	models "example.test/project/app/Models"
 )
 
-// Module registers the screens.
-//
-// It composes the framework's auth module instead of replacing it. Replacing it
-// took the users table out of the schema: this kit declares no table of its own
-// -- deliberately, because two owners for one table is how a rollout deadlocks
-// -- so a wiring list with this module and without the framework's had nothing
-// left to create users, and the seeder that makes the first administrator ran
-// against a database with no such table.
-//
-// Embedding it means the schema, the health check and anything the framework
-// adds to that module arrive with this one. What the kit takes over is Routes,
-// and only Routes: the published screens answer where the minimal ones did.
-type Module struct {
-	// The framework's auth module. It is the owner of the users table, and it
-	// stays the owner.
-	*auth.Module
+// TenantResolver decides which application tenant owns a guest request.
+type TenantResolver func(*stdhttp.Request) string
 
-	auth     *auth.Service
+// FixedTenant returns the resolver for an application with one configured
+// tenant. It is the same request path with a constant, not a second mode.
+func FixedTenant(tenant string) TenantResolver {
+	return func(*stdhttp.Request) string { return tenant }
+}
+
+// UserNames is the smallest account view the shared page chrome needs.
+type UserNames interface {
+	PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error)
+}
+
+// Users is the application-owned authentication interface consumed by these
+// controllers. Its implementation owns policies, Model queries and writes.
+type Users interface {
+	UserNames
+	VerifyCredentials(context.Context, string, string, string, string) (models.User, error)
+	Register(context.Context, string, string, string, string) (models.User, error)
+	FindForAuthentication(context.Context, string, string) (models.User, error)
+	Lookup(context.Context, string, string) (models.User, error)
+	MarkVerified(context.Context, string, string, string) (models.User, bool, error)
+	ResetPassword(context.Context, string, string, string, string, string) (models.User, error)
+	ConfirmPassword(context.Context, nativeauth.Subject, string, string) error
+}
+
+// Factors is the application-owned second-factor interface. Hesape supplies
+// the algorithms and contracts; the application supplies policy and storage.
+type Factors interface {
+	Required(context.Context, string, string) (bool, error)
+	Begin(context.Context, nativeauth.Subject, string) (twofactor.Provisioning, error)
+	Confirm(context.Context, nativeauth.Subject, string) ([]string, error)
+	Disable(context.Context, nativeauth.Subject) error
+	RegenerateRecoveryCodes(context.Context, nativeauth.Subject) ([]string, error)
+	VerifyAuthenticator(context.Context, string, string, string) error
+	ConsumeRecovery(context.Context, string, string, string) error
+}
+
+// Module registers application-owned authentication screens and no schema.
+type Module struct {
+	users    Users
+	factors  Factors
+	codes    onetime.CodeStore
 	sessions *security.SessionStore
 	csrf     *security.CSRF
-	tenant   auth.TenantResolver
-
-	// mailer is what sends the reset link, and base is the origin the link is
-	// built on. The origin comes from configuration and never from the request:
-	// a Host header is what the client sent, and a reset link built from one is
-	// a reset link an attacker chose the destination of.
-	mailer *mail.Mailer
-	base   string
-	// appName is what the header says. It comes from the configuration, because
-	// the alternative shipped: a literal here, a different literal in the
-	// handlers, and neither the one in config/app.go.
-	appName string
-
-	// signer is what a verification link is made of. The same application key
-	// as the session and the CSRF token, because they are the same secret --
-	// an attacker who has it does not need three.
-	signer *security.Signer
+	mailer   *mail.Mailer
+	signer   *encryption.Signer
+	appName  string
+	tenant   TenantResolver
+	secure   bool
 }
 
-// New returns the module.
-//
-// Register it INSTEAD of auth.New: this one already carries what auth.New
-// returns, and both answer /auth/login. Registering both is a duplicate route
-// and a table with two owners.
-//
-// The session store and the CSRF issuer are passed in rather than reached
-// through the service, because a screen is allowed to know about a token and a
-// cookie, and the service is not allowed to expose its own dependencies.
-func New(svc *auth.Service, sessions *security.SessionStore, csrf *security.CSRF, mailer *mail.Mailer, appKey []byte, appName, base string, tenant auth.TenantResolver) *Module {
+// New returns the authentication screen module.
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *security.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
-		tenant = auth.FixedTenant("")
+		tenant = FixedTenant("")
 	}
 	return &Module{
-		Module:   auth.New(svc, tenant),
-		auth:     svc,
-		sessions: sessions,
-		csrf:     csrf,
-		mailer:   mailer,
-		base:     base,
-		appName:  appName,
-		signer:   security.NewSigner(appKey),
-		tenant:   tenant,
+		users: users, factors: factors, codes: codes, sessions: sessions,
+		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
+		appName: appName, tenant: tenant, secure: secure,
 	}
 }
 
-// Compile-time proof that the module honors the contracts it claims. The second
-// line is the one that matters here: it is what stops a refactor that drops the
-// embedded module and takes the users table down with it.
-var (
-	_ kernel.Module     = (*Module)(nil)
-	_ kernel.Migratable = (*Module)(nil)
-)
+var _ kernel.Module = (*Module)(nil)
 
-// Name is the module identifier. The routes below are this package's, so the
-// route table names this package rather than the framework's.
+// Name is the module identifier.
 func (m *Module) Name() string { return "authui" }
 
-// Routes registers the screens, in place of the framework's.
-//
-// This is the one method the kit overrides. The embedded module still declares
-// the users table; it just no longer answers /auth/login, because this does.
-//
-// guest is the guard on the two screens that exist to bring somebody in. It is
-// on the route rather than at the top of each handler because there are two
-// handlers today and there is a third the day somebody adds one -- and the
-// third is the one that would render the sign-in form to a person who is
-// already signed in, which reads to them as having been signed out.
-//
-// The framework's auth module guards its own minimal sign-in screen the same
-// way, and this method replaces that one. The guard was missing here while it
-// was already there, so publishing the kit TOOK A GUARD AWAY from the project
-// it was published into -- and publishing again over a project that had added
-// one by hand took it away a second time.
-//
-// The screens are named, and the two this method takes over carry the names the
-// framework gave them: "auth.login" and "auth.logout". A substitution that
-// dropped them would leave URL("auth.login") resolving in a bare project and
-// failing in the same project once these screens answered instead -- the kit
-// silently taking a name away, in the same shape as the guard above.
-//
-// A POST that shares its address with the GET beside it is deliberately left
-// unnamed. A path built from the GET's name is already where the form posts, so
-// a second name for one address is a choice nobody can make correctly.
-func (m *Module) Routes(r *http.Router) {
+// Routes registers the twenty-three authentication routes.
+func (m *Module) Routes(r *fhttp.Router) {
 	g := r.Group("/auth")
-
-	// Where somebody already signed in is sent instead. The front page, which
-	// is where signing in lands them too, so the two agree.
 	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
+	signedIn := middleware.RequireAuth(m.sessions)
+	confirmed := middleware.RequireConfirmedPassword(m.sessions)
 
 	g.Get("/login", m.showLogin, guest).Name("auth.login")
-	g.Post("/login", m.doLogin)
+	g.Post("/login", m.doLogin, guest)
 	g.Post("/logout", m.doLogout).Name("auth.logout")
 
-	// arandu:begin custom
-	// The password reset, in PasswordController.go. The kit publishes the three
-	// screens and stops there: the handlers write to your users table and send
-	// through your mailer, so they are yours.
 	g.Get("/password", m.showPasswordRequest).Name("auth.password.request")
-	g.Post("/password/email", m.sendPasswordLink).Name("auth.password.email")
+	g.Post("/password/email", m.sendPasswordCode).Name("auth.password.email")
 	g.Get("/password/reset", m.showPasswordReset).Name("auth.password.reset")
 	g.Post("/password/update", m.updatePassword).Name("auth.password.update")
-
-	// Typing the password again on a session that is already open. The screen
-	// was published from the beginning with no route, no handler and nothing
-	// assigning PasswordConfirmURL -- so it rendered action="" and posted to
-	// itself, on a kit whose own instructions say every screen has a route.
-	//
-	// Behind the session guard, because there is nothing to confirm without one:
-	// a post here from a guest would otherwise reach a handler that has to
-	// invent an answer. The address is middleware.PasswordConfirmPath, which is
-	// where middleware.RequireConfirmedPassword sends people -- mount that on
-	// your own sensitive routes and this is the screen they land on.
-	signedIn := middleware.RequireAuth(m.sessions)
 	g.Get("/password/confirm", m.showPasswordConfirm, signedIn).Name("auth.password.confirm")
 	g.Post("/password/confirm", m.confirmPassword, signedIn)
 
-	// Registration and address verification, in RegisterController.go.
-	//
-	// /verify is the notice and /verify/confirm is the link. Two addresses and
-	// not one with a branch: the notice is reached by a redirect after
-	// registering, and the link arrives from a mail client -- and a GET that
-	// sometimes changes state and sometimes does not is one nobody can cache,
-	// log or reason about.
 	g.Get("/register", m.showRegister, guest).Name("auth.register")
-	g.Post("/register", m.doRegister)
+	g.Post("/register", m.doRegister, guest)
 	g.Get("/verify", m.showVerifyNotice).Name("auth.verify.notice")
-	g.Get("/verify/confirm", m.verify).Name("auth.verify.confirm")
+	g.Post("/verify/confirm", m.verify).Name("auth.verify.confirm")
 	g.Post("/verify/resend", m.resendVerification).Name("auth.verify.resend")
+
+	g.Get("/two-factor/challenge", m.showTwoFactorChallenge, guest).Name("auth.two-factor.challenge")
+	g.Post("/two-factor/challenge", m.verifyTwoFactorChallenge, guest)
+	g.Get("/two-factor/recovery", m.showRecoveryChallenge, guest).Name("auth.two-factor.recovery")
+	g.Post("/two-factor/recovery", m.verifyRecoveryChallenge, guest)
+	g.Get("/two-factor/setup", m.showTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup")
+	g.Post("/two-factor/setup", m.beginTwoFactorSetup, signedIn, confirmed)
+	g.Post("/two-factor/setup/confirm", m.confirmTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup.confirm")
+	g.Post("/two-factor/disable", m.disableTwoFactor, signedIn, confirmed).Name("auth.two-factor.disable")
+	g.Post("/two-factor/recovery-codes", m.regenerateRecoveryCodes, signedIn, confirmed).Name("auth.two-factor.recovery-codes")
+
+	// arandu:begin custom
+	// Register application-specific authentication routes here.
 	// arandu:end custom
 }

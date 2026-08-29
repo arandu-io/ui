@@ -31,15 +31,15 @@ func TestAuthGolden(t *testing.T) {
 		t.Fatalf("GenerateAuth: %v", err)
 	}
 	// The count is here so that adding a file is a decision somebody made rather
-	// than one that arrived: six controllers and page.go, two mailables, the
-	// nine screens, the one fragment and the four message bodies.
+	// than one that arrived: ten plain Go files, thirteen screens, one fragment
+	// and four message bodies.
 	//
 	// It was thirteen, and the missing nine were the ones that made the kit a
 	// flow: register.kyse.go and verify.kyse.go posted to addresses nobody
 	// registered, and the password reset stopped one step short of writing the
 	// password.
-	if len(files) != 23 {
-		t.Fatalf("generated %d files, want 23", len(files))
+	if len(files) != 28 {
+		t.Fatalf("generated %d files, want 28", len(files))
 	}
 
 	for _, f := range files {
@@ -108,13 +108,14 @@ func TestTheGeneratedTemplateIsNotFormatted(t *testing.T) {
 	t.Fatal("auth/login.kyse.go was not generated")
 }
 
-// TestTheLoginScreenRotatesTheSession: keeping the pre-login session id is
-// session fixation. The framework's own handler does this, and a starter kit that
-// people copy from has to do it too -- `aru doctor` checks for the call.
-func TestTheLoginScreenRotatesTheSession(t *testing.T) {
+// TestTheFinalSignInSeamRotatesTheSession: keeping the pre-login session id is
+// session fixation. There is exactly one rotation seam, reached only after the
+// password and every required factor have succeeded.
+func TestTheFinalSignInSeamRotatesTheSession(t *testing.T) {
 	handlers := authFile(t, "LoginController_handlers.go")
 
-	if !strings.Contains(handlers, "sessions.Rotate(") {
+	if strings.Count(handlers, "sessions.Rotate(") != 1 ||
+		!strings.Contains(bodyOf(t, handlers, "finishSignIn"), "sessions.Rotate(") {
 		t.Error("the login handler does not rotate the session: this is session fixation")
 	}
 	if !strings.Contains(handlers, "sessions.Destroy(") {
@@ -200,9 +201,9 @@ func TestTheTenantDoesNotComeFromTheRequestBody(t *testing.T) {
 	}
 }
 
-// TestTheStarterKitDoesNotMigrate: the users table belongs to the framework's
-// auth module. Two modules migrating one table is how a schema ends up with two
-// owners and a rollout that deadlocks.
+// TestTheStarterKitDoesNotMigrate: the application's schema owns the users and
+// second-factor tables. A presentation publisher emitting a second copy would
+// give one table two owners and make rollout order unsafe.
 func TestTheStarterKitDoesNotMigrate(t *testing.T) {
 	if strings.Contains(authFile(t, "Auth/LoginController.go"), "Migrations()") {
 		t.Error("the starter kit declares migrations: the users table already has an owner")
@@ -218,88 +219,39 @@ func TestTheStarterKitDoesNotMigrate(t *testing.T) {
 	}
 }
 
-// TestTheKitComposesTheFrameworksAuthModule is the other half of the rule above,
-// and the half that was missing.
-//
-// The kit declaring no migration is right. The kit being registered *in place
-// of* the framework's auth module while declaring no migration was not: the
-// wiring the command prints takes auth.New out of the list, so the only module
-// that owned the users table left with it. `aru migrate` then applied outbox,
-// dead_letter and jobs and no users -- no table, no seeded administrator, no
-// login, which is the entire point of the kit.
-//
-// The fix is composition: the generated Module embeds the framework's, so one
-// registration keeps one owner for the table and one handler for the path. This
-// test reads the declaration rather than the prose, because prose does not
-// migrate anything.
-func TestTheKitComposesTheFrameworksAuthModule(t *testing.T) {
+// TestTheKitPublishesOnlyTheApplicationOwnedRouteModule pins the native
+// boundary. Schema, policies and services belong to the application; this
+// published module owns only HTTP routes and their presentation.
+func TestTheKitPublishesOnlyTheApplicationOwnedRouteModule(t *testing.T) {
 	source := authFile(t, "Auth/LoginController.go")
-
-	file, err := parser.ParseFile(token.NewFileSet(), "LoginController.go", source, parser.AllErrors)
-	if err != nil {
-		t.Fatalf("the generated controller does not parse: %v", err)
-	}
-
-	declared := typeSpec(t, file, "Module")
-	structType, ok := declared.Type.(*ast.StructType)
-	if !ok {
-		t.Fatalf("Module is not a struct: %T", declared.Type)
-	}
-
-	var embedded []string
-	for _, field := range structType.Fields.List {
-		if len(field.Names) > 0 {
-			continue
+	for _, forbidden := range []string{
+		"framework/modules/auth", "auth.Module", "auth.New(", "auth.Service",
+		"auth.TenantResolver", "kernel.Migratable",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Errorf("the application-owned module publishes forbidden legacy boundary %q", forbidden)
 		}
-		embedded = append(embedded, types.ExprString(field.Type))
 	}
-	if !slices.Contains(embedded, "*auth.Module") {
-		t.Errorf("the kit's Module does not embed *auth.Module, so registering it in place of auth.New "+
-			"leaves the users table with no owner; it embeds %v", embedded)
-	}
-
-	// And the delegation is load-bearing, not incidental: the generated file
-	// says so at compile time, in the project, the moment somebody drops it.
-	if !strings.Contains(source, "kernel.Migratable = (*Module)(nil)") {
-		t.Error("the kit does not prove at compile time that it still carries the framework's schema")
+	if strings.Count(source, "kernel.Module = (*Module)(nil)") != 1 {
+		t.Error("the generated module must implement exactly the route-only kernel.Module contract")
 	}
 }
 
-// TestTheKitBuildsTheModuleItEmbeds: an embedded pointer left nil is a nil
-// dereference at the first migration, which is worse than the missing table it
-// replaced.
-func TestTheKitBuildsTheModuleItEmbeds(t *testing.T) {
+// TestTheKitBuildsItsApplicationOwnedModule pins every collaborator passed by
+// the application's bootstrap.
+func TestTheKitBuildsItsApplicationOwnedModule(t *testing.T) {
 	source := authFile(t, "Auth/LoginController.go")
-
-	file, err := parser.ParseFile(token.NewFileSet(), "LoginController.go", source, parser.AllErrors)
-	if err != nil {
-		t.Fatalf("the generated controller does not parse: %v", err)
-	}
-
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil || fn.Name.Name != "New" {
-			continue
+	for _, want := range []string{
+		"users Users", "factors Factors", "codes onetime.CodeStore",
+		"sessions *security.SessionStore", "tenant TenantResolver", "secure bool",
+	} {
+		if !strings.Contains(source, want) {
+			t.Errorf("New does not receive the application-owned dependency %q", want)
 		}
-		var built bool
-		ast.Inspect(fn, func(n ast.Node) bool {
-			kv, ok := n.(*ast.KeyValueExpr)
-			if !ok {
-				return true
-			}
-			key, ok := kv.Key.(*ast.Ident)
-			if !ok || key.Name != "Module" {
-				return true
-			}
-			built = strings.HasPrefix(types.ExprString(kv.Value), "auth.New(")
-			return false
-		})
-		if !built {
-			t.Errorf("New does not fill the embedded module with auth.New:\n%s", source)
-		}
-		return
 	}
-	t.Fatal("the generated controller declares no New")
+	if !strings.Contains(source, "return &Module{") {
+		t.Fatal("the generated controller declares no Module constructor")
+	}
 }
 
 // typeSpec finds a top-level type declaration by name.
@@ -320,7 +272,7 @@ func typeSpec(t *testing.T, file *ast.File, name string) *ast.TypeSpec {
 	return nil
 }
 
-// The nine screens land at the nine paths people look for, the fragment lands
+// The thirteen screens land at the paths people look for, the fragment lands
 // under partials/, and the controller lands beside them.
 //
 // The command used to write four files into modules/authui/ and declare itself
@@ -436,8 +388,8 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 		// And the service the id in a session is turned into a name with. Without
 		// it the header greets somebody who has just signed in with the UUID out
 		// of their own session cookie.
-		if !slices.Contains(params, "*auth.Service") {
-			t.Errorf("NewHomeController does not take *auth.Service, so the landing page cannot resolve the id in the "+
+		if !slices.Contains(params, "authui.UserNames") {
+			t.Errorf("NewHomeController does not take authui.UserNames, so the landing page cannot resolve the id in the "+
 				"session into a name to greet; it takes %v", params)
 		}
 		return
@@ -559,7 +511,7 @@ func TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes(t *testing.T) 
 func TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes(t *testing.T) {
 	want := constructorNames(t, authFile(t, "HomeController.go"), "NewHomeController")
 
-	for _, project := range []string{"arandu", "examples"} {
+	for _, project := range []string{"arandu"} {
 		t.Run(project, func(t *testing.T) {
 			path := filepath.Join("..", project, "app", "Http", "Controllers", "HomeController.go")
 			source, err := os.ReadFile(path)
@@ -608,7 +560,7 @@ func TestTheRedirectSurvivesWithoutJavaScript(t *testing.T) {
 	// Here it is written out so this test still proves what it is named for: that
 	// the exit goes through the shared helper whatever it is exiting to.
 	for _, handler := range []struct{ name, to string }{
-		{"doLogin", `m.sessions.TakeIntended(w, r, "/")`},
+		{"finishSignIn", `m.sessions.TakeIntended(w, r, "/")`},
 		{"doLogout", `"/auth/login"`},
 	} {
 		if !callsRedirect(t, file, handler.name, handler.to) {
@@ -747,14 +699,16 @@ func authFile(t *testing.T, name string) string {
 const (
 	publishedFramework = "v0.40.0"
 	publishedKyse      = "v0.12.1"
+	publishedHesape    = "v0.19.0"
 )
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
 // that was missing on the day render.go shipped unbuildable.
 //
-// SignedInName called auth.Service.Names, which had been renamed to PublicNames
-// and given a different signature, and every project that ran `go run
-// github.com/arandu-io/ui@latest auth` received a file that does not build.
+// SignedInName called the legacy framework service's Names method, which had
+// been renamed to PublicNames and given a different signature, and every
+// project that ran `go run github.com/arandu-io/ui@latest auth` received a file
+// that does not build.
 // Nothing here noticed: this module declares no dependency on the framework, its
 // CI has only itself, and the golden files compare bytes against bytes. A second
 // defect was hiding behind the first -- the published template carries its own
@@ -831,19 +785,47 @@ func TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework(t *testi
 	// would make this gate skip, which is the thing it exists to replace.
 	writeInto(t, filepath.Join(root, "app", "Http", "Controllers", "Controller.go"),
 		[]byte("package controllers\n\ntype Controller struct{}\n"))
+	writeInto(t, filepath.Join(root, "app", "Models", "User.go"), []byte(`package models
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"time"
+)
+
+type User struct {
+	ID string
+	TenantID string
+	Name string
+	Email string
+	Password string
+	Roles []string
+	VerifiedAt *time.Time
+	CreatedAt time.Time
+}
+
+func (u User) Verified() bool { return u.VerifiedAt != nil }
+func (u User) PasswordFingerprint() string {
+	digest := sha256.Sum256([]byte(u.Password))
+	return hex.EncodeToString(digest[:])
+}
+`))
+	writeInto(t, filepath.Join(root, "app", "Services", "errors.go"),
+		[]byte("package services\n\nimport (\"errors\"; \"strings\")\n\nvar ErrEmailTaken = errors.New(\"email taken\")\nfunc NormalizeEmail(v string) string { return strings.ToLower(strings.TrimSpace(v)) }\n"))
 
 	writeInto(t, filepath.Join(root, "go.mod"), []byte(
 		"module "+authSpec().ModulePath+"\n\ngo "+goDirective(t)+"\n\nrequire (\n"+
 			"\tgithub.com/arandu-io/framework "+publishedFramework+"\n"+
+			"\tgithub.com/arandu-io/hesape "+publishedHesape+"\n"+
 			"\tgithub.com/arandu-io/kyse "+publishedKyse+"\n)\n"))
 
 	download := exec.Command(tool, "mod", "download", "all")
 	download.Dir = root
 	download.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local")
 	if out, err := download.CombinedOutput(); err != nil {
-		t.Skipf("github.com/arandu-io/framework %s and github.com/arandu-io/kyse %s are not both in the "+
+		t.Skipf("framework %s, hesape %s and kyse %s are not all in the "+
 			"module cache and could not be fetched, so NOTHING WAS COMPILED here and this is not a pass: %v\n%s",
-			publishedFramework, publishedKyse, err, out)
+			publishedFramework, publishedHesape, publishedKyse, err, out)
 	}
 
 	build := exec.Command(tool, "build", "./...")
@@ -1592,6 +1574,7 @@ func TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets(t *testing.
 
 	for _, want := range []struct{ module, pinned string }{
 		{"github.com/arandu-io/framework", publishedFramework},
+		{"github.com/arandu-io/hesape", publishedHesape},
 		{"github.com/arandu-io/kyse", publishedKyse},
 	} {
 		got := requiredVersion(string(body), want.module)

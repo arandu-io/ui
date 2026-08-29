@@ -340,7 +340,7 @@ func TestTheAruFloorIsReadFromTheSectionThatOwnsIt(t *testing.T) {
 // TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI.
 //
 // The two cases in the middle are why the comparison is numeric. Compared as
-// text, "v0.9.0" sorts after "v0.30.0" and "v0.100.0" sorts before it, so a
+// text, "v0.9.0" sorts after "v0.35.0" and "v0.100.0" sorts before it, so a
 // guard written with a string compare refuses the CLI that works and admits the
 // one that does not -- which is the whole failure, inverted, and green.
 func TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI(t *testing.T) {
@@ -349,7 +349,8 @@ func TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI(t *testing
 		refused     bool
 	}{
 		{"the floor itself", aruFloor, false},
-		{"a newer one", "v0.34.0", false},
+		{"the last incompatible native-page compiler", "v0.34.0", true},
+		{"a newer one", "v0.36.0", false},
 		{"a newer minor that sorts earlier as text", "v0.100.0", false},
 		{"an older one that sorts later as text", "v0.9.0", true},
 		{"the one the skeleton ships", "v0.29.1", true},
@@ -385,11 +386,11 @@ func TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI(t *testing
 // the path a person actually runs, and it is the half that matters.
 //
 // checkAruFloor answering correctly is worth nothing if the command writes
-// first and asks afterwards: a project would be left holding twenty-three files
+// first and asks afterwards: a project would be left holding twenty-eight files
 // it cannot build, plus a refusal explaining why. So this drives `auth` itself,
 // from inside a project, and looks at the disk.
 func TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens(t *testing.T) {
-	root := project(t, "v0.29.1")
+	root := project(t, "v0.34.0")
 	t.Chdir(root)
 
 	if err := publishAuth(nil); err == nil {
@@ -407,7 +408,7 @@ func TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens(t *testing.T)
 //
 // The two questions are different and the flag names one of them. --dry-run is
 // asked what this command would write, and the answer does not depend on which
-// CLI the project accepts -- it is the same twenty-three files either way. The
+// CLI the project accepts -- it is the same twenty-eight files either way. The
 // floor decides whether they may land, which is the other question, and it is
 // asked where landing happens.
 func TestDryRunAnswersWhatWouldBeWrittenWhateverTheProjectAccepts(t *testing.T) {

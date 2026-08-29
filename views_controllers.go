@@ -31,10 +31,11 @@ func GenerateAuth(m Module) ([]File, error) {
 
 		// The rest of the flow. Without these three, register.kyse.go and
 		// verify.kyse.go post to addresses nobody registered, and the password
-		// reset stops one step short of writing the password -- nine screens
+		// reset stops one step short of writing the password -- thirteen screens
 		// that look like a kit and are not one.
 		{filepath.Join("app", "Http", "Controllers", "Auth", "RegisterController.go"), authRegisterControllerTemplate},
 		{filepath.Join("app", "Http", "Controllers", "Auth", "PasswordController.go"), authPasswordControllerTemplate},
+		{filepath.Join("app", "Http", "Controllers", "Auth", "TwoFactorController.go"), authTwoFactorControllerTemplate},
 		{filepath.Join("app", "Http", "Controllers", "Auth", "render.go"), authRenderTemplate},
 
 		// The two messages the flow sends. A mailable that names a view the
@@ -84,179 +85,133 @@ func GenerateAuth(m Module) ([]File, error) {
 // application may do. The screens' permissions are the project's, and the
 // project already states them.
 
-const authModuleTemplate = `// Package authui holds the sign-in screens.
-//
-// Published by "go run github.com/arandu-io/ui@latest auth", and yours from
-// that moment on: edit it, delete what you do not want, restyle it. Nothing in
-// the framework imports it back.
-//
-// Not "aru make:auth". That command does not exist and will not: two ways to
-// install one scaffolding diverge, and the second one is the one nobody
-// maintains.
-//
-// The authentication itself stays in the framework's auth module -- password
-// verification, the timing-equalized failure path, session rotation. This package
-// owns what a screen owns, which is the markup and the two handlers that drive it.
+const authModuleTemplate = `// Package authui holds the authentication screens
+// published into this application. The domain and schema stay in app/.
 package authui
 
 import (
-	"github.com/arandu-io/framework/http"
+	"context"
+	stdhttp "net/http"
+
+	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/kernel"
 	"github.com/arandu-io/framework/mail"
-	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/encryption"
+	"github.com/arandu-io/hesape/onetime"
+	twofactor "github.com/arandu-io/hesape/2fa"
+
+	models "{{ .ModulePath }}/app/Models"
 )
 
-// Module registers the screens.
-//
-// It composes the framework's auth module instead of replacing it. Replacing it
-// took the users table out of the schema: this kit declares no table of its own
-// -- deliberately, because two owners for one table is how a rollout deadlocks
-// -- so a wiring list with this module and without the framework's had nothing
-// left to create users, and the seeder that makes the first administrator ran
-// against a database with no such table.
-//
-// Embedding it means the schema, the health check and anything the framework
-// adds to that module arrive with this one. What the kit takes over is Routes,
-// and only Routes: the published screens answer where the minimal ones did.
-type Module struct {
-	// The framework's auth module. It is the owner of the users table, and it
-	// stays the owner.
-	*auth.Module
+// TenantResolver decides which application tenant owns a guest request.
+type TenantResolver func(*stdhttp.Request) string
 
-	auth     *auth.Service
+// FixedTenant returns the resolver for an application with one configured
+// tenant. It is the same request path with a constant, not a second mode.
+func FixedTenant(tenant string) TenantResolver {
+	return func(*stdhttp.Request) string { return tenant }
+}
+
+// UserNames is the smallest account view the shared page chrome needs.
+type UserNames interface {
+	PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error)
+}
+
+// Users is the application-owned authentication interface consumed by these
+// controllers. Its implementation owns policies, Model queries and writes.
+type Users interface {
+	UserNames
+	VerifyCredentials(context.Context, string, string, string, string) (models.User, error)
+	Register(context.Context, string, string, string, string) (models.User, error)
+	FindForAuthentication(context.Context, string, string) (models.User, error)
+	Lookup(context.Context, string, string) (models.User, error)
+	MarkVerified(context.Context, string, string, string) (models.User, bool, error)
+	ResetPassword(context.Context, string, string, string, string, string) (models.User, error)
+	ConfirmPassword(context.Context, nativeauth.Subject, string, string) error
+}
+
+// Factors is the application-owned second-factor interface. Hesape supplies
+// the algorithms and contracts; the application supplies policy and storage.
+type Factors interface {
+	Required(context.Context, string, string) (bool, error)
+	Begin(context.Context, nativeauth.Subject, string) (twofactor.Provisioning, error)
+	Confirm(context.Context, nativeauth.Subject, string) ([]string, error)
+	Disable(context.Context, nativeauth.Subject) error
+	RegenerateRecoveryCodes(context.Context, nativeauth.Subject) ([]string, error)
+	VerifyAuthenticator(context.Context, string, string, string) error
+	ConsumeRecovery(context.Context, string, string, string) error
+}
+
+// Module registers application-owned authentication screens and no schema.
+type Module struct {
+	users    Users
+	factors  Factors
+	codes    onetime.CodeStore
 	sessions *security.SessionStore
 	csrf     *security.CSRF
-	tenant   auth.TenantResolver
-
-	// mailer is what sends the reset link, and base is the origin the link is
-	// built on. The origin comes from configuration and never from the request:
-	// a Host header is what the client sent, and a reset link built from one is
-	// a reset link an attacker chose the destination of.
-	mailer *mail.Mailer
-	base   string
-	// appName is what the header says. It comes from the configuration, because
-	// the alternative shipped: a literal here, a different literal in the
-	// handlers, and neither the one in config/app.go.
-	appName string
-
-	// signer is what a verification link is made of. The same application key
-	// as the session and the CSRF token, because they are the same secret --
-	// an attacker who has it does not need three.
-	signer *security.Signer
+	mailer   *mail.Mailer
+	signer   *encryption.Signer
+	appName  string
+	tenant   TenantResolver
+	secure   bool
 }
 
-// New returns the module.
-//
-// Register it INSTEAD of auth.New: this one already carries what auth.New
-// returns, and both answer /auth/login. Registering both is a duplicate route
-// and a table with two owners.
-//
-// The session store and the CSRF issuer are passed in rather than reached
-// through the service, because a screen is allowed to know about a token and a
-// cookie, and the service is not allowed to expose its own dependencies.
-func New(svc *auth.Service, sessions *security.SessionStore, csrf *security.CSRF, mailer *mail.Mailer, appKey []byte, appName, base string, tenant auth.TenantResolver) *Module {
+// New returns the authentication screen module.
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *security.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
-		tenant = auth.FixedTenant("")
+		tenant = FixedTenant("")
 	}
 	return &Module{
-		Module:   auth.New(svc, tenant),
-		auth:     svc,
-		sessions: sessions,
-		csrf:     csrf,
-		mailer:   mailer,
-		base:     base,
-		appName:  appName,
-		signer:   security.NewSigner(appKey),
-		tenant:   tenant,
+		users: users, factors: factors, codes: codes, sessions: sessions,
+		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
+		appName: appName, tenant: tenant, secure: secure,
 	}
 }
 
-// Compile-time proof that the module honors the contracts it claims. The second
-// line is the one that matters here: it is what stops a refactor that drops the
-// embedded module and takes the users table down with it.
-var (
-	_ kernel.Module     = (*Module)(nil)
-	_ kernel.Migratable = (*Module)(nil)
-)
+var _ kernel.Module = (*Module)(nil)
 
-// Name is the module identifier. The routes below are this package's, so the
-// route table names this package rather than the framework's.
+// Name is the module identifier.
 func (m *Module) Name() string { return "authui" }
 
-// Routes registers the screens, in place of the framework's.
-//
-// This is the one method the kit overrides. The embedded module still declares
-// the users table; it just no longer answers /auth/login, because this does.
-//
-// guest is the guard on the two screens that exist to bring somebody in. It is
-// on the route rather than at the top of each handler because there are two
-// handlers today and there is a third the day somebody adds one -- and the
-// third is the one that would render the sign-in form to a person who is
-// already signed in, which reads to them as having been signed out.
-//
-// The framework's auth module guards its own minimal sign-in screen the same
-// way, and this method replaces that one. The guard was missing here while it
-// was already there, so publishing the kit TOOK A GUARD AWAY from the project
-// it was published into -- and publishing again over a project that had added
-// one by hand took it away a second time.
-//
-// The screens are named, and the two this method takes over carry the names the
-// framework gave them: "auth.login" and "auth.logout". A substitution that
-// dropped them would leave URL("auth.login") resolving in a bare project and
-// failing in the same project once these screens answered instead -- the kit
-// silently taking a name away, in the same shape as the guard above.
-//
-// A POST that shares its address with the GET beside it is deliberately left
-// unnamed. A path built from the GET's name is already where the form posts, so
-// a second name for one address is a choice nobody can make correctly.
-func (m *Module) Routes(r *http.Router) {
+// Routes registers the twenty-three authentication routes.
+func (m *Module) Routes(r *fhttp.Router) {
 	g := r.Group("/auth")
-
-	// Where somebody already signed in is sent instead. The front page, which
-	// is where signing in lands them too, so the two agree.
 	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
+	signedIn := middleware.RequireAuth(m.sessions)
+	confirmed := middleware.RequireConfirmedPassword(m.sessions)
 
 	g.Get("/login", m.showLogin, guest).Name("auth.login")
-	g.Post("/login", m.doLogin)
+	g.Post("/login", m.doLogin, guest)
 	g.Post("/logout", m.doLogout).Name("auth.logout")
 
-	// arandu:begin custom
-	// The password reset, in PasswordController.go. The kit publishes the three
-	// screens and stops there: the handlers write to your users table and send
-	// through your mailer, so they are yours.
 	g.Get("/password", m.showPasswordRequest).Name("auth.password.request")
-	g.Post("/password/email", m.sendPasswordLink).Name("auth.password.email")
+	g.Post("/password/email", m.sendPasswordCode).Name("auth.password.email")
 	g.Get("/password/reset", m.showPasswordReset).Name("auth.password.reset")
 	g.Post("/password/update", m.updatePassword).Name("auth.password.update")
-
-	// Typing the password again on a session that is already open. The screen
-	// was published from the beginning with no route, no handler and nothing
-	// assigning PasswordConfirmURL -- so it rendered action="" and posted to
-	// itself, on a kit whose own instructions say every screen has a route.
-	//
-	// Behind the session guard, because there is nothing to confirm without one:
-	// a post here from a guest would otherwise reach a handler that has to
-	// invent an answer. The address is middleware.PasswordConfirmPath, which is
-	// where middleware.RequireConfirmedPassword sends people -- mount that on
-	// your own sensitive routes and this is the screen they land on.
-	signedIn := middleware.RequireAuth(m.sessions)
 	g.Get("/password/confirm", m.showPasswordConfirm, signedIn).Name("auth.password.confirm")
 	g.Post("/password/confirm", m.confirmPassword, signedIn)
 
-	// Registration and address verification, in RegisterController.go.
-	//
-	// /verify is the notice and /verify/confirm is the link. Two addresses and
-	// not one with a branch: the notice is reached by a redirect after
-	// registering, and the link arrives from a mail client -- and a GET that
-	// sometimes changes state and sometimes does not is one nobody can cache,
-	// log or reason about.
 	g.Get("/register", m.showRegister, guest).Name("auth.register")
-	g.Post("/register", m.doRegister)
+	g.Post("/register", m.doRegister, guest)
 	g.Get("/verify", m.showVerifyNotice).Name("auth.verify.notice")
-	g.Get("/verify/confirm", m.verify).Name("auth.verify.confirm")
+	g.Post("/verify/confirm", m.verify).Name("auth.verify.confirm")
 	g.Post("/verify/resend", m.resendVerification).Name("auth.verify.resend")
+
+	g.Get("/two-factor/challenge", m.showTwoFactorChallenge, guest).Name("auth.two-factor.challenge")
+	g.Post("/two-factor/challenge", m.verifyTwoFactorChallenge, guest)
+	g.Get("/two-factor/recovery", m.showRecoveryChallenge, guest).Name("auth.two-factor.recovery")
+	g.Post("/two-factor/recovery", m.verifyRecoveryChallenge, guest)
+	g.Get("/two-factor/setup", m.showTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup")
+	g.Post("/two-factor/setup", m.beginTwoFactorSetup, signedIn, confirmed)
+	g.Post("/two-factor/setup/confirm", m.confirmTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup.confirm")
+	g.Post("/two-factor/disable", m.disableTwoFactor, signedIn, confirmed).Name("auth.two-factor.disable")
+	g.Post("/two-factor/recovery-codes", m.regenerateRecoveryCodes, signedIn, confirmed).Name("auth.two-factor.recovery-codes")
+
+	// arandu:begin custom
+	// Register application-specific authentication routes here.
 	// arandu:end custom
 }
 `
@@ -268,80 +223,60 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
-	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
 	"github.com/arandu-io/framework/security"
 	"github.com/arandu-io/framework/validation"
+	nativeauth "github.com/arandu-io/hesape/auth"
+
+	models "{{ .ModulePath }}/app/Models"
 )
 
-// Handlers are thin on purpose: extract the input, delegate to the service,
-// render. No business rule and no repository access lives here -- aru doctor
-// complains when a handler imports the data package.
+type retryAfterError interface {
+	error
+	Seconds() int
+}
 
 // showLogin renders the form.
-//
-// Through screen, like every other page of the kit, and that is the fix rather
-// than the tidy-up it looks like. Rendering directly skipped the one place that
-// fills in RegisterURL and PasswordRequestURL -- so the sign-in screen had no
-// way to register and no way to recover a password, and the markup for both was
-// sitting in the view behind an @if that was never true.
 func (m *Module) showLogin(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.login", AuthPage{Page: m.page(r, "Sign in")})
 }
 
-// doLogin authenticates and rotates the session.
-//
-// On failure it re-renders the form with the message inline, which is the whole
-// shape of validation on this stack: the server rejects, and the same response
-// carries the reason. Nothing is validated twice in the browser.
+// doLogin validates the password without creating identity. A final session is
+// written here only when no factor is enabled; otherwise a short pending cookie
+// carries the attempt to TwoFactorController.
 func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
-	in := auth.LoginRequest{
-		Email:    r.PostFormValue("email"),
-		Password: r.PostFormValue("password"),
-	}
-
-	// The box on the form, read here and nowhere else. The screen has drawn it
-	// since the first version of this kit and nothing read it: AuthPage.Remember
-	// was never assigned, so the box was always drawn unticked and did not even
-	// survive a rejected sign-in -- somebody who mistyped their password had to
-	// tick it again, having no way to know it had been ignored the first time.
+	email := strings.TrimSpace(r.PostFormValue("email"))
+	password := r.PostFormValue("password")
 	remember := r.PostFormValue("remember") != ""
-
-	if errs := in.Validate(); errs.Any() {
-		m.rejected(w, r, in.Email, remember, errs, http.StatusUnprocessableEntity)
+	if email == "" || password == "" {
+		errs := validation.Errors{}
+		if email == "" {
+			errs["email"] = []string{"type your email address"}
+		}
+		if password == "" {
+			errs["password"] = []string{"type your password"}
+		}
+		m.rejected(w, r, email, remember, errs, http.StatusUnprocessableEntity)
 		return
 	}
 
-	// The tenant comes from the application, never from the request: a form
-	// field here would let anyone pick which tenant to authenticate against.
-	//
-	// The last argument is where the attempt came from, and it is what the
-	// framework keys the sign-in throttle on. Read from the socket and never
-	// from X-Forwarded-For: that header is written by whoever is calling, so an
-	// attacker keyed on it resets their own counter every request.
-	u, err := m.auth.Authenticate(r.Context(), m.tenant(r), in.Email, in.Password, middleware.KeyByIP(r))
+	tenant := m.tenant(r)
+	u, err := m.users.VerifyCredentials(r.Context(), tenant, email, password, middleware.KeyByIP(r))
 	if err != nil {
-		if errors.Is(err, auth.ErrInvalidCredentials) {
-			// One message for both halves. Saying which one was wrong turns this
-			// endpoint into an account enumeration oracle.
-			m.rejected(w, r, in.Email, remember, validation.Errors{
+		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
+			m.rejected(w, r, email, remember, validation.Errors{
 				"email": {"invalid email or password"},
 			}, http.StatusUnauthorized)
 			return
 		}
-		// Too many failures for this address and this account. The counting
-		// happens in the framework's auth service, not here -- this file is
-		// yours to edit and to delete, and a lockout that a redesign of the
-		// screen can remove is not a lockout. What is left for the screen is
-		// saying how long, which is the part that stops somebody pressing the
-		// button four more times.
-		var locked auth.TooManyAttemptsError
+		var locked retryAfterError
 		if errors.As(err, &locked) {
 			w.Header().Set("Retry-After", strconv.Itoa(locked.Seconds()))
-			m.rejected(w, r, in.Email, remember, validation.Errors{
+			m.rejected(w, r, email, remember, validation.Errors{
 				"email": {fmt.Sprintf("too many attempts, try again in %d seconds", locked.Seconds())},
 			}, http.StatusTooManyRequests)
 			return
@@ -351,36 +286,39 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rotating the id is mandatory here: keeping the pre-login session is
-	// session fixation, and aru doctor checks that this call exists.
-	//
-	// The remember-me answer travels with it, as security.Remember: Rotate is
-	// what a sign-in calls, so an option only Start accepted would be unreachable
-	// from the one screen that has the checkbox on it. A session started with it
-	// lives for security.RememberLifetime instead of the store's ttl.
+	required, err := m.factors.Required(r.Context(), u.TenantID, u.ID)
+	if err != nil {
+		observability.Log(r.Context()).Error("checking the second factor", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if required {
+		if err := m.writePending(w, u, remember); err != nil {
+			observability.Log(r.Context()).Error("starting the second-factor challenge", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		redirect(w, r, "/auth/two-factor/challenge")
+		return
+	}
+	m.finishSignIn(w, r, u, remember)
+}
+
+// finishSignIn is the only session-creation seam in the published flow. It is
+// called after password-only success or after a factor succeeds, never between.
+func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u models.User, remember bool) {
 	old := m.sessions.IDFromRequest(r)
-	if _, err := m.sessions.Rotate(r.Context(), w, old, auth.SubjectOf(u), security.Remember(remember)); err != nil {
+	if _, err := m.sessions.Rotate(r.Context(), w, old, subjectOf(u), security.Remember(remember)); err != nil {
 		observability.Log(r.Context()).Error("starting session", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	// Where they were going before a guard turned them away, and the front page
-	// when there was nowhere in particular. middleware.RequireAuth is the only
-	// thing that knows: by the time a password has been typed, the request that
-	// was refused is gone.
-	//
-	// This used to be "/", and the framework's own sign-in handler already ended
-	// this way -- so publishing the kit TOOK THE FEATURE AWAY from the project it
-	// was published into, in the same shape as the guest guard did. The guards
-	// went on writing the address on every refusal and nothing ever spent it:
-	// somebody who followed a link to one invoice signed in, landed on the front
-	// page, and went to find it again.
-	//
-	// The destination is proved local by the store, which is why this is one line
-	// and not a check. An unchecked one would be an open redirect on the one
-	// screen every application has.
+	m.clearPending(w)
 	redirect(w, r, m.sessions.TakeIntended(w, r, "/"))
+}
+
+func subjectOf(u models.User) nativeauth.Subject {
+	return nativeauth.Subject{ID: u.ID, Tenant: u.TenantID, Roles: u.Roles, Verified: u.Verified()}
 }
 
 // doLogout destroys the session on the server, not only in the browser.
@@ -391,17 +329,6 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/auth/login")
 }
 
-// redirect answers the way the request asked to be answered.
-//
-// The form is submitted two ways on purpose: hx-post when HTMX is running, and
-// method="post" when it is not -- that is the path without JavaScript, and it is
-// the one that has to keep working. HX-Redirect is a header only HTMX reads, so
-// answering it to a plain form post is 200 with an empty body: a blank page
-// after a login that succeeded, with nothing in the log to say so.
-//
-// fhttp.Redirect is where that branch already lives -- HX-Redirect for an HTMX
-// request, 303 with a Location for everything else. Restating it here would be a
-// second way to redirect, and the second one is the one that drifts.
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	fhttp.Redirect(w, r, to)
 }
@@ -421,14 +348,12 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 // unticks itself is worse than an empty field, because nothing on screen says it
 // happened. The password never comes back.
 func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, remember bool, errs validation.Errors, status int) {
-	// The status is explicit: HTMX swaps the body of a 422 and of a 200 alike,
-	// so answering 200 for a rejection would make the browser, the logs and
-	// every metric agree that it worked.
 	m.fragment(w, r, status, "auth.login", "partials.login_form", AuthPage{
 		Page:       m.page(r, "Sign in"),
 		Email:      email,
 		Remember:   remember,
-		EmailError: errs.First(),
+		EmailError: first(errs["email"]),
+		PasswordError: first(errs["password"]),
 	})
 }
 
@@ -437,7 +362,7 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 // arandu:end custom
 `
 
-// The views are no longer here. AuthViews writes the nine screens of the
+// The views are no longer here. AuthViews writes the thirteen screens of the
 // starter kit into resources/views, as kyse -- see views.go.
 
 // authHomeControllerTemplate is the HomeController the kit publishes, the same
@@ -451,7 +376,7 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 // of wiring in bootstrap/app.go, and make:auth prints it -- the same shape
 // `aru make:module` uses for every controller it writes.
 //
-// It also takes the auth service and the tenant, and that is the signature the
+// It also takes the application-owned name reader and the tenant, and that is the signature the
 // skeleton declares too. It has to be: this file is in `replaced`, so a publish
 // overwrites it with no flag at all, and a constructor here that the project's
 // bootstrap/app.go does not call is a build that breaks on a command whose whole
@@ -463,7 +388,6 @@ const authHomeControllerTemplate = `package controllers
 
 import (
 	"github.com/arandu-io/framework/http"
-	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/security"
 
 	authui "{{ .ModulePath }}/app/Http/Controllers/Auth"
@@ -498,13 +422,13 @@ type HomeController struct {
 	//
 	// The tenant is whose rows are read. It comes from the configuration,
 	// through bootstrap/app.go, and never from the request.
-	people *auth.Service
+	people authui.UserNames
 	tenant string
 }
 
 // NewHomeController returns the controller. bootstrap/app.go builds it and hands
 // it to the routes.
-func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF, people *auth.Service, tenant string) *HomeController {
+func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF, people authui.UserNames, tenant string) *HomeController {
 	return &HomeController{
 		appName: appName, sessions: sessions, csrf: csrf,
 		people: people, tenant: tenant,
@@ -539,7 +463,7 @@ func (c *HomeController) Index(ctx *http.Context) error {
 
 	// arandu:begin custom
 	// The name to greet, through the helper the kit's own screens greet with, so
-	// this page and the nine beside it answer the same way when the lookup fails.
+	// this page and the thirteen beside it answer the same way when the lookup fails.
 	name := authui.SignedInName(ctx.Ctx(), c.people, c.tenant, subject.ID)
 
 	// Which of the two published screens the front page is.
@@ -580,7 +504,7 @@ func (c *HomeController) Index(ctx *http.Context) error {
 		DashboardURL: "/",
 
 		// The reset is wired: this kit publishes PasswordController, mounts its
-		// three routes and mails a signed link. The link on the sign-in screen
+		// routes and mails a single-use code. The link on the sign-in screen
 		// is drawn because the handler behind it exists, which is the only
 		// reason a link is ever drawn.
 		HasPasswordReset: true,

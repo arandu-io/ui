@@ -23,25 +23,33 @@ type VerifyData = authui.AuthPage
 			</header>
 
 			<div class="flex flex-col gap-4 px-6 py-6 text-sm">
-				{{-- A link that was not valid, or has expired. It is an error about
-				     something that already happened, so it is a banner rather than a
-				     message under a field: there is no field it belongs to. --}}
-				@if(.EmailError != "")
-					{!! components.Alert(components.AlertProps{Title: .EmailError, Variant: "destructive"}) !!}
-				@endif
-
 				@if(.Resent)
 					{!! components.Alert(components.AlertProps{
-						Title: "A fresh link is on its way",
+						Title: "A fresh code is on its way",
 						Message: "Check the address you registered with.",
 					}) !!}
 				@endif
 
-				<p class="text-muted-foreground">Before going on, follow the link we sent you. If it did not arrive, ask for another.</p>
+				@if(.Status != "")
+					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
 
-				<form method="post" action="{{ .VerificationResendURL }}">
+				<p class="text-muted-foreground">Type the single-use code sent to your email address.</p>
+
+				<form class="flex flex-col gap-4" method="post" action="{{ .VerificationConfirmURL }}">
 					@csrf
-					<button type="submit" class="btn">Send it again</button>
+					{!! components.Field(components.FieldProps{
+						Name: "email", Label: "Email", Type: "email",
+						Value: .Email, Page: ., Autocomplete: "email", Required: true,
+					}) !!}
+					{!! components.Field(components.FieldProps{
+						Name: "email_code", Label: "Email code",
+						Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+					}) !!}
+					<div class="flex items-center gap-3">
+						<button type="submit" class="btn">Confirm address</button>
+						<button type="submit" class="btn" data-variant="outline" formaction="{{ .VerificationResendURL }}">Send another code</button>
+					</div>
 				</form>
 			</div>
 		</section>

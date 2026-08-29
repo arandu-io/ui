@@ -1,0 +1,29 @@
+//go:build kyse
+
+package twofactor
+
+import authui "example.test/project/app/Http/Controllers/Auth"
+
+@go
+type RecoveryCodesData = authui.AuthPage
+@endgo
+
+@extends('layouts.app')
+
+@section('content')
+	<div class="mx-auto w-full max-w-md">
+		<section class="card">
+			<header class="border-b px-6 py-4">
+				<h1 class="text-base font-semibold tracking-tight">Recovery codes</h1>
+			</header>
+			<div class="flex flex-col gap-4 px-6 py-6">
+				<p class="text-muted-foreground text-sm">Store these codes somewhere safe. Each code works once.</p>
+				<pre class="overflow-x-auto rounded border p-4 text-sm">{{ .RecoveryCodesText }}</pre>
+				<form method="post" action="{{ .RecoveryCodesURL }}">
+					@csrf
+					<button type="submit" class="btn" data-variant="outline">Generate new recovery codes</button>
+				</form>
+			</div>
+		</section>
+	</div>
+@endsection
