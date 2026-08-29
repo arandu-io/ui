@@ -427,6 +427,23 @@ func constructorNames(t *testing.T, source, function string) []string {
 	return nil
 }
 
+// constructorContract returns the constructor parameters that have to agree
+// across a project and the kit that publishes into it. Concrete types keep
+// their exact names. UserNames is an interface owned at the point of use, so a
+// local UserNames and authui.UserNames are the same constructor seam when the
+// independently compiled packages accept the same application service.
+func constructorContract(t *testing.T, source, function string) []string {
+	t.Helper()
+
+	params := constructorNames(t, source, function)
+	for i, param := range params {
+		if param == "UserNames" || strings.HasSuffix(param, ".UserNames") {
+			params[i] = "UserNames"
+		}
+	}
+	return params
+}
+
 // callFromWiring is one call out of the instructions the command prints, parsed.
 //
 // The instructions are Go the person is told to paste into bootstrap/app.go, so
@@ -496,7 +513,7 @@ func TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes(t *testing.T) 
 	}
 }
 
-// TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes.
+// TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes.
 //
 // The drift this catches survived because nobody ran the publisher against the
 // projects it publishes into. HomeController.go is replaced without a flag, so
@@ -504,12 +521,16 @@ func TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes(t *testing.T) 
 // bootstrap/app.go calls, publishing into that project breaks its build -- and
 // nothing in either repository noticed, because each one compiles on its own.
 //
-// Both siblings are checked: the skeleton, which every new project is a copy of,
-// and the showcase, which is where the whole flow is proved end to end. Each is
-// skipped when it is not checked out beside this module, because this module is
-// released on its own and its CI has only itself.
-func TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes(t *testing.T) {
-	want := constructorNames(t, authFile(t, "HomeController.go"), "NewHomeController")
+// Go interfaces are structural: `UserNames` and `authui.UserNames` are not a
+// mismatch merely because their use sites spell the compatible interface
+// differently. The project and published-kit compile gates prove the method
+// sets; this comparison keeps arity and every concrete parameter exact.
+//
+// The sibling skeleton is checked because every new project is a copy of it. It
+// is skipped when it is not checked out beside this module, because this module
+// is released on its own and its CI has only itself.
+func TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes(t *testing.T) {
+	want := constructorContract(t, authFile(t, "HomeController.go"), "NewHomeController")
 
 	for _, project := range []string{"arandu"} {
 		t.Run(project, func(t *testing.T) {
@@ -519,7 +540,7 @@ func TestTheProjectsInThisTreeCompileTheConstructorTheKitPublishes(t *testing.T)
 				t.Skipf("%s is not checked out beside this module, so nothing here proves the kit still fits it", project)
 			}
 
-			got := constructorNames(t, string(source), "NewHomeController")
+			got := constructorContract(t, string(source), "NewHomeController")
 			if !slices.Equal(got, want) {
 				t.Errorf("%s builds its landing page with NewHomeController%v and this kit publishes NewHomeController%v.\n"+
 					"Publishing into that project replaces the file and leaves bootstrap/app.go calling a constructor "+
