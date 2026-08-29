@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +22,28 @@ var update = flag.Bool("update", false, "rewrite the golden files")
 
 func authSpec() Module {
 	return Module{ModulePath: "example.test/project"}
+}
+
+func Example_stampedVersion() {
+	info := &debug.BuildInfo{Main: debug.Module{Version: "v0.8.0"}}
+	fmt.Println(resolveVersion("v9.1.0", info, true))
+	// Output: v9.1.0
+}
+
+func Example_taggedModuleVersion() {
+	info := &debug.BuildInfo{Main: debug.Module{Version: "v0.8.0"}}
+	fmt.Println(resolveVersion("dev", info, true))
+	// Output: v0.8.0
+}
+
+func Example_localDevelopmentVersion() {
+	fmt.Println(resolveVersion("dev", nil, false))
+	fmt.Println(resolveVersion("dev", &debug.BuildInfo{}, true))
+	fmt.Println(resolveVersion("dev", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true))
+	// Output:
+	// dev
+	// dev
+	// dev
 }
 
 // TestAuthGolden holds the starter kit to the same standard as the generator:

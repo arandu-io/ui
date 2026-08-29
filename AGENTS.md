@@ -41,7 +41,7 @@ and fails if the tree moved.
 
 `go test` is where the published Go is compiled.
 `TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework` lays the
-nine Go files into a throwaway module that requires the framework and the
+ten Go files into a throwaway module that requires the framework and the
 component library by **published tag, with no `replace`**, and runs `go build`
 against it. Read its doc comment before touching it: a `replace` pointed at
 `../framework` compiles the working tree, which is the one framework nobody
@@ -69,13 +69,12 @@ fixture arrives, the command is already right.
 
 `auth` reads the `[arandu] aru` line of the project's `arandu.toml` before it
 writes anything, and refuses a project whose floor is below `aruFloor` in
-`publish.go` — today `v0.30.0`, measured by publishing into a copy of the
-skeleton and compiling one view at a time with one installed CLI per tag:
-`v0.29.1` refuses five of the fourteen — `auth/register.kyse.go`, the three
-under `auth/passwords/`, and `partials/login_form.kyse.go`, which share a
-`components.FieldProps` literal written across several lines inside `{!! !!}` —
-and `v0.30.0` through `v0.34.0` each compile all fourteen. Sign-in is one of the
-nine that compile either way, so the set has to be measured and not sampled.
+`publish.go` — today `v0.35.0`, measured by publishing into a copy of the
+skeleton and compiling the complete generated view set with released CLIs.
+`v0.34.0` and below compile `view.Page` through the former framework alias, so
+they reject the application-owned native page imported from `hesape/view`.
+`v0.35.0` emits the native page contract and compiles all eighteen views,
+including the four two-factor screens.
 
 The floor and not the `aru` on PATH. `arandu.mod.toml` declares `exec = false`,
 so this module runs nothing; and a CLI built from source or installed with `go
@@ -87,26 +86,27 @@ about markup that is correct.
 
 `--dry-run` is exempt, and the split is the point: it is asked what would be
 written and answers that, which is why the counts below still measure against
-`../arandu` while the skeleton's floor is `v0.29.1` — a floor this kit refuses.
+`../arandu`; the skeleton now declares the same `v0.35.0` floor this kit needs.
 
 ## What this repository holds
 
 | | measured with |
 | --- | --- |
 | 5 Go source files, one package, no subdirectories | `ls *.go \| grep -v _test.go \| wc -l` |
-| 23 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
-| 23 files published by `auth` — 14 views and 9 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
-| 17 of those refreshed by `auth --views` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
-| 23 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 71 tests in 4 internal test files | `grep -h '^func Test' *_test.go \| wc -l` |
-| 14 routes mounted by the module it publishes | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
+| 28 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
+| 28 files published by `auth` — 18 views and 10 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
+| 21 of those refreshed by `auth --views` — 18 views plus `page.go`, `render.go` and `HomeController.go` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
+| 28 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
+| 79 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 23 routes mounted by the module it publishes, 9 for two-factor authentication | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
 | 0 dependencies, and that is a CI step | `grep -E '^[[:space:]]*require' go.mod \| wc -l` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
 
-Of the 14 views, 9 are screens — the layout, home, welcome, and the six auth
-screens — 4 are message bodies, an HTML part and a plain-text part for each of
-the two messages the flow sends, and 1 is a fragment. The three are counted
-separately by `TestTheAuthViewsAreNineAndWellFormed` in
+Of the 18 views, 13 are screens — the layout, home, welcome, six base auth
+screens and four two-factor screens — 4 are message bodies, an HTML part and a
+plain-text part for each of the two messages the flow sends, and 1 is a
+fragment. The three are counted separately by
+`TestTheAuthViewsAreEighteenAndWellFormed` in
 `views_internal_test.go:20`, because they are different things: a mail body has
 no layout, no navigation and no token, and a fragment has no layout either but
 for the opposite reason — it is swapped **into** a page that already drew one.
@@ -179,13 +179,14 @@ them is missing by accident; each was considered and refused.
 command is meant to be run again for a fix from a newer version. That only works
 because what somebody wrote inside `arandu:begin custom` … `arandu:end custom`
 is carried forward, and because five files — the layout unit — are the only ones
-replaced without a flag. Nine of the 23 published files carry such a block: five
-in Go comment syntax, four in kyse comment syntax, because a `//` below the
-package clause of a `.kyse.go` is markup that would be printed into an e-mail.
+replaced without a flag. A full republish therefore writes 5 and keeps 23. Nine
+of the 28 published files carry a custom block: 5 in Go comment syntax and 4 in
+kyse comment syntax, because a `//` below the package clause of a `.kyse.go` is
+markup that would be printed into an e-mail.
 
 **The golden files are the product.** They are not a convenience for the suite;
-they are the 23 files a project receives. `TestAuthGolden` in
-`publish_internal_test.go:28` compares them byte for byte, and CI regenerates
+they are the 28 files a project receives. `TestAuthGolden` in
+`publish_internal_test.go:52` compares them byte for byte, and CI regenerates
 them and fails on a dirty tree.
 
 ## Writing code
@@ -199,4 +200,4 @@ shipped the literal word, so every project running this command signed its first
 message to its own users with the name of the framework. The brand is a field,
 filled from the application's configuration, and
 `TestNothingTheKitPublishesIsBrandedWithItsOwnName` in
-`flow_internal_test.go:346` reads every published file to keep it that way.
+`flow_internal_test.go:336` reads every published file to keep it that way.

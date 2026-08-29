@@ -53,7 +53,7 @@ jobs:
       # The one test in the suite that is allowed to skip, run again where a skip
       # must not read as a pass.
       #
-      # It compiles the nine Go files this kit publishes against the framework
+      # It compiles the ten Go files this kit publishes against the framework
       # tag a project actually gets, and it skips when that tag is neither in the
       # module cache nor reachable. On a laptop with no network that is the
       # honest answer; here it means the release went out uncompiled, which is
@@ -92,8 +92,8 @@ jobs:
       #
       # It is run as `go run github.com/arandu-io/ui@latest auth`, from inside
       # somebody's project, and every require here is something they download to
-      # publish nine views. The renderer is a copy of the CLI's for exactly this
-      # reason (see publish.go).
+      # publish twenty-eight files. The renderer is a copy of the CLI's for
+      # exactly this reason (see publish.go).
       - name: no dependencies
         run: |
           if grep -qE '^\s*require' go.mod; then

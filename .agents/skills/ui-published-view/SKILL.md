@@ -17,8 +17,8 @@ is the shape their next form copies.
 ## Where each screen lives
 
 `AuthViews` in `views.go:110` is the list, and it is the map from constant to
-published path. Fourteen views come out of it, plus `page.go`, the struct they
-all render from:
+published path. Eighteen views come out of it, plus `page.go`, the struct the
+thirteen screens and the sign-in fragment render from:
 
 | published path | constant |
 | --- | --- |
@@ -31,10 +31,19 @@ all render from:
 | `resources/views/auth/passwords/confirm.kyse.go` | `authPasswordConfirmViewTemplate` |
 | `resources/views/auth/passwords/email.kyse.go` | `authPasswordEmailViewTemplate` |
 | `resources/views/auth/passwords/reset.kyse.go` | `authPasswordResetViewTemplate` |
+| `resources/views/auth/two-factor/challenge.kyse.go` | `authTwoFactorChallengeViewTemplate` |
+| `resources/views/auth/two-factor/recovery.kyse.go` | `authTwoFactorRecoveryViewTemplate` |
+| `resources/views/auth/two-factor/setup.kyse.go` | `authTwoFactorSetupViewTemplate` |
+| `resources/views/auth/two-factor/recovery-codes.kyse.go` | `authRecoveryCodesViewTemplate` |
 | `resources/views/partials/login_form.kyse.go` | `authLoginFormPartialTemplate` |
+| `resources/views/mail/verify-email.kyse.go` | `verifyMailViewTemplate` |
+| `resources/views/mail/verify-email-text.kyse.go` | `verifyMailTextTemplate` |
+| `resources/views/mail/password-reset.kyse.go` | `passwordMailViewTemplate` |
+| `resources/views/mail/password-reset-text.kyse.go` | `passwordMailTextTemplate` |
 | `app/Http/Controllers/Auth/page.go` | `authPageTemplate` |
 
-The four message bodies are in `views_auth_flow.go`: `verifyMailViewTemplate`,
+The last four view rows are message bodies from `views_auth_flow.go`:
+`verifyMailViewTemplate`,
 `verifyMailTextTemplate`, `passwordMailViewTemplate`, `passwordMailTextTemplate`.
 They are not screens — no layout, no navigation, no token — and the suite counts
 them separately.
@@ -61,19 +70,19 @@ clause — the package is the directory's, because the generated Go sits beside
 the source and one directory is one Go package. `auth/login.kyse.go` is
 `package auth`; a file under `resources/views/` itself is `package views`.
 
-**2. Read what the screen is allowed to read.** `AuthPage` in `views.go:210` is
+**2. Read what the screen is allowed to read.** `AuthPage` in `views.go:171` is
 the struct, published to `app/Http/Controllers/Auth/page.go`. It embeds
 `view.Page` for the chrome — title, description, token, navigation — and adds
-the form state: `Status`, `Name`, `Email`, `Remember`, `ResetToken`, the six
-`…URL` fields, and one `…Error` field per input.
+the form state, route URLs, two-factor provisioning material and one `…Error`
+field per input.
 
 If a screen needs something new, add the field to `authPageTemplate` **and fill
 it in from a handler in the same change.** A URL field read by a template and
 assigned by nobody renders `action=""`, which posts to the current URL and looks
 like it worked. `TestEveryAddressAScreenReadsIsFilledInSomewhere` in
-`flow_internal_test.go:272` fails on either half — read and never filled, filled
+`flow_internal_test.go:262` fails on either half — read and never filled, filled
 and never read — and `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` at
-`flow_internal_test.go:452` does the same for the message fields.
+`flow_internal_test.go:443` does the same for the message fields.
 
 **3. Run the gates, then update the goldens.**
 
@@ -99,19 +108,19 @@ markup error surfaces before somebody else's build.
 
 ## What kyse does not have
 
-`TestTheAuthViewsInventNoDirective` at `views_internal_test.go:156` reads every
+`TestTheAuthViewsInventNoDirective` at `views_internal_test.go:157` reads every
 view and fails on any of these:
 
 `@vite` `@auth` `@guest` `@error` `@can` `@props` `@stack` `@push` `@forelse`
 `@switch` `@fonts` `<x-`
 
-`TestTheAuthViewsReachForNoHelper` at `views_internal_test.go:191` fails on
+`TestTheAuthViewsReachForNoHelper` at `views_internal_test.go:192` fails on
 `config(` `route(` `auth()` `__(` `old(` `session(` `Route::has`. Everything a
 screen shows came from the handler, in the struct. The guest branch of the
 navigation is `@if(!.SignedIn())`; a validation message is asked for by the
 component, through `FieldError`.
 
-What the fourteen views actually use, and it is the whole set they need —
+What the eighteen views actually use, and it is the whole set they need —
 `grep -ho '@[a-z]*' views.go views_auth_flow.go | sort | uniq -c`:
 
 `@extends` `@section`/`@endsection` `@yield` `@if`/`@endif` `@go`/`@endgo`
@@ -137,7 +146,7 @@ than guarded. A conditional attribute is `@if` around the whole attribute:
 ```
 
 `TestNoScreenInterpolatesWhereAnAttributeNameGoes` at
-`views_internal_test.go:224` holds every screen to it. The kit shipped exactly
+`views_internal_test.go:225` holds every screen to it. The kit shipped exactly
 one such site — a helper answering `checked` or nothing — and nothing could be
 injected through it; it was still wrong to publish, because these screens are
 what a project copies.
@@ -150,7 +159,7 @@ stored cross-site scripting the first time a `Status` comes from a person.
 plus the semantic classes the stylesheet ships — `card`, `btn`, `input`,
 `field`. A class the stylesheet has never heard of renders as nothing at all,
 which looks like a broken build.
-`TestTheAuthViewsCarryNoBootstrap` at `views_internal_test.go:174` names the
+`TestTheAuthViewsCarryNoBootstrap` at `views_internal_test.go:175` names the
 ones that already got in once: `form-control`, `btn btn-`, `btn-primary`,
 `card-body`, `card-header`, `navbar-nav`, `col-md-`, `invalid-feedback`,
 `alert-success`.
@@ -191,7 +200,7 @@ element by element and skips when `../arandu` is not checked out.
 `.BrandName`, filled from the application's own configuration. The verification
 mail once carried the literal word, so every project running this command signed
 its first message to its own users with a name that was not theirs.
-`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:346`
+`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:336`
 searches every published file for it.
 
 ## Message bodies
@@ -209,6 +218,6 @@ custom block in kyse comment syntax:
 
 That block is the wording a project decided to send its own users, and a
 republish carries it over. `TestBothMessagesAreBuiltTheSameWay` at
-`flow_internal_test.go:379` fails if a mail view loses it. Both parts of both
+`flow_internal_test.go:370` fails if a mail view loses it. Both parts of both
 messages ship — a mail with no plain-text part is filed as spam more often and
 shows nothing in a client that cannot render HTML.

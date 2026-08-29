@@ -20,13 +20,13 @@
 go run github.com/arandu-io/ui@latest auth
 ```
 
-Fourteen views, written in kyse: the layout, the dashboard, the welcome page,
-sign in, sign up, e-mail verification, the three password screens, the sign-in
-form as a fragment of its own, and both parts — HTML and plain text — of the two
-messages the flow sends. Alongside them land nine Go files: the controllers that
-answer the routes, the two mailables, and the page struct every screen renders
-through — twenty-three files in all — and they are yours from the moment they
-land: edit them, delete them, rewrite them.
+Eighteen views, written in kyse: thirteen screens — the layout, dashboard,
+welcome page, six base authentication screens and four two-factor screens — the
+sign-in form as a fragment of its own, and both parts, HTML and plain text, of
+the two messages the flow sends. Alongside them land ten plain Go files: five
+authentication controller files, `render.go`, `page.go`, two mailables and
+`HomeController.go`. Twenty-eight files in all, and they are yours from the
+moment they land: edit them, delete them, rewrite them.
 
 The fragment is under `resources/views/partials/`, and the directory is what
 makes it one: a file there draws its own markup and no layout around it, so it
@@ -37,9 +37,10 @@ is in the wrong one of the two.
 
 Run it again to take a fix from a newer version: what you wrote inside a
 `arandu:begin custom` block is carried over, and the command says so per file.
-`--views` leaves the flow you edited alone — the controllers and the two
-mailables — and refreshes seventeen files: the fourteen views plus `page.go`,
-`render.go` and `HomeController`, which they do not compile without.
+`--views` leaves the flow you edited alone — the five authentication controller
+files and the two mailables — and refreshes twenty-one files: the eighteen
+views plus `page.go`, `render.go` and `HomeController`, which they do not compile
+without.
 
 **Nothing is added to your `go.mod`.** `go run <module>@latest` runs a published
 module without touching the caller's dependency graph, so there is no package to

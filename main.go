@@ -31,13 +31,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 )
 
-// version is stamped by the release build. It is printed with the file list so
-// a project can record which kit produced its screens.
+// version may be stamped by a release build with -ldflags "-X main.version=...".
 var version = "dev"
+
+// currentVersion keeps an explicit build stamp authoritative and otherwise
+// reads the module version recorded by the Go tool. The latter is what makes
+// `go run github.com/arandu-io/ui@v0.8.0 version` report v0.8.0 without a
+// repository-specific release build.
+func currentVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	return resolveVersion(version, info, ok)
+}
+
+func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
+	if stamped != "" && stamped != "dev" {
+		return stamped
+	}
+	if !ok || info == nil || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "dev"
+	}
+	return info.Main.Version
+}
 
 // viewImports is the blank-import block for the packages this kit publishes
 // views into.
@@ -95,7 +114,7 @@ func run(args []string) error {
 	case "auth":
 		return publishAuth(args[1:])
 	case "version":
-		fmt.Println(version)
+		fmt.Println(currentVersion())
 		return nil
 	case "help", "-h", "--help":
 		usage()

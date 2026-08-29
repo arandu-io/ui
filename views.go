@@ -1313,8 +1313,9 @@ type ConfirmData = authui.AuthPage
 // still hands over its own struct -- is a build failure delivered by a flag
 // whose whole purpose is to be the safe one.
 //
-// What it leaves alone is the flow: the four controllers and the two mailables,
-// which are the files somebody edits to decide their own rules.
+// What it leaves alone is the flow: the five authentication controller files
+// and the two mailables, which are the files somebody edits to decide their own
+// rules.
 func screensOnly(files []File) []File {
 	keep := map[string]bool{
 		filepath.Join("app", "Http", "Controllers", "HomeController.go"): true,
