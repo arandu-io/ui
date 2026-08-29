@@ -282,7 +282,7 @@ import (
 	"github.com/arandu-io/framework/modules/auth"
 	"github.com/arandu-io/framework/observability"
 	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/framework/view"
+	"github.com/arandu-io/hesape/view"
 )
 
 // What every screen of this kit shares: the chrome, the token and the addresses

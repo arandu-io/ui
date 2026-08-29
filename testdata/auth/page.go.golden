@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/arandu-io/framework/view"
+	"github.com/arandu-io/hesape/view"
 	"github.com/arandu-io/kyse/components"
 )
 
@@ -111,7 +111,7 @@ func (p AuthPage) FieldError(name string) string {
 	case "password_confirmation":
 		return p.PasswordConfirmationError
 	}
-	return p.Page.FieldError(name)
+	return p.Page.First(name)
 }
 
 // redacted is what a secret looks like once it has left this package.

@@ -501,14 +501,20 @@ func TestTheLayoutRendersEveryPageAndNotOnlyItsOwn(t *testing.T) {
 	// through this layout, over HTTP, in a generated project.
 }
 
-// TestTheKitsPageEmbedsTheFrameworksPage: AuthPage is not a second answer to
+// TestTheKitsPageEmbedsTheNativePage: AuthPage is not a second answer to
 // "what does the layout draw". It embeds view.Page, which is what keeps the
-// chrome declared once, in the framework, for every project.
+// chrome declared once, in Hesape, for every project.
 //
 // It lives with the controller that fills it rather than in the views, because
 // that is where its fields are set.
-func TestTheKitsPageEmbedsTheFrameworksPage(t *testing.T) {
+func TestTheKitsPageEmbedsTheNativePage(t *testing.T) {
 	page := authFile(t, "page.go")
+	if strings.Contains(page, `"github.com/arandu-io/framework/view"`) {
+		t.Error("AuthPage imports the framework bridge instead of the native Hesape view contract")
+	}
+	if !strings.Contains(page, `"github.com/arandu-io/hesape/view"`) {
+		t.Error("AuthPage does not import the native Hesape view contract")
+	}
 
 	i := strings.Index(page, "type AuthPage struct {")
 	if i < 0 {
