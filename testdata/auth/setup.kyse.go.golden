@@ -31,7 +31,7 @@ type SetupData = authui.AuthPage
 					</form>
 				@endif
 				@if(.SecretKey != "")
-					<div class="mx-auto max-w-64">{!! .QRCode() !!}</div>
+					<div class="mx-auto max-w-64">{!! authui.TrustedQRCode(.QRCodeSVG) !!}</div>
 					<p class="text-muted-foreground text-sm">If the camera cannot scan the code, type this key:</p>
 					<code class="rounded border p-3 text-sm break-all">{{ .SecretKey }}</code>
 					<form class="flex flex-col gap-4" method="post" action="{{ .TwoFactorSetupConfirmURL }}">

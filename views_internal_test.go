@@ -539,6 +539,33 @@ func TestTheKitsPageEmbedsTheNativePage(t *testing.T) {
 	}
 }
 
+// TestTheQRCodeCrossesANamedTrustedMarkupBoundary keeps raw rendering limited
+// to one explicit component. The handler obtains this SVG from hesape/qr; a
+// string-valued page method is indistinguishable from arbitrary unescaped data
+// to both a reader and `aru doctor`.
+func TestTheQRCodeCrossesANamedTrustedMarkupBoundary(t *testing.T) {
+	setup := authView(t, "auth/two-factor/setup.kyse.go")
+	page := authFile(t, "page.go")
+
+	if !strings.Contains(setup, `{!! authui.TrustedQRCode(.QRCodeSVG) !!}`) {
+		t.Error("two-factor setup does not render its QR through the named trusted-markup component")
+	}
+	if strings.Contains(setup, `{!! .QRCode() !!}`) {
+		t.Error("two-factor setup still sends a raw string-valued page method directly to output")
+	}
+	for _, want := range []string{
+		`"html/template"`,
+		`func TrustedQRCode(svg string) template.HTML`,
+		`return template.HTML(svg)`,
+		`hesape/qr`,
+		`validated`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the published trusted QR boundary does not make %q explicit", want)
+		}
+	}
+}
+
 func mustAuthViews(t *testing.T) []File {
 	t.Helper()
 	files, err := AuthViews(Module{ModulePath: "example.com/app"})

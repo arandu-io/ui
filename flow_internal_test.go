@@ -42,6 +42,62 @@ func bodyOf(t *testing.T, source, function string) string {
 	return ""
 }
 
+// TestTheRegistrationInputLogsOnlyPresence keeps both password fields behind a
+// structured-log boundary. The input itself may be attached to a log record,
+// but neither credentials nor account PII may cross that boundary.
+func TestTheRegistrationInputLogsOnlyPresence(t *testing.T) {
+	source := authFile(t, "RegisterController.go")
+	logValue := bodyOf(t, source, "LogValue")
+
+	for _, want := range []string{
+		`slog.Bool("name_supplied", in.Name != "")`,
+		`slog.Bool("email_supplied", in.Email != "")`,
+		`slog.Bool("password_supplied", in.Password != "")`,
+		`slog.Bool("password_confirmation_supplied", in.PasswordConfirmation != "")`,
+	} {
+		if !strings.Contains(logValue, want) {
+			t.Errorf("registrationInput.LogValue does not publish the safe signal %q", want)
+		}
+	}
+	for _, secret := range []string{
+		`slog.String("name"`, `slog.String("email"`, `slog.String("password"`,
+		`slog.String("password_confirmation"`,
+	} {
+		if strings.Contains(logValue, secret) {
+			t.Errorf("registrationInput.LogValue exposes a submitted value through %q", secret)
+		}
+	}
+}
+
+// TestThePendingSignInRedactsLogsWithoutChangingItsSignedProtocol separates
+// observability from serialization: logs expose only presence, while the JSON
+// signed into the short-lived cookie must retain the real password fingerprint.
+func TestThePendingSignInRedactsLogsWithoutChangingItsSignedProtocol(t *testing.T) {
+	source := authFile(t, "TwoFactorController.go")
+	logValue := bodyOf(t, source, "LogValue")
+
+	if !strings.Contains(logValue, `slog.Bool("password_fingerprint_present", p.PasswordFingerprint != "")`) {
+		t.Error("pendingSignIn.LogValue does not replace the password fingerprint with a presence signal")
+	}
+	if strings.Contains(logValue, `slog.String("password_fingerprint"`) ||
+		strings.Contains(logValue, `slog.Any("password_fingerprint"`) {
+		t.Error("pendingSignIn.LogValue exposes the password fingerprint")
+	}
+
+	for _, protocol := range []string{
+		`PasswordFingerprint string ` + "`json:\"password_fingerprint\"`",
+		`PasswordFingerprint: u.PasswordFingerprint()`,
+		`json.Marshal(pendingSignIn{`,
+	} {
+		if !strings.Contains(source, protocol) {
+			t.Errorf("the signed pending-sign-in protocol lost %q", protocol)
+		}
+	}
+	if strings.Contains(source, "func (p pendingSignIn) MarshalJSON") {
+		t.Error("pendingSignIn redacts its signed JSON instead of redacting only its log representation")
+	}
+}
+
 // TestTheResetUsesOnlyPurposeBoundNativeCodes rejects every remnant of the
 // former signed-link protocol and pins the native single-use CodeStore seam.
 func TestTheResetUsesOnlyPurposeBoundNativeCodes(t *testing.T) {

@@ -2,6 +2,7 @@ package authui
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -25,6 +26,17 @@ type registrationInput struct {
 	Email                string
 	Password             string
 	PasswordConfirmation string
+}
+
+// LogValue exposes only whether each field was supplied. Registration input
+// contains credentials and account PII, so none of its values belong in logs.
+func (in registrationInput) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("name_supplied", in.Name != ""),
+		slog.Bool("email_supplied", in.Email != ""),
+		slog.Bool("password_supplied", in.Password != ""),
+		slog.Bool("password_confirmation_supplied", in.PasswordConfirmation != ""),
+	)
 }
 
 func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {

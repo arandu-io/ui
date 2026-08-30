@@ -172,6 +172,7 @@ const authPageTemplate = `package authui
 
 import (
 	"encoding/json"
+	"html/template"
 	"log/slog"
 
 	"github.com/arandu-io/hesape/view"
@@ -303,9 +304,10 @@ func (p AuthPage) FieldError(name string) string {
 	return p.Page.First(name)
 }
 
-// QRCode returns trusted SVG produced by hesape/qr. Views call this method at
-// the raw-output site so arbitrary string fields cannot bypass escaping.
-func (p AuthPage) QRCode() string { return p.QRCodeSVG }
+// TrustedQRCode marks the SVG produced by hesape/qr as trusted markup. The
+// two-factor handler reaches this boundary only after qr.Encode and Code.SVG
+// produce the validated document; arbitrary strings must remain escaped.
+func TrustedQRCode(svg string) template.HTML { return template.HTML(svg) }
 
 // redacted is what a secret looks like once it has left this package.
 //
@@ -1200,7 +1202,7 @@ type SetupData = authui.AuthPage
 					</form>
 				@endif
 				@if(.SecretKey != "")
-					<div class="mx-auto max-w-64">{!! .QRCode() !!}</div>
+					<div class="mx-auto max-w-64">{!! authui.TrustedQRCode(.QRCodeSVG) !!}</div>
 					<p class="text-muted-foreground text-sm">If the camera cannot scan the code, type this key:</p>
 					<code class="rounded border p-3 text-sm break-all">{{ .SecretKey }}</code>
 					<form class="flex flex-col gap-4" method="post" action="{{ .TwoFactorSetupConfirmURL }}">

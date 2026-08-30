@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -26,6 +27,18 @@ type pendingSignIn struct {
 	UserID              string `json:"user_id"`
 	PasswordFingerprint string `json:"password_fingerprint"`
 	Remember            bool   `json:"remember"`
+}
+
+// LogValue redacts the fingerprint while retaining enough context to diagnose
+// the short-lived handoff. JSON serialization remains the signed protocol and
+// deliberately carries the real fingerprint so a password change invalidates it.
+func (p pendingSignIn) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("tenant", p.Tenant),
+		slog.String("user_id", p.UserID),
+		slog.Bool("password_fingerprint_present", p.PasswordFingerprint != ""),
+		slog.Bool("remember", p.Remember),
+	)
 }
 
 func (m *Module) writePending(w http.ResponseWriter, u models.User, remember bool) error {

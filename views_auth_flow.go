@@ -7,6 +7,7 @@ const authRegisterControllerTemplate = `package authui
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -30,6 +31,17 @@ type registrationInput struct {
 	Email                string
 	Password             string
 	PasswordConfirmation string
+}
+
+// LogValue exposes only whether each field was supplied. Registration input
+// contains credentials and account PII, so none of its values belong in logs.
+func (in registrationInput) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("name_supplied", in.Name != ""),
+		slog.Bool("email_supplied", in.Email != ""),
+		slog.Bool("password_supplied", in.Password != ""),
+		slog.Bool("password_confirmation_supplied", in.PasswordConfirmation != ""),
+	)
 }
 
 func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
@@ -466,6 +478,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -488,6 +501,18 @@ type pendingSignIn struct {
 	UserID string ` + "`json:\"user_id\"`" + `
 	PasswordFingerprint string ` + "`json:\"password_fingerprint\"`" + `
 	Remember bool ` + "`json:\"remember\"`" + `
+}
+
+// LogValue redacts the fingerprint while retaining enough context to diagnose
+// the short-lived handoff. JSON serialization remains the signed protocol and
+// deliberately carries the real fingerprint so a password change invalidates it.
+func (p pendingSignIn) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("tenant", p.Tenant),
+		slog.String("user_id", p.UserID),
+		slog.Bool("password_fingerprint_present", p.PasswordFingerprint != ""),
+		slog.Bool("remember", p.Remember),
+	)
 }
 
 func (m *Module) writePending(w http.ResponseWriter, u models.User, remember bool) error {
