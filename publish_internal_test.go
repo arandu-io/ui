@@ -742,9 +742,9 @@ func authFile(t *testing.T, name string) string {
 // TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets says so when
 // they drift apart.
 const (
-	publishedFramework = "v0.41.0"
-	publishedKyse      = "v0.14.0"
-	publishedHesape    = "v0.19.1"
+	publishedFramework = "v0.42.0"
+	publishedKyse      = "v0.15.1"
+	publishedHesape    = "v0.21.0"
 )
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
