@@ -546,7 +546,7 @@ import "github.com/arandu-io/kyse/components"
 			<nav class="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-6">
 				<a href="{{ .HomeLink() }}" class="text-sm font-semibold tracking-tight">{{ .BrandName() }}</a>
 				<div class="flex items-center gap-2 text-sm">
-					{!! components.ThemeToggle() !!}
+					{!! components.ThemeToggle(components.ThemeToggleProps{}) !!}
 					@if(!.SignedIn())
 						<a href="{{ .LoginLink() }}" class="btn" data-variant="ghost" data-size="sm">Login</a>
 						@if(.RegisterLink() != "")
