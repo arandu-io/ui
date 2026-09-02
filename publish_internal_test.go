@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -742,9 +743,9 @@ func authFile(t *testing.T, name string) string {
 // TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets says so when
 // they drift apart.
 const (
-	publishedFramework = "v0.42.0"
-	publishedKyse      = "v0.15.1"
-	publishedHesape    = "v0.21.0"
+	publishedFramework = "v0.42.1"
+	publishedKyse      = "v0.15.2"
+	publishedHesape    = "v0.21.1"
 )
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
@@ -1610,11 +1611,17 @@ func goDirective(t *testing.T) string {
 // written for: what a project gets today. The skeleton's go.mod is what a new
 // project starts with, so it is the answer, and this is the one check here that
 // may skip -- the pins are still exercised by the gate above when the skeleton is
-// not beside this module.
+// not beside this module. CI resolves the latest published skeleton instead of
+// skipping, because the isolated runner is exactly where this drift used to
+// pass unnoticed.
 func TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("..", "arandu", "go.mod"))
+	body, err := currentSkeletonGoMod()
 	if err != nil {
-		t.Skip("the skeleton is not checked out beside this module, so nothing here says whether the pinned versions are current")
+		message := fmt.Sprintf("the current skeleton go.mod is unavailable, so nothing here says whether the pinned versions are current: %v", err)
+		if os.Getenv("CI") != "" {
+			t.Fatal(message)
+		}
+		t.Skip(message)
 	}
 
 	for _, want := range []struct{ module, pinned string }{
@@ -1629,6 +1636,49 @@ func TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets(t *testing.
 				want.module, got, want.pinned)
 		}
 	}
+}
+
+func currentSkeletonGoMod() ([]byte, error) {
+	path := filepath.Join("..", "arandu", "go.mod")
+	body, err := os.ReadFile(path)
+	if err == nil {
+		return body, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read sibling skeleton: %w", err)
+	}
+
+	tool, err := exec.LookPath("go")
+	if err != nil {
+		return nil, fmt.Errorf("find go: %w", err)
+	}
+
+	download := exec.Command(tool, "mod", "download", "-json", "github.com/arandu-io/arandu@latest")
+	download.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local")
+	out, err := download.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("download current skeleton: %w: %s", err, out)
+	}
+
+	var module struct {
+		GoMod string
+		Error string
+	}
+	if err := json.Unmarshal(out, &module); err != nil {
+		return nil, fmt.Errorf("decode current skeleton metadata: %w", err)
+	}
+	if module.Error != "" {
+		return nil, fmt.Errorf("download current skeleton: %s", module.Error)
+	}
+	if module.GoMod == "" {
+		return nil, fmt.Errorf("download current skeleton: go.mod path is empty")
+	}
+
+	body, err = os.ReadFile(module.GoMod)
+	if err != nil {
+		return nil, fmt.Errorf("read downloaded skeleton go.mod: %w", err)
+	}
+	return body, nil
 }
 
 // requiredVersion reads the version a go.mod requires for one module path.
