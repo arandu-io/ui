@@ -538,6 +538,15 @@ import "github.com/arandu-io/kyse/components"
 	     view.RegisterAsset before writing the tag. --}}
 	<script src="{{ view.URL("ui.js") }}" defer></script>
 	<script src="{{ view.URL("basecoat.bundle.js") }}" defer></script>
+	{{-- This project's own behaviours, carried over because publishing replaces
+	     this layout rather than adding to it: a page that lost the tag would
+	     leave every behaviour the project registers silently unreachable, and
+	     the symptom -- a mask that works everywhere but on the auth pages -- is
+	     one nobody attributes to a layout they did not write.
+
+	     After ui.js, because it registers into the registry ui.js creates:
+	     deferred scripts run in document order. --}}
+	<script src="{{ view.URL("custom.js") }}" defer></script>
 	<script src="{{ view.URL("theme.js") }}"></script>
 </head>
 <body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}' class="bg-background text-foreground min-h-full antialiased">
