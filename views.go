@@ -45,8 +45,14 @@ import (
 // a validation message is a field of the Field component. That is more
 // characters and one less language.
 
-// AuthViews returns the views plus the struct they render, ready to be written
-// into a project.
+// AuthViews returns the views, the struct they render and the one asset the
+// layout asks for, ready to be written into a project.
+//
+// The asset is here rather than beside the controllers because the layout is
+// what requires it: the tag it writes names custom.js, and view.URL refuses a
+// name nothing registered. Publishing the layout without the package that
+// registers that name is a project that panics on every request, which is why
+// the two files travel together and why --views carries them.
 //
 // The sources keep the conventional tree under `resources/views`, and
 // `aru view:build` writes the generated Go beside each one -- so `auth/` holds
@@ -116,6 +122,17 @@ func AuthViews(m Module) ([]File, error) {
 	}{
 		{filepath.Join("app", "Http", "Controllers", "Auth", "page.go"), authPageTemplate},
 		{filepath.Join(dir, "layouts", "app.kyse.go"), authLayoutViewTemplate},
+
+		// The script the layout asks for by name, and the package that
+		// registers it. They travel with the layout because the layout is what
+		// requires them: view.URL panics on a name nothing registered, and the
+		// layout is in `replaced`, so a project that had no resources/js would
+		// receive a tag for an asset it does not carry and answer every request
+		// with a panic. Neither of the two is in `replaced` itself -- an
+		// existing script is the project's own and is kept.
+		{filepath.Join("resources", "js", "js.go"), scriptRegistrationTemplate},
+		{filepath.Join("resources", "js", "custom.js"), customScriptTemplate},
+
 		{filepath.Join(dir, "home.kyse.go"), authHomeViewTemplate},
 		{filepath.Join(dir, "welcome.kyse.go"), authWelcomeViewTemplate},
 		{filepath.Join(dir, "auth", "login.kyse.go"), authLoginViewTemplate},
@@ -592,6 +609,112 @@ import "github.com/arandu-io/kyse/components"
 	</div>
 </body>
 </html>
+`
+
+// scriptRegistrationTemplate registers the project's own client script, which
+// the layout above asks for by name.
+//
+// It is published because the layout requires it, and view.URL refuses a name
+// nothing registered rather than serving a plausible URL: the tag is a
+// requirement, not a decoration. A project whose skeleton predates
+// resources/js has no such package, and the layout replaces that project's own
+// with no flag at all -- so publishing the tag without the registration takes
+// every request down, on every page, from the first run of this command.
+//
+// It sits beside the file it embeds because //go:embed cannot reference a
+// parent directory: a script under resources/ can be embedded only from a Go
+// file under resources/.
+//
+// Not in `replaced`, and that is the whole of its second half: a project that
+// already has this package keeps it. The script is where somebody writes their
+// own behaviours, and what this kit brings is a starting point for a project
+// that has none, never a replacement for one that does.
+const scriptRegistrationTemplate = `// Package js carries this project's client script into the binary.
+//
+// One file with one job, and the job is transport. Everything about what the
+// script does is in the script.
+package js
+
+import (
+	_ "embed"
+
+	"github.com/arandu-io/hesape/view"
+)
+
+// script is where this application registers its own behaviours.
+//
+// It is served verbatim: there is no bundler, no transpiler and no minifier in
+// this project, so the bytes here are the bytes the browser runs.
+//
+//go:embed custom.js
+var script []byte
+
+// init hands the script to the view layer, which serves it content-addressed
+// from this origin, and the layout references it by name.
+//
+// Importing this package is what makes it happen -- the same shape the views
+// use -- so the blank import in bootstrap is not optional: the layout asks for
+// the asset by name, and a name nothing registered is refused rather than
+// served as a broken URL.
+//
+// An empty file is refused here too, when the application starts. A zero-byte
+// script is a tag that loads, runs nothing, and reads like a behaviour that was
+// never registered.
+func init() {
+	view.RegisterAsset("custom.js", "application/javascript; charset=utf-8", script)
+}
+`
+
+// customScriptTemplate is the script itself: the project's own behaviours.
+//
+// The comment is the file. It is what a person reads before writing the first
+// line, and it is also what keeps the file from being empty -- RegisterAsset
+// refuses a zero-byte body when the application starts, because a script tag
+// that loads and runs nothing looks exactly like a behaviour somebody forgot to
+// register.
+const customScriptTemplate = `/* This project's client behaviours, and the only script here that is.
+ *
+ * ui.js is the framework's: it binds the components once on 'document' and an
+ * upgrade replaces it. This file is yours, nothing upstream rewrites it, and it
+ * is served from this origin like every other asset -- no CDN, no bundler, no
+ * minifier, so what is written here is what the browser runs.
+ *
+ * It loads after ui.js, which is what puts 'arandu.ui' on the page. Both are
+ * deferred, so the order the layout lists them in is the order they run in.
+ *
+ * # The two registries
+ *
+ * Both take a NAME. Markup carries the name and never the code, which is what
+ * keeps the policy at script-src 'self' with no unsafe-eval: nothing here reads
+ * an attribute and evaluates it.
+ *
+ *     arandu.ui.action('archive-message', function (event, element) {
+ *         // element is the closest ancestor carrying the attribute that named
+ *         // this action, which is rarely the one the event came from.
+ *     });
+ *
+ *     arandu.ui.define('message-list', {
+ *         mounted:   function (ctx) { },
+ *         updated:   function (ctx) { },
+ *         destroyed: function (ctx) { },
+ *     });
+ *
+ * The markup names them and carries nothing else:
+ *
+ *     <div data-kyse-behavior="message-list" data-kyse-props='{"open":true}'>
+ *       <button data-kyse-on-click="archive-message">Archive</button>
+ *     </div>
+ *
+ * An action is delegated: click, change and submit reach it wherever the
+ * element is, including markup that arrived in a swap, and there is nothing to
+ * bind or unbind. A behaviour is the case that has a lifecycle -- ctx.element
+ * is the element, ctx.props is the JSON the server wrote beside it, and the
+ * same object reaches all three hooks, so a timer or an observer taken in
+ * mounted is released in destroyed. Register at any time: a name defined after
+ * the page parsed mounts what is already on it.
+ *
+ * A name nothing registered does nothing and says so once in the console.
+ */
 `
 
 // authHomeViewTemplate is the dashboard, the screen you land on after signing in.
@@ -1342,6 +1465,13 @@ func screensOnly(files []File) []File {
 		// controllers below. Adding it changes what a project WITHOUT one gets,
 		// and nothing else.
 		filepath.Join("app", "Http", "Controllers", "Auth", "render.go"): true,
+
+		// And the asset the refreshed layout asks for by name. --views
+		// publishes the layout, so leaving these out would make the safe flag
+		// the one that panics: view.URL refuses a name nothing registered, and
+		// a project whose skeleton predates resources/js registers none.
+		filepath.Join("resources", "js", "js.go"):     true,
+		filepath.Join("resources", "js", "custom.js"): true,
 	}
 
 	var out []File

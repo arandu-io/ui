@@ -17,12 +17,15 @@ is the shape their next form copies.
 ## Where each screen lives
 
 `AuthViews` in `views.go:110` is the list, and it is the map from constant to
-published path. Eighteen views come out of it, plus `page.go`, the struct the
-thirteen screens and the sign-in fragment render from:
+published path. Eighteen views come out of it, plus `page.go` — the struct the
+thirteen screens and the sign-in fragment render from — and the two files under
+`resources/js/`, which are the one asset the layout asks for by name:
 
 | published path | constant |
 | --- | --- |
 | `resources/views/layouts/app.kyse.go` | `authLayoutViewTemplate` |
+| `resources/js/js.go` | `scriptRegistrationTemplate` |
+| `resources/js/custom.js` | `customScriptTemplate` |
 | `resources/views/home.kyse.go` | `authHomeViewTemplate` |
 | `resources/views/welcome.kyse.go` | `authWelcomeViewTemplate` |
 | `resources/views/auth/login.kyse.go` | `authLoginViewTemplate` |
@@ -195,6 +198,19 @@ overwrites the skeleton's with no flag at all — an element only the skeleton h
 is one every project loses silently.
 `TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries` compares the two heads
 element by element and skips when `../arandu` is not checked out.
+
+**A tag you add to the head is a requirement on every project that receives it.**
+`view.URL` panics on a name nothing registered — deliberately, because a
+plausible URL for a file the binary does not carry is a 404 on every page that
+nobody reads. Five names are embedded by the runtime and need nothing:
+`app.css`, `htmx.min.js`, `ui.js`, `basecoat.bundle.js` and `theme.js`. Any
+other name has to be published by this kit with the package that registers it,
+the way `custom.js` is published with `resources/js/js.go`.
+`TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters` reads every
+published view for one, and it exists because the layout shipped the `custom.js`
+tag with nothing behind it: every project older than that day's skeleton
+received a layout that panicked on every request, and the layout is in
+`replaced`, so nobody chose it.
 
 **Do not type the framework's name into published markup.** The brand is
 `.BrandName`, filled from the application's own configuration. The verification
