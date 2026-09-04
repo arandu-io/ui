@@ -58,14 +58,19 @@ func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 	return info.Main.Version
 }
 
-// viewImports is the blank-import block for the packages this kit publishes
-// views into.
+// blankImports is the blank-import block for the packages this kit publishes
+// that register something when they are linked in.
 //
 // It is computed from what AuthViews actually writes rather than typed out, so
-// a view added to the kit cannot ship with an instruction that does not mention
+// a file added to the kit cannot ship with an instruction that does not mention
 // it -- which is how a project ends up answering 500 with "no view named
-// auth.verify" on a screen the kit just installed.
-func viewImports(modulePath string) string {
+// auth.verify" on a screen the kit just installed, and how it ends up answering
+// a panic on every page for a script tag whose asset nothing registered.
+//
+// Two kinds of package end up here, and they are the same shape: an init() that
+// registers under a name, and a name nobody registered is a failure at the
+// first request rather than a missing file at build time.
+func blankImports(modulePath string) string {
 	files, err := AuthViews(Module{ModulePath: modulePath})
 	if err != nil {
 		return ""
@@ -73,19 +78,28 @@ func viewImports(modulePath string) string {
 
 	seen := map[string]bool{}
 	var packages []string
-	for _, f := range files {
-		path := filepath.ToSlash(f.Path)
-		if !strings.HasSuffix(path, ".kyse.go") {
-			continue
-		}
-		// resources/views/auth/passwords/x.kyse.go compiles to
-		// storage/framework/views/auth/passwords/x.go, and it is that directory
-		// the application imports.
-		dir := filepath.ToSlash(filepath.Dir(path))
-		dir = strings.Replace(dir, "resources/views", "storage/framework/views", 1)
+	add := func(dir string) {
 		if !seen[dir] {
 			seen[dir] = true
 			packages = append(packages, dir)
+		}
+	}
+	for _, f := range files {
+		path := filepath.ToSlash(f.Path)
+		dir := filepath.ToSlash(filepath.Dir(path))
+		switch {
+		case strings.HasSuffix(path, ".kyse.go"):
+			// resources/views/auth/passwords/x.kyse.go compiles to
+			// storage/framework/views/auth/passwords/x.go, and it is that
+			// directory the application imports.
+			add(strings.Replace(dir, "resources/views", "storage/framework/views", 1))
+		case strings.HasPrefix(path, "resources/") && strings.HasSuffix(path, ".go"):
+			// Go published under resources/ that is not a view is there to
+			// register the file beside it: //go:embed cannot reach a parent
+			// directory, so the package has to be the asset's own. It is
+			// imported as it is written -- there is no build step between the
+			// two.
+			add(dir)
 		}
 	}
 	sort.Strings(packages)
@@ -202,7 +216,7 @@ func publishAuth(args []string) error {
 		return err
 	}
 
-	fmt.Printf(wiring, modulePath, viewImports(modulePath))
+	fmt.Printf(wiring, modulePath, blankImports(modulePath))
 	return nil
 }
 
@@ -240,11 +254,18 @@ Remove any former framework authentication module registration before adding
 this one: both answer the same paths, and native account policy and storage now
 belong to the application services passed above.
 
-Every view is its own Go package, and a package nobody imports registers
-nothing -- so bootstrap/app.go needs these beside the ones already there. The
-blank import is what runs the init() that calls view.Register:
+Every view is its own Go package, and so is the script under resources/js. A
+package nobody imports registers nothing -- so bootstrap/app.go needs these
+beside the ones already there. The blank import is what runs the init(): for a
+view it calls view.Register, and for the script it calls view.RegisterAsset.
 
 %s
+
+The script one is not optional. The layout published above asks for custom.js
+by name, and an asset nothing registered is refused rather than served as a
+broken URL -- so the page that would have loaded it takes the request down
+instead. If this project already had resources/js, its own script was kept and
+the import is probably already there.
 
 Then:
 
@@ -264,9 +285,16 @@ still the Policy's answer.
 
 What this kit does NOT decide is your rules. The handlers are yours from the
 moment they are written: the minimum password length, whether registration is
-open, what a confirmed address is allowed to do. Required routes remain outside
-the marked custom block so --force can carry security fixes; application-specific
-routes placed inside that block survive a republish.
+open, what a confirmed address is allowed to do. What the sign-up form asks for
+is one of them -- the registrationAsks line in RegisterController.go says
+whether it asks for a password twice, once, or not at all, and the form and the
+validation both read it, so they cannot drift apart. It ships asking twice.
+Switching it off entirely leaves the credential to your own user service, which
+must store an absent password rather than the hash of an empty one.
+
+Required routes remain outside the marked custom block so --force can carry
+security fixes; application-specific routes placed inside that block survive a
+republish.
 
 The two messages go out through your mailer. In development that is
 MAIL_URL=log://, so the codes land in the output of aru dev and the flow works

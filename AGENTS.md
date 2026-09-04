@@ -93,11 +93,11 @@ written and answers that, which is why the counts below still measure against
 | | measured with |
 | --- | --- |
 | 5 Go source files, one package, no subdirectories | `ls *.go \| grep -v _test.go \| wc -l` |
-| 28 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
-| 28 files published by `auth` — 18 views and 10 plain Go | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
-| 21 of those refreshed by `auth --views` — 18 views plus `page.go`, `render.go` and `HomeController.go` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
-| 28 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 79 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 30 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
+| 30 files published by `auth` — 18 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
+| 23 of those refreshed by `auth --views` — 18 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
+| 30 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
+| 84 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
 | 0 dependencies, and that is a CI step | `grep -E '^[[:space:]]*require' go.mod \| wc -l` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
@@ -151,6 +151,16 @@ through, so these read the published bytes instead:
 | `TestNothingTheLayoutDrawsIsRedrawnInsideASwap` | a value drawn by the layout and inside a swap target as well, without `hx-swap-oob` — two copies, and only the inner one refreshed |
 | `TestNoPublishedViewKeepsStateInTheBrowser` | `x-data` and its relatives in any published view: nothing the layout loads reads one, and `script-src 'self'` has no `unsafe-eval` |
 | `TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries` | a head element the skeleton's layout has and this one does not — publishing replaces that file with no flag, so a project loses it silently |
+| `TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters` | a `view.URL("…")` in a published view naming an asset neither the runtime embeds nor this kit delivers — `view.URL` panics on an unregistered name, so that is every request of every project answered with a panic |
+| `TestEveryFileTheKitEmbedsIsOnePublishedBesideItAndNotEmpty` | a `//go:embed` naming a file the kit does not publish, or publishes empty — the first does not build and the second panics at start-up, because `RegisterAsset` refuses a zero-byte body |
+
+The two asset gates are the ones the layout earned. It gained a `<script>` for
+`custom.js` while the only package registering that name was one the skeleton
+had begun carrying the same day, and `resources/views/layouts/app.kyse.go` is in
+`replaced` — so publishing into any older project wrote a layout that could not
+render, with nobody having chosen it. The kit now publishes `resources/js/js.go`
+and `resources/js/custom.js` alongside the layout, and neither is in `replaced`:
+a project that already has them keeps its own script.
 
 What the browser does own is what dies with the tab, and it has a home: `ui.js`,
 loaded by the layout. It binds on `document`, dispatches on `data-` attributes,
@@ -179,13 +189,13 @@ them is missing by accident; each was considered and refused.
 command is meant to be run again for a fix from a newer version. That only works
 because what somebody wrote inside `arandu:begin custom` … `arandu:end custom`
 is carried forward, and because five files — the layout unit — are the only ones
-replaced without a flag. A full republish therefore writes 5 and keeps 23. Nine
-of the 28 published files carry a custom block: 5 in Go comment syntax and 4 in
+replaced without a flag. A full republish therefore writes 5 and keeps 25. Nine
+of the 30 published files carry a custom block: 5 in Go comment syntax and 4 in
 kyse comment syntax, because a `//` below the package clause of a `.kyse.go` is
 markup that would be printed into an e-mail.
 
 **The golden files are the product.** They are not a convenience for the suite;
-they are the 28 files a project receives. `TestAuthGolden` in
+they are the 30 files a project receives. `TestAuthGolden` in
 `publish_internal_test.go:52` compares them byte for byte, and CI regenerates
 them and fails on a dirty tree.
 

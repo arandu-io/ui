@@ -258,6 +258,11 @@ func TestViewsOnlyPublishesTheScreensAndTheLayoutUnit(t *testing.T) {
 		// and authui.SignedInName live there, so --views without it publishes a
 		// HomeController that does not build.
 		filepath.Join("app", "Http", "Controllers", "Auth", "render.go"),
+		// The asset the refreshed layout asks for by name. Without these two,
+		// --views is the flag that publishes a layout which panics on every
+		// request of a project that had no resources/js.
+		filepath.Join("resources", "js", "js.go"),
+		filepath.Join("resources", "js", "custom.js"),
 	} {
 		if !got[want] {
 			t.Errorf("--views does not publish %s", want)

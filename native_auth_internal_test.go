@@ -33,8 +33,10 @@ func TestNativeAuthPublicationBoundary(t *testing.T) {
 			t.Errorf("the Go kit published Python tooling: %s", path)
 		}
 	}
-	if goFiles != 10 || views != 18 || len(files) != 28 {
-		t.Fatalf("published Go/views/total = %d/%d/%d, want 10/18/28", goFiles, views, len(files))
+	// The total is two more than the Go and the views together: custom.js is
+	// neither, and it is published because the layout asks for it by name.
+	if goFiles != 11 || views != 18 || len(files) != 30 {
+		t.Fatalf("published Go/views/total = %d/%d/%d, want 11/18/30", goFiles, views, len(files))
 	}
 
 	module := authFile(t, "Auth/LoginController.go")

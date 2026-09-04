@@ -56,15 +56,16 @@ func TestAuthGolden(t *testing.T) {
 		t.Fatalf("GenerateAuth: %v", err)
 	}
 	// The count is here so that adding a file is a decision somebody made rather
-	// than one that arrived: ten plain Go files, thirteen screens, one fragment
-	// and four message bodies.
+	// than one that arrived: eleven plain Go files, thirteen screens, one
+	// fragment, four message bodies and the one script.
 	//
 	// It was thirteen, and the missing nine were the ones that made the kit a
 	// flow: register.kyse.go and verify.kyse.go posted to addresses nobody
 	// registered, and the password reset stopped one step short of writing the
-	// password.
-	if len(files) != 28 {
-		t.Fatalf("generated %d files, want 28", len(files))
+	// password. It was twenty-eight until the layout's own tag for custom.js
+	// had nothing behind it in a project older than the tag.
+	if len(files) != 30 {
+		t.Fatalf("generated %d files, want 30", len(files))
 	}
 
 	for _, f := range files {
@@ -743,9 +744,9 @@ func authFile(t *testing.T, name string) string {
 // TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets says so when
 // they drift apart.
 const (
-	publishedFramework = "v0.42.1"
-	publishedKyse      = "v0.15.2"
-	publishedHesape    = "v0.21.1"
+	publishedFramework = "v0.43.0"
+	publishedKyse      = "v0.16.0"
+	publishedHesape    = "v0.22.0"
 )
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
@@ -1496,6 +1497,179 @@ func assetName(element string) (string, bool) {
 		return "", false
 	}
 	return rest[:end], true
+}
+
+// TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters is the gate over
+// the tags a published layout writes.
+//
+// view.URL panics on a name nothing registered, and that is its design rather
+// than an oversight: a plausible URL for a file the binary does not carry is a
+// 404 on every page that nobody reads, where a refusal names the missing asset
+// once. So every view.URL in a published view is a requirement on the project
+// the view lands in -- and resources/views/layouts/app.kyse.go is in
+// `replaced`, which means it overwrites a project's own with no flag at all.
+//
+// A name nothing answers is therefore not a broken image. It is every request
+// of every project that ran this command, answered with a panic, chosen by
+// nobody: the person did not opt in to the layout, and the failure arrives at
+// the first page load rather than at the build.
+//
+// This shipped. The layout gained a tag for custom.js while the only package
+// registering that name was one the skeleton had started carrying the same day,
+// so publishing into any project generated before that wrote a layout which
+// could not render.
+//
+// Two sources answer for a name, and the difference between them is what makes
+// this gate work:
+//
+//   - What the runtime embeds. That set is copied here, and it is the only
+//     copied thing in this test: this module declares no dependency, so it has
+//     nothing to ask. It is named in the failure so that a reader can compare
+//     it against the release rather than trust it.
+//   - What this kit itself publishes, read out of the RegisterAsset calls in
+//     the Go it writes. Derived and not listed, which is the half that matters:
+//     dropping the file that registers custom.js turns this test red instead of
+//     leaving it green against a name typed into a slice here.
+func TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters(t *testing.T) {
+	// Registered by hesape/view's own init, from files embedded at build time.
+	// Nothing an application does removes one.
+	//
+	// The dev server registers one more, arandu-reload.js, and it is left out
+	// deliberately: it exists only while `aru dev` is running, so a published
+	// view that referenced it would be a tag that panics in production. Seeing
+	// it listed in a runtime refusal is not a reason to add it here.
+	embedded := map[string]bool{
+		"app.css":            true,
+		"basecoat.bundle.js": true,
+		"htmx.min.js":        true,
+		"theme.js":           true,
+		"ui.js":              true,
+	}
+
+	files := mustGenerateAuth(t)
+
+	delivered := map[string]bool{}
+	for _, f := range files {
+		for _, name := range callNames(string(f.Content), "view.RegisterAsset") {
+			delivered[name] = true
+		}
+	}
+
+	var asked int
+	for _, f := range files {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		for _, name := range callNames(string(f.Content), "view.URL") {
+			asked++
+			if embedded[name] || delivered[name] {
+				continue
+			}
+			t.Errorf("%s asks view.URL for %q, and nothing registers that name.\n"+
+				"The runtime embeds: %s.\nThis kit publishes a registration for: %s.\n"+
+				"view.URL refuses a name nothing registered, so this is not a missing file -- it is every "+
+				"request of every project that receives this view, answered with a panic, and the layout is "+
+				"replaced with no flag so nobody chose it.\n"+
+				"Publish the package that registers it, or drop the tag.",
+				path, name, sortedNames(embedded), sortedNames(delivered))
+		}
+	}
+	if asked == 0 {
+		t.Fatal("no published view asks view.URL for anything, so this gate read nothing: either the layout " +
+			"stopped loading its assets, or the scan is looking in the wrong place")
+	}
+}
+
+// TestEveryFileTheKitEmbedsIsOnePublishedBesideItAndNotEmpty.
+//
+// The two ways a published //go:embed hurts somebody else and nobody here. A
+// directive naming a file the kit does not write is a project that does not
+// build, and one naming a file the kit writes empty is a project that builds
+// and panics at start-up, because RegisterAsset refuses a zero-byte body -- a
+// script tag that loads and runs nothing reads exactly like a behaviour
+// somebody forgot to register.
+//
+// Neither is visible from this repository without reading for it: nothing here
+// compiles what it publishes, and the golden files compare bytes against bytes.
+func TestEveryFileTheKitEmbedsIsOnePublishedBesideItAndNotEmpty(t *testing.T) {
+	files := mustGenerateAuth(t)
+
+	byPath := map[string][]byte{}
+	for _, f := range files {
+		byPath[filepath.ToSlash(f.Path)] = f.Content
+	}
+
+	var checked int
+	for _, f := range files {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		for _, line := range strings.Split(string(f.Content), "\n") {
+			name, ok := strings.CutPrefix(strings.TrimSpace(line), "//go:embed ")
+			if !ok {
+				continue
+			}
+			checked++
+			// The pattern is relative to the file carrying it and cannot name a
+			// parent directory, which is the whole reason the registration
+			// package sits under resources/ beside the script rather than with
+			// the controllers.
+			embedded := filepath.ToSlash(filepath.Join(filepath.Dir(path), strings.TrimSpace(name)))
+			body, published := byPath[embedded]
+			switch {
+			case !published:
+				t.Errorf("%s embeds %s and this kit does not publish it: the project receives Go that does "+
+					"not build, naming a file it was never given", path, embedded)
+			case len(body) == 0:
+				t.Errorf("%s embeds %s and this kit publishes it empty: RegisterAsset refuses a zero-byte "+
+					"body, so the application panics when it starts", path, embedded)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no published Go embeds anything, so this gate read nothing: the script the layout asks for " +
+			"reaches the binary through an embed, and a kit that publishes none is not delivering it")
+	}
+}
+
+// callNames is every name passed as the first argument of a call, wherever that
+// argument is written as a string literal.
+//
+// A scan and not a parser, because most of what it reads is kyse: below the
+// package clause a .kyse.go is markup, and no Go parser accepts one. The shape
+// is safe to read this way -- view.URL's own documentation requires a constant
+// argument, and a registration names the file it embeds.
+func callNames(source, call string) []string {
+	var out []string
+	prefix := call + `("`
+	for {
+		at := strings.Index(source, prefix)
+		if at < 0 {
+			return out
+		}
+		source = source[at+len(prefix):]
+		end := strings.IndexByte(source, '"')
+		if end < 0 {
+			return out
+		}
+		out = append(out, source[:end])
+		source = source[end:]
+	}
+}
+
+// sortedNames is a set as one readable line, for a failure message.
+func sortedNames(set map[string]bool) string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	if len(out) == 0 {
+		return "nothing"
+	}
+	return strings.Join(out, ", ")
 }
 
 // attributeValue is the value of one attribute of a tag, in either quote.
