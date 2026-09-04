@@ -146,6 +146,39 @@ atomic. `TestTheResetUsesOnlyPurposeBoundNativeCodes` at
 `flow_internal_test.go:47` and `TestNothingIsConsumedUntilThePasswordIsAcceptable`
 at `flow_internal_test.go:108` keep the password flow on that boundary.
 
+**What the sign-up form asks for is a setting, not a shape.** `registrationAsks`
+in `RegisterController.go` is one of `PasswordTwice` (the zero value, and what
+ships), `PasswordOnce` or `NoPassword`. One value feeds both sides: the handler
+gates each password rule on it, and the screen draws each password box inside an
+`@if` on `AuthPage.AsksForPassword()` / `AsksForPasswordConfirmation()`, which
+the handler fills from the same value. Switching it off in one of the two and
+not the other is the defect this replaced, inverted — a rule on an input nobody
+can see rejects every submission and hangs the message on a field that is not on
+the page.
+
+Those two are **methods over negated fields** — `WithoutPasswordBox` and
+`WithoutConfirmationBox` — and the negation is the mechanism, not a taste.
+`page.go` is in `replaced` and `RegisterController.go` is not, so
+`auth --views --force` writes a new sign-up screen beside a handler that
+predates the setting and fills neither field. False has to mean *draw the box*,
+because false is what that handler leaves behind; spelled the positive way, the
+safe flag would quietly stop asking for a password.
+`TestTheSignUpFormAsksForAPasswordTwiceUnlessTheProjectSaysOtherwise` holds the
+default, `TestTheSignUpFormAndItsHandlerAskForTheSameThing` holds the two ends
+together, and `TestASignUpScreenNobodyFilledInStillAsksForBothBoxes` holds the
+negation.
+
+`NoPassword` hands the credential to `Users.Register`, and the requirement on
+that implementation is one line: do not hash the empty password it is given. A
+stored hash of the empty string is a credential anybody can offer. An account
+with no password is one whose password column is EMPTY, which the native
+provider refuses to authenticate whatever is offered against it. On the near
+side, `doLogin`, `confirmPassword` and `updatePassword` each refuse an empty
+password before the call that compares it, and `doRegister` clears a password
+the form did not draw before calling `Register` — so no path here puts an empty
+value into a comparison.
+`TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison` reads all four.
+
 **The reset says the same thing either way.** *If that address is registered, a
 code is on its way.* — whether it is or not, and nothing is mailed to an address
 nobody looked up. `flow_internal_test.go:136` and `:67`.

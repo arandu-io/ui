@@ -285,9 +285,16 @@ still the Policy's answer.
 
 What this kit does NOT decide is your rules. The handlers are yours from the
 moment they are written: the minimum password length, whether registration is
-open, what a confirmed address is allowed to do. Required routes remain outside
-the marked custom block so --force can carry security fixes; application-specific
-routes placed inside that block survive a republish.
+open, what a confirmed address is allowed to do. What the sign-up form asks for
+is one of them -- the registrationAsks line in RegisterController.go says
+whether it asks for a password twice, once, or not at all, and the form and the
+validation both read it, so they cannot drift apart. It ships asking twice.
+Switching it off entirely leaves the credential to your own user service, which
+must store an absent password rather than the hash of an empty one.
+
+Required routes remain outside the marked custom block so --force can carry
+security fixes; application-specific routes placed inside that block survive a
+republish.
 
 The two messages go out through your mailer. In development that is
 MAIL_URL=log://, so the codes land in the output of aru dev and the flow works

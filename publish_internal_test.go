@@ -1533,6 +1533,11 @@ func assetName(element string) (string, bool) {
 func TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters(t *testing.T) {
 	// Registered by hesape/view's own init, from files embedded at build time.
 	// Nothing an application does removes one.
+	//
+	// The dev server registers one more, arandu-reload.js, and it is left out
+	// deliberately: it exists only while `aru dev` is running, so a published
+	// view that referenced it would be a tag that panics in production. Seeing
+	// it listed in a runtime refusal is not a reason to add it here.
 	embedded := map[string]bool{
 		"app.css":            true,
 		"basecoat.bundle.js": true,

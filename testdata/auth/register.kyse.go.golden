@@ -37,18 +37,27 @@ type RegisterData = authui.AuthPage
 					Autocomplete: "email", Required: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "Password", Type: "password",
-					Page: .,
-					Hint: "At least twelve characters.",
-					Autocomplete: "new-password", Required: true,
-				}) !!}
+				{{-- Both boxes are drawn only when the handler asks for them, and
+				     the same value decides both sides. An application whose
+				     identity is proved some other way draws neither, and one
+				     that decided a confirmation box is not worth the second
+				     typing draws only the first. --}}
+				@if(.AsksForPassword())
+					{!! components.Field(components.FieldProps{
+						Name: "password", Label: "Password", Type: "password",
+						Page: .,
+						Hint: "At least twelve characters.",
+						Autocomplete: "new-password", Required: true,
+					}) !!}
+				@endif
 
-				{!! components.Field(components.FieldProps{
-					Name: "password_confirmation", Label: "Confirm password", Type: "password",
-					Page: .,
-					Autocomplete: "new-password", Required: true,
-				}) !!}
+				@if(.AsksForPasswordConfirmation())
+					{!! components.Field(components.FieldProps{
+						Name: "password_confirmation", Label: "Confirm password", Type: "password",
+						Page: .,
+						Autocomplete: "new-password", Required: true,
+					}) !!}
+				@endif
 
 				<div class="flex items-center justify-between gap-3">
 					<button type="submit" class="btn">Register</button>

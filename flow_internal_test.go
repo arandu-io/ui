@@ -69,6 +69,209 @@ func TestTheRegistrationInputLogsOnlyPresence(t *testing.T) {
 	}
 }
 
+// TestTheSignUpFormAsksForAPasswordTwiceUnlessTheProjectSaysOtherwise.
+//
+// The setting this reads is an addition, and an addition must not move what
+// somebody already has. A project that publishes this kit and changes nothing
+// gets the form it got before: a name, an address, a password, a confirmation,
+// all four required, and a handler that rejects a pair that differs.
+//
+// Read off the published bytes rather than off the setting's name alone,
+// because the bytes are what a project receives. The middle check is the one
+// that survives a rename: PasswordTwice is the ZERO value of the type, so a
+// field of it that nobody set is the option that asks for the most rather than
+// the one that asks for nothing.
+func TestTheSignUpFormAsksForAPasswordTwiceUnlessTheProjectSaysOtherwise(t *testing.T) {
+	controller := authFile(t, "RegisterController.go")
+
+	if !strings.Contains(controller, "const registrationAsks = PasswordTwice") {
+		t.Error("the published registration handler does not default to asking for a password twice: this " +
+			"setting is an addition, and a project that changes nothing has to receive what it had")
+	}
+	if !strings.Contains(controller, "PasswordTwice RegistrationCredential = iota") {
+		t.Error("PasswordTwice is not the zero value of RegistrationCredential: the value nobody set has to " +
+			"be the one that asks for the most, never the one that asks for nothing")
+	}
+
+	register := authView(t, "auth/register.kyse.go")
+	for _, input := range []string{"name", "email", "password", "password_confirmation"} {
+		if !strings.Contains(register, `Name: "`+input+`", Label:`) {
+			t.Errorf("the sign-up screen no longer draws %q", input)
+		}
+	}
+	if required := strings.Count(register, "Required: true"); required != 4 {
+		t.Errorf("the sign-up screen marks %d inputs required, want 4: an option that changed how the "+
+			"default form behaves is not an option", required)
+	}
+
+	doRegister := bodyOf(t, controller, "doRegister")
+	for _, rule := range []string{
+		"len([]rune(in.Password)) < security.MinPasswordLen",
+		"in.Password != in.PasswordConfirmation",
+	} {
+		if !strings.Contains(doRegister, rule) {
+			t.Errorf("the registration handler no longer applies %q", rule)
+		}
+	}
+}
+
+// TestTheSignUpFormAndItsHandlerAskForTheSameThing.
+//
+// Drawing a box the handler ignores is a field that does nothing. Requiring one
+// the form does not draw is worse: every submission rejected, with the message
+// hung on an input that is not on the page, and a green build either way.
+// Switching the password off in one of the two and not the other is the defect
+// this kit already had, inverted.
+//
+// So each password input the screen draws sits inside an @if on a page field,
+// and each password rule the handler applies sits behind the predicate that
+// fills that same field. One value decides both, and this reads the published
+// bytes to hold the two ends of it together.
+func TestTheSignUpFormAndItsHandlerAskForTheSameThing(t *testing.T) {
+	register := authView(t, "auth/register.kyse.go")
+	doRegister := bodyOf(t, authFile(t, "RegisterController.go"), "doRegister")
+
+	for _, c := range []struct {
+		input, drawnWhen, validatedWhen, rule string
+	}{
+		{
+			"password", "@if(.AsksForPassword())", "registrationAsks.asksForPassword()",
+			"len([]rune(in.Password)) < security.MinPasswordLen",
+		},
+		{
+			"password_confirmation", "@if(.AsksForPasswordConfirmation())",
+			"registrationAsks.asksForConfirmation()", "in.Password != in.PasswordConfirmation",
+		},
+	} {
+		at := strings.Index(register, c.drawnWhen)
+		if at < 0 {
+			t.Errorf("the sign-up screen draws %q unconditionally: an application that asks for no password "+
+				"still shows the box, and the form and the handler disagree", c.input)
+			continue
+		}
+		// The guarded region is what the @if opens and the first @endif closes.
+		// An input drawn after that endif is one the screen shows whatever the
+		// handler decided, which is the half of the disagreement that looks
+		// right in review.
+		guarded := register[at:]
+		if end := strings.Index(guarded, "@endif"); end >= 0 {
+			guarded = guarded[:end]
+		}
+		if !strings.Contains(guarded, `Name: "`+c.input+`"`) {
+			t.Errorf("the %q input is not inside %s: the guard has to be what decides whether the box is "+
+				"drawn, not a block beside it", c.input, c.drawnWhen)
+		}
+
+		if !strings.Contains(doRegister, c.validatedWhen+" && "+c.rule) {
+			t.Errorf("the registration handler applies %q without asking %s first: a rule on an input the "+
+				"form does not draw rejects every submission, pointing at a field nobody can see",
+				c.rule, c.validatedWhen)
+		}
+	}
+}
+
+// TestASignUpScreenNobodyFilledInStillAsksForBothBoxes.
+//
+// The two files do not travel together. page.go is in `replaced`, so publishing
+// overwrites it with no flag; RegisterController.go is not, so publishing keeps
+// it. `auth --views --force` therefore writes a new sign-up screen beside a
+// handler that predates the setting and fills neither field -- and --views is
+// the flag whose whole purpose is to be the safe one.
+//
+// What that project has to get is the form it had. It does, because the fields
+// are stored as negatives and read through methods: false is "draw the box",
+// and false is what a handler that never heard of them leaves behind. Spelled
+// the positive way, the same republish would have quietly stopped asking for a
+// password on a screen that still posts to a handler demanding one.
+func TestASignUpScreenNobodyFilledInStillAsksForBothBoxes(t *testing.T) {
+	page := authFile(t, "Auth/page.go")
+
+	for _, want := range []string{
+		"func (p AuthPage) AsksForPassword() bool { return !p.WithoutPasswordBox }",
+		"func (p AuthPage) AsksForPasswordConfirmation() bool { return !p.WithoutConfirmationBox }",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("AuthPage does not answer the sign-up form through the negated field:\n  want %s\n"+
+				"The zero value of this struct has to be the form that asks, because publishing replaces "+
+				"page.go and keeps the handler that fills it", want)
+		}
+	}
+
+	// And the screen has to ask through those methods rather than read the
+	// fields, or the negation above is a comment rather than a mechanism.
+	register := authView(t, "auth/register.kyse.go")
+	for _, field := range []string{".WithoutPasswordBox", ".WithoutConfirmationBox"} {
+		if strings.Contains(register, field) {
+			t.Errorf("the sign-up screen reads %s directly: it has to ask through the method, which is where "+
+				"the negation lives", field)
+		}
+	}
+}
+
+// TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison.
+//
+// The hazard that arrives with an optional password, and it is worse than the
+// problem it solves: an account created without one, whose password column ends
+// up holding the hash of the empty string, is an account anybody signs in to by
+// submitting nothing.
+//
+// Two guards stand between this kit and that, and only one of them is here. The
+// far side is the native provider, which refuses an account whose password
+// column is empty whatever is offered against it -- so a credential that is
+// ABSENT is safe by construction, which is why the setting asks an application
+// for absence rather than for the hash of nothing.
+//
+// The near side is these three handlers, and it is what this reads. Each
+// refuses an empty password BEFORE the call that compares it, so the offered
+// half is never empty either. Removing one of those guards is what would turn a
+// stored hash of the empty string from unreachable into a sign-in.
+//
+// The fourth check is the registration handler itself: with the box switched
+// off it clears what the body carried before calling Register, so a forged
+// submission cannot set a credential through a field the application does not
+// show.
+func TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison(t *testing.T) {
+	for _, c := range []struct {
+		file, handler, guard, compares string
+	}{
+		{"LoginController_handlers.go", "doLogin", `password == ""`, "m.users.VerifyCredentials("},
+		{"PasswordController.go", "confirmPassword", `password == ""`, "m.users.ConfirmPassword("},
+		{
+			"PasswordController.go", "updatePassword",
+			"len([]rune(password)) < security.MinPasswordLen", "m.users.ResetPassword(",
+		},
+	} {
+		body := bodyOf(t, authFile(t, c.file), c.handler)
+		guard, compares := strings.Index(body, c.guard), strings.Index(body, c.compares)
+		switch {
+		case compares < 0:
+			t.Errorf("%s no longer calls %s, so this gate is reading a handler that stopped being the one "+
+				"that compares a password", c.handler, c.compares)
+		case guard < 0:
+			t.Errorf("%s hands a password to %s with no %s in front of it: an account whose stored hash is "+
+				"the hash of the empty string is then one anybody signs in to by submitting nothing",
+				c.handler, c.compares, c.guard)
+		case guard > compares:
+			t.Errorf("%s checks %s only after calling %s, and by then the comparison has happened",
+				c.handler, c.guard, c.compares)
+		}
+	}
+
+	doRegister := bodyOf(t, authFile(t, "RegisterController.go"), "doRegister")
+	cleared := strings.Index(doRegister, `in.Password, in.PasswordConfirmation = "", ""`)
+	registered := strings.Index(doRegister, "m.users.Register(")
+	switch {
+	case registered < 0:
+		t.Error("the registration handler no longer calls Users.Register, so this gate is reading the wrong " +
+			"handler")
+	case cleared < 0:
+		t.Error("the registration handler passes on a password the form did not draw: with the box switched " +
+			"off, a forged body would still set the credential on the new account")
+	case cleared > registered:
+		t.Error("the registration handler drops the undrawn password only after registering with it")
+	}
+}
+
 // TestThePendingSignInRedactsLogsWithoutChangingItsSignedProtocol separates
 // observability from serialization: logs expose only presence, while the JSON
 // signed into the short-lived cookie must retain the real password fingerprint.

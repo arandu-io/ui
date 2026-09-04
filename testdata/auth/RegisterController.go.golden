@@ -21,6 +21,54 @@ const (
 	verificationSent = "If that address is registered, a code is on its way."
 )
 
+// RegistrationCredential is what the sign-up form asks a new account to prove
+// with, and it is this application's decision.
+//
+// One value decides both what the form draws and what this handler validates,
+// which is what keeps the two from drifting apart. A box the screen does not
+// draw is not a box this handler requires, and the reverse -- a rule applied to
+// an input nobody can see -- rejects every submission while pointing at a field
+// that is not on the page.
+type RegistrationCredential int
+
+const (
+	// PasswordTwice asks for a password and a confirmation, and rejects a pair
+	// that differs. It is the zero value, so it is what an unset field means.
+	PasswordTwice RegistrationCredential = iota
+
+	// PasswordOnce asks for a password in a single box. The strength rule is
+	// unchanged: what goes is the second box, not the requirement.
+	PasswordOnce
+
+	// NoPassword asks for no password at all, for an application where an
+	// address or a telephone number is the identity and a single-use code is
+	// the proof. Nothing is validated here, and Users.Register is left to
+	// decide what a new account has to carry.
+	NoPassword
+)
+
+// asksForPassword reports whether the form draws a password box.
+func (c RegistrationCredential) asksForPassword() bool { return c != NoPassword }
+
+// asksForConfirmation reports whether the form draws a second one.
+func (c RegistrationCredential) asksForConfirmation() bool { return c == PasswordTwice }
+
+// registrationAsks is what this application's sign-up form asks for.
+//
+// This line is the whole of the setting: change it and both the form and the
+// validation move together, because both read this value.
+//
+// NoPassword hands the question to Users.Register, and there is one thing that
+// implementation must not do with the empty password it is then given: hash it.
+// A stored hash of the empty string is a credential anybody can offer. An
+// account with no password is one whose password column is EMPTY, which the
+// native provider refuses to authenticate whatever is offered against it, and
+// the sign-in screen below refuses an empty password before it compares
+// anything -- so neither side of that comparison is ever empty. The column is
+// this application's to write, and what this setting asks for is a credential
+// that is absent rather than one that is the hash of nothing.
+const registrationAsks = PasswordTwice
+
 type registrationInput struct {
 	Name                 string
 	Email                string
@@ -40,7 +88,11 @@ func (in registrationInput) LogValue() slog.Value {
 }
 
 func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
-	m.screen(w, r, "auth.register", AuthPage{Page: m.page(r, "Create an account")})
+	m.screen(w, r, "auth.register", AuthPage{
+		Page:                   m.page(r, "Create an account"),
+		WithoutPasswordBox:     !registrationAsks.asksForPassword(),
+		WithoutConfirmationBox: !registrationAsks.asksForConfirmation(),
+	})
 }
 
 func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +102,15 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 		Password:             r.PostFormValue("password"),
 		PasswordConfirmation: r.PostFormValue("password_confirmation"),
 	}
+	// A form that drew no password box did not collect one, so a password in
+	// the body arrived from somewhere else. Dropped rather than passed on:
+	// what reaches Users.Register is only ever what this form asked for, and a
+	// credential cannot be set on a new account through a field this
+	// application does not show.
+	if !registrationAsks.asksForPassword() {
+		in.Password, in.PasswordConfirmation = "", ""
+	}
+
 	errs := validation.Errors{}
 	if in.Name == "" {
 		errs["name"] = []string{"type your name"}
@@ -57,10 +118,10 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 	if in.Email == "" {
 		errs["email"] = []string{"type your email address"}
 	}
-	if len([]rune(in.Password)) < security.MinPasswordLen {
+	if registrationAsks.asksForPassword() && len([]rune(in.Password)) < security.MinPasswordLen {
 		errs["password"] = []string{"the password is too short"}
 	}
-	if in.Password != in.PasswordConfirmation {
+	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
 		errs["password_confirmation"] = []string{"the two passwords do not match"}
 	}
 	if len(errs) != 0 {
@@ -165,7 +226,9 @@ func (m *Module) rejectedVerification(w http.ResponseWriter, r *http.Request, em
 func (m *Module) rejectedRegistration(w http.ResponseWriter, r *http.Request, in registrationInput, errs validation.Errors) {
 	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.register", AuthPage{
 		Page: m.page(r, "Create an account"), Name: in.Name, Email: in.Email,
-		NameError: first(errs["name"]), EmailError: first(errs["email"]),
+		WithoutPasswordBox:     !registrationAsks.asksForPassword(),
+		WithoutConfirmationBox: !registrationAsks.asksForConfirmation(),
+		NameError:              first(errs["name"]), EmailError: first(errs["email"]),
 		PasswordError:             first(errs["password"]),
 		PasswordConfirmationError: first(errs["password_confirmation"]),
 	})

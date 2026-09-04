@@ -234,6 +234,26 @@ type AuthPage struct {
 	// rather than linking to a 404.
 	HasPasswordReset bool
 
+	// WithoutPasswordBox and WithoutConfirmationBox switch the sign-up form's
+	// two password inputs off. They come from the registration handler's own
+	// setting and from nothing a request carries.
+	//
+	// They are here rather than in the view because the handler validates
+	// against the same value: a box the screen does not draw is not one the
+	// handler requires. Read the other way round, a rule applied to an input
+	// nobody can see rejects every submission and points at a field that is not
+	// on the page.
+	//
+	// Stored as the negative, and that is the part worth keeping. This file is
+	// replaced on every publish and the registration handler is not, so a
+	// publish of the screens alone writes a new sign-up form beside a handler
+	// that predates the setting and fills neither field. What that project has
+	// to get is the form it had -- and false means the box is drawn, so it
+	// does. The positive spelling would have made the same republish quietly
+	// stop asking for a password.
+	WithoutPasswordBox     bool
+	WithoutConfirmationBox bool
+
 	// The addresses these screens post to and link to, beyond the navigation
 	// view.Page already carries. They come from the router, through the handler.
 	DashboardURL          string
@@ -320,6 +340,15 @@ func (p AuthPage) FieldError(name string) string {
 	}
 	return p.Page.First(name)
 }
+
+// AsksForPassword reports whether the sign-up form draws a password box.
+//
+// The screen asks this rather than reading the field, so that the field can be
+// the negative and the zero value of this struct can be the form that asks.
+func (p AuthPage) AsksForPassword() bool { return !p.WithoutPasswordBox }
+
+// AsksForPasswordConfirmation reports whether it draws a second one.
+func (p AuthPage) AsksForPasswordConfirmation() bool { return !p.WithoutConfirmationBox }
 
 // TrustedQRCode marks the SVG produced by hesape/qr as trusted markup. The
 // two-factor handler reaches this boundary only after qr.Encode and Code.SVG
@@ -1025,18 +1054,27 @@ type RegisterData = authui.AuthPage
 					Autocomplete: "email", Required: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "Password", Type: "password",
-					Page: .,
-					Hint: "At least twelve characters.",
-					Autocomplete: "new-password", Required: true,
-				}) !!}
+				{{-- Both boxes are drawn only when the handler asks for them, and
+				     the same value decides both sides. An application whose
+				     identity is proved some other way draws neither, and one
+				     that decided a confirmation box is not worth the second
+				     typing draws only the first. --}}
+				@if(.AsksForPassword())
+					{!! components.Field(components.FieldProps{
+						Name: "password", Label: "Password", Type: "password",
+						Page: .,
+						Hint: "At least twelve characters.",
+						Autocomplete: "new-password", Required: true,
+					}) !!}
+				@endif
 
-				{!! components.Field(components.FieldProps{
-					Name: "password_confirmation", Label: "Confirm password", Type: "password",
-					Page: .,
-					Autocomplete: "new-password", Required: true,
-				}) !!}
+				@if(.AsksForPasswordConfirmation())
+					{!! components.Field(components.FieldProps{
+						Name: "password_confirmation", Label: "Confirm password", Type: "password",
+						Page: .,
+						Autocomplete: "new-password", Required: true,
+					}) !!}
+				@endif
 
 				<div class="flex items-center justify-between gap-3">
 					<button type="submit" class="btn">Register</button>
