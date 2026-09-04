@@ -1483,10 +1483,10 @@ func headElements(layout string) []string {
 	return out
 }
 
-// assetName is the name a tag asks view.URL for, and false for a tag that names
+// assetName is the name a tag asks view.AssetURL for, and false for a tag that names
 // an address of its own instead.
 func assetName(element string) (string, bool) {
-	const call = `view.URL("`
+	const call = `view.AssetURL("`
 	at := strings.Index(element, call)
 	if at < 0 {
 		return "", false
@@ -1561,14 +1561,14 @@ func TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters(t *testing.T) {
 		if !strings.HasSuffix(path, ".kyse.go") {
 			continue
 		}
-		for _, name := range callNames(string(f.Content), "view.URL") {
+		for _, name := range callNames(string(f.Content), "view.AssetURL") {
 			asked++
 			if embedded[name] || delivered[name] {
 				continue
 			}
-			t.Errorf("%s asks view.URL for %q, and nothing registers that name.\n"+
+			t.Errorf("%s asks view.AssetURL for %q, and nothing registers that name.\n"+
 				"The runtime embeds: %s.\nThis kit publishes a registration for: %s.\n"+
-				"view.URL refuses a name nothing registered, so this is not a missing file -- it is every "+
+				"view.AssetURL refuses a name nothing registered, so this is not a missing file -- it is every "+
 				"request of every project that receives this view, answered with a panic, and the layout is "+
 				"replaced with no flag so nobody chose it.\n"+
 				"Publish the package that registers it, or drop the tag.",
@@ -1576,7 +1576,7 @@ func TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters(t *testing.T) {
 		}
 	}
 	if asked == 0 {
-		t.Fatal("no published view asks view.URL for anything, so this gate read nothing: either the layout " +
+		t.Fatal("no published view asks view.AssetURL for anything, so this gate read nothing: either the layout " +
 			"stopped loading its assets, or the scan is looking in the wrong place")
 	}
 }
@@ -1709,7 +1709,7 @@ func TestTheStateScannersFindTheShapesTheyGuardAgainst(t *testing.T) {
 		}{
 			{"an interpolated method is the page", "<title>{{ .PageTitle() }}</title>", []string{"PageTitle"}},
 			{"so is a field in a directive", "@if(!.SignedIn())", []string{"SignedIn"}},
-			{"a selector on a package is not", `<link href="{{ view.URL("htmx.min.js") }}">`, nil},
+			{"a selector on a package is not", `<link href="{{ view.AssetURL("htmx.min.js") }}">`, nil},
 			{"and neither is the page handed on as a whole", "{!! components.Field(components.FieldProps{Page: .}) !!}", nil},
 			{"a longer name does not hide inside a shorter one", "{{ .EmailError }}", []string{"EmailError"}},
 			{"nor a shorter one inside a longer", "{{ .Email }}{{ .EmailError }}", []string{"Email", "EmailError"}},

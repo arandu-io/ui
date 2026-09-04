@@ -560,8 +560,8 @@ import "github.com/arandu-io/kyse/components"
 	<meta property="og:type" content="website">
 	<meta name="twitter:card" content="summary_large_image">
 
-	<link rel="stylesheet" href="{{ view.URL("app.css") }}">
-	<script src="{{ view.URL("htmx.min.js") }}" defer></script>
+	<link rel="stylesheet" href="{{ view.AssetURL("app.css") }}">
+	<script src="{{ view.AssetURL("htmx.min.js") }}" defer></script>
 	{{-- These four, and no client framework beside them. State on this stack
 	     lives on the server: a handler decides and answers markup that is already
 	     correct, so there is no second copy of it here to keep in step. The hx-
@@ -582,8 +582,8 @@ import "github.com/arandu-io/kyse/components"
 	     that are, so a tag for an asset that does not exist takes the request
 	     down rather than 404ing quietly on every page. Register it with
 	     view.RegisterAsset before writing the tag. --}}
-	<script src="{{ view.URL("ui.js") }}" defer></script>
-	<script src="{{ view.URL("basecoat.bundle.js") }}" defer></script>
+	<script src="{{ view.AssetURL("ui.js") }}" defer></script>
+	<script src="{{ view.AssetURL("basecoat.bundle.js") }}" defer></script>
 	{{-- This project's own behaviours, carried over because publishing replaces
 	     this layout rather than adding to it: a page that lost the tag would
 	     leave every behaviour the project registers silently unreachable, and
@@ -592,8 +592,8 @@ import "github.com/arandu-io/kyse/components"
 
 	     After ui.js, because it registers into the registry ui.js creates:
 	     deferred scripts run in document order. --}}
-	<script src="{{ view.URL("custom.js") }}" defer></script>
-	<script src="{{ view.URL("theme.js") }}"></script>
+	<script src="{{ view.AssetURL("custom.js") }}" defer></script>
+	<script src="{{ view.AssetURL("theme.js") }}"></script>
 </head>
 <body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}' class="bg-background text-foreground min-h-full antialiased">
 	<div class="flex min-h-full flex-col">
