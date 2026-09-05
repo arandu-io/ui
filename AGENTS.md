@@ -151,7 +151,7 @@ through, so these read the published bytes instead:
 | `TestNothingTheLayoutDrawsIsRedrawnInsideASwap` | a value drawn by the layout and inside a swap target as well, without `hx-swap-oob` — two copies, and only the inner one refreshed |
 | `TestNoPublishedViewKeepsStateInTheBrowser` | `x-data` and its relatives in any published view: nothing the layout loads reads one, and `script-src 'self'` has no `unsafe-eval` |
 | `TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries` | a head element the skeleton's layout has and this one does not — publishing replaces that file with no flag, so a project loses it silently |
-| `TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters` | a `view.AssetURL("…")` in a published view naming an asset neither the runtime embeds nor this kit delivers — `view.AssetURL` panics on an unregistered name, so that is every request of every project answered with a panic |
+| `TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters` | a `view.Asset("…")` in a published view naming an asset neither the runtime embeds nor this kit delivers — `view.Asset` panics on an unregistered name, so that is every request of every project answered with a panic |
 | `TestEveryFileTheKitEmbedsIsOnePublishedBesideItAndNotEmpty` | a `//go:embed` naming a file the kit does not publish, or publishes empty — the first does not build and the second panics at start-up, because `RegisterAsset` refuses a zero-byte body |
 
 The two asset gates are the ones the layout earned. It gained a `<script>` for
