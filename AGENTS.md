@@ -97,7 +97,7 @@ written and answers that, which is why the counts below still measure against
 | 30 files published by `auth` — 18 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 23 of those refreshed by `auth --views` — 18 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 30 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 84 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 88 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
