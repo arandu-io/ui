@@ -7,10 +7,11 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/arandu-io/hesape/publish"
 )
 
 // File is one file to write, at a path relative to the project root.
@@ -293,89 +294,6 @@ var replaced = map[string]bool{
 	filepath.Join("app", "Http", "Controllers", "Auth", "page.go"):   true,
 }
 
-// customBlock matches the region a republish must carry forward.
-//
-// It is the escape hatch: what does not fit the standard shape is written in
-// Go, inside these markers, and survives being regenerated. Without it the
-// publisher is a one-time tool, because nobody runs a command twice after it
-// has eaten their work once.
-//
-// The marker is written in the syntax of whatever the file is, because a
-// comment is not portable between the two: `//` below the package clause of a
-// .kyse.go is markup, and would be printed to the reader of an e-mail.
-//
-// Two expressions, chosen by the file, and never both against one file. A single
-// alternation would happily pair a Go begin with a kyse end -- RE2 has no
-// backreference to stop it -- and the region between them is whatever happened
-// to be in the middle.
-//
-// The CLI's generator needs only the Go form: the views it generates put their
-// block inside @go ... @endgo, which is Go.
-var (
-	customBlock     = regexp.MustCompile(`(?s)// arandu:begin custom\n(.*?)// arandu:end custom`)
-	customBlockView = regexp.MustCompile(`(?s)\{\{-- arandu:begin custom --\}\}\n(.*?)\{\{-- arandu:end custom --\}\}`)
-)
-
-// markerFor picks the expression that matches the markers this file carries.
-//
-// The four mail views were the reason this exists: they carry their block in
-// kyse comments, the merge only knew the Go form, and their blocks were the ones
-// most likely to be edited -- the wording of the message a project sends.
-func markerFor(path string) *regexp.Regexp {
-	if strings.HasSuffix(path, ".kyse.go") {
-		return customBlockView
-	}
-	return customBlock
-}
-
-// merge carries the custom blocks of the file on disk into the one about to
-// replace it, in order.
-//
-// Blocks are matched by position and not by name, which is the honest
-// limitation: reordering the generated file would shuffle them. The templates
-// put one block per file, so the ordering has nothing to get wrong.
-func merge(path string, existing, generated []byte) []byte {
-	marker := markerFor(path)
-	old := marker.FindAllSubmatch(existing, -1)
-	if len(old) == 0 {
-		return generated
-	}
-
-	i := 0
-	return marker.ReplaceAllFunc(generated, func(match []byte) []byte {
-		if i >= len(old) {
-			return match
-		}
-		// The markers are reused verbatim out of the match rather than written
-		// again here, so neither syntax needs a second literal in this file to
-		// drift from the expressions above.
-		body := old[i][1]
-		i++
-		return concat(head(match), body, tail(match))
-	})
-}
-
-// head is the opening marker line of a match, newline included.
-func head(match []byte) []byte { return match[:bytes.IndexByte(match, '\n')+1] }
-
-// tail is the closing marker, whichever syntax it is written in: the last line
-// of the match, from the start of the line the words sit on.
-func tail(match []byte) []byte {
-	at := bytes.LastIndex(match, []byte("arandu:end custom"))
-	for at > 0 && match[at-1] != '\n' {
-		at--
-	}
-	return match[at:]
-}
-
-func concat(parts ...[]byte) []byte {
-	var out []byte
-	for _, p := range parts {
-		out = append(out, p...)
-	}
-	return out
-}
-
 func write(root string, files []File, force bool, out *os.File) error {
 	var written, kept, merged []string
 	for _, f := range files {
@@ -395,7 +313,7 @@ func write(root string, files []File, force bool, out *os.File) error {
 				kept = append(kept, f.Path)
 				continue
 			}
-			if carried := merge(f.Path, existing, content); !bytes.Equal(carried, content) {
+			if carried := publish.Merge(f.Path, existing, content); !bytes.Equal(carried, content) {
 				content = carried
 				merged = append(merged, f.Path)
 			}

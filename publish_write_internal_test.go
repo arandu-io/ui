@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/arandu-io/hesape/publish"
 )
 
 // The half of this program that touches the file system had no test at all.
@@ -181,14 +183,23 @@ func TestARepublishTakesTheKitsFixesOutsideTheBlock(t *testing.T) {
 	}
 }
 
-// Every template that emits markers has to emit them in the shape merge() reads.
-// A marker written with different spacing is a marker that silently stops
-// working, and the failure is invisible until somebody loses an afternoon.
+// Every template that emits markers has to emit them in the shape the merge
+// reads. A marker written with different spacing is a marker that silently
+// stops working, and the failure is invisible until somebody loses an
+// afternoon.
+//
+// The question is asked of the merge itself and not of the expression behind
+// it: an edit is put inside each published block and the file is republished
+// over it, so what passes is a block that survives rather than a pattern that
+// matched. A view carries its markers in view comments and Go carries them in
+// Go comments, and reading them through the merge is what covers both.
 func TestEveryPublishedMarkerIsOneMergeCanRead(t *testing.T) {
 	files, err := GenerateAuth(Module{ModulePath: "example.test/shop"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	const mine = "what the project wrote inside the markers"
 
 	found := 0
 	for _, f := range files {
@@ -196,13 +207,41 @@ func TestEveryPublishedMarkerIsOneMergeCanRead(t *testing.T) {
 			continue
 		}
 		found++
-		if len(markerFor(f.Path).FindAllSubmatch(f.Content, -1)) == 0 {
-			t.Errorf("%s carries a marker merge() cannot match, so its block would be lost on a republish", f.Path)
+		edited := editCustomBlock(t, f.Content, mine)
+		carried := publish.Merge(f.Path, edited, f.Content)
+		if !strings.Contains(string(carried), mine) {
+			t.Errorf("%s carries a marker the merge cannot read, so its block would be lost on a republish", f.Path)
 		}
 	}
 	if found == 0 {
 		t.Fatal("no published file carries a custom block; either the templates changed or this test is looking in the wrong place")
 	}
+}
+
+// editCustomBlock writes a line into the first custom block of a published
+// file, the way somebody who received it would.
+//
+// It looks for the words and not for either marker syntax, so the file decides
+// which one it is written in and this helper stays out of the question the test
+// is asking.
+func editCustomBlock(t *testing.T, content []byte, line string) []byte {
+	t.Helper()
+
+	at := strings.Index(string(content), "arandu:begin custom")
+	if at < 0 {
+		t.Fatalf("no custom block to edit:\n%s", content)
+	}
+	end := strings.IndexByte(string(content[at:]), '\n')
+	if end < 0 {
+		t.Fatalf("the opening marker is not on a line of its own:\n%s", content)
+	}
+	at += end + 1
+
+	edited := make([]byte, 0, len(content)+len(line)+1)
+	edited = append(edited, content[:at]...)
+	edited = append(edited, line...)
+	edited = append(edited, '\n')
+	return append(edited, content[at:]...)
 }
 
 // The line the command prints must be true. It printed the opposite for the
