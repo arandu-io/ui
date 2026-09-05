@@ -739,14 +739,14 @@ func authFile(t *testing.T, name string) string {
 // compiles the working tree, and the working tree is the one framework nobody
 // receives.
 //
-// These two are what the skeleton pins, so they are what a project starts life
+// These three are what the skeleton pins, so they are what a project starts life
 // with. Bump them together with arandu/go.mod --
 // TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets says so when
 // they drift apart.
 const (
-	publishedFramework = "v0.45.0"
-	publishedKyse      = "v0.16.0"
-	publishedHesape    = "v0.24.0"
+	publishedFramework = "v0.46.0"
+	publishedKyse      = "v0.18.0"
+	publishedHesape    = "v0.25.0"
 )
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate

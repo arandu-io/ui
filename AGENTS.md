@@ -97,9 +97,9 @@ written and answers that, which is why the counts below still measure against
 | 30 files published by `auth` — 18 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 23 of those refreshed by `auth --views` — 18 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 30 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 84 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 88 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
-| 0 dependencies, and that is a CI step | `grep -E '^[[:space:]]*require' go.mod \| wc -l` |
+| 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
 
 Of the 18 views, 13 are screens — the layout, home, welcome, six base auth
@@ -176,11 +176,12 @@ them is missing by accident; each was considered and refused.
 | A model reaches for | What is here instead |
 | --- | --- |
 | a `resources/views/` directory to edit | a Go string constant. `authLoginViewTemplate` in `views.go` **is** `resources/views/auth/login.kyse.go` |
-| a dependency — a template library, a CLI framework, a diff library | nothing. `go.mod` has no `require` block, a CI step fails if one appears, and every require here is a download for everyone who runs the command |
+| a second dependency — a template library, a CLI framework, a diff library | nothing. The one require is `github.com/arandu-io/hesape`, for `publish.Merge`; a CI step fails on any other, and every require here is a download for everyone who runs the command |
 | importing the CLI's renderer | a 40-line copy in `publish.go`. Importing it would make this module depend on the CLI, and the point of publishing from here is that the CLI is not in the way |
+| writing a merge that keeps custom blocks | `publish.Merge` from `hesape/publish`. There were two implementations of that algorithm and they answered the same question, so there is one |
 | a preset argument — `auth bootstrap`, `auth tailwind` | one set of screens. `auth` with an extra word is refused rather than ignored, because a flag typed after an ignored word is switched off silently |
 | a generator that edits `bootstrap/app.go` | text printed to the terminal for a person to paste. One line somebody reads beats a file edited behind their back |
-| `os.WriteFile` over an existing file | `write` in `publish.go`, which reads the file first and carries the custom blocks over. It used to stat and overwrite, and it ate people's work |
+| `os.WriteFile` over an existing file | `write` in `publish.go`, which reads the file first and hands it to `publish.Merge` to carry the custom blocks over. It used to stat and overwrite, and it ate people's work |
 | a `_test.go` beside the code with no `_internal` suffix | `tests/test-layout-guard.sh`, which fails the build. This is a `package main`, so its tests are internal and the suffix says so |
 
 ## The two rules everything else follows from

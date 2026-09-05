@@ -28,9 +28,11 @@ go test -race ./...
 CI runs these, and a handful of checks besides that are cheaper there than on
 your machine; `.github/workflows/ci.yml` is the list, and it is the one that
 decides. One of them is worth knowing before you write the change: this module
-takes no dependencies at all. It is run as `go run github.com/arandu-io/ui@latest
-auth` from inside somebody's project, so every require here is something a user
-downloads. A pull request that adds one needs to argue for it first, in an issue.
+takes one dependency, `github.com/arandu-io/hesape`, and it is there for the merge
+that carries a custom block through a republish. It is run as `go run
+github.com/arandu-io/ui@latest auth` from inside somebody's project, so every
+require here is something a user downloads. A pull request that adds a second one
+needs to argue for it first, in an issue.
 
 ## Where a test goes
 

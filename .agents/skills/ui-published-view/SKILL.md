@@ -104,7 +104,7 @@ every one and fails if the tree moves.
 
 **4. See it render, if the change is more than wording.** Nothing in this
 repository compiles kyse — the compiler is internal to the CLI, and this module
-takes no dependencies. `plans/prova-ponta-a-ponta.sh` in the working tree
+does not depend on the CLI. `plans/prova-ponta-a-ponta.sh` in the working tree
 publishes the kit into a generated project, runs the real `aru view:build`, the
 real `go build`, and renders every page over HTTP. That is the only place a
 markup error surfaces before somebody else's build.
