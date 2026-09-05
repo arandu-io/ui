@@ -46,7 +46,7 @@ under `testdata/auth/`.
 
 ## The three states a file can be in
 
-`write` in `publish.go:379` reads the file on disk — it does not stat it — and
+`write` in `publish.go:297` reads the file on disk — it does not stat it — and
 that read is what decides:
 
 | state | when | reported as |
@@ -109,24 +109,31 @@ one — 5 in Go comment syntax, 4 in kyse comment syntax:
 
 The syntax is the file's own, because a comment is not portable between the
 two: `//` below the package clause of a `.kyse.go` is markup, and would be
-printed to the reader of an e-mail. `markerFor` at `publish.go:324` picks by
+printed to the reader of an e-mail. The engine picks the expression by
 extension, and the two regular expressions are never both run against one file —
 a single alternation would happily pair a Go begin with a kyse end, because RE2
 has no backreference to stop it, and the region between them is whatever
 happened to be in the middle.
 
-`merge` at `publish.go:337` matches blocks **by position, not by name**. That is
-the honest limitation: reordering a generated file would shuffle them. Each
-template puts one block per file, so the ordering has nothing to get wrong —
-keep it that way.
+The merge is `publish.Merge`, from `hesape/publish`, and it is not implemented
+here. It was, twice — once here and once inside the CLI's generator — and two
+implementations answering "was the file I edited overwritten?" is the shape of
+the answer being different depending on which command you ran. Do not write a
+third: a change to the algorithm belongs in `hesape/publish`.
+
+It matches blocks **by position, not by name**. That is the honest limitation:
+reordering a generated file would shuffle them. Each template puts one block per
+file, so the ordering has nothing to get wrong — keep it that way.
 
 **Adding a block to a template changes the contract of that file.** Before you
-do, read `TestEveryPublishedMarkerIsOneMergeCanRead` at
-`publish_write_internal_test.go:187`, and check that the block is where somebody
-would actually edit. The four mail bodies were the reason `markerFor` exists:
-they carry their block in kyse comments, the merge knew only the Go form, and
-theirs were the blocks most likely to be edited — the wording of the message a
-project sends.
+do, read `TestEveryPublishedMarkerIsOneMergeCanRead` in
+`publish_write_internal_test.go`, and check that the block is where somebody
+would actually edit. That test republishes over an edited copy of every file
+that carries a block, so a marker written with different spacing fails it rather
+than failing somebody's afternoon. The four mail bodies were the reason the
+engine picks by extension at all: they carry their block in kyse comments, a
+merge that knew only the Go form dropped them, and theirs are the blocks most
+likely to be edited — the wording of the message a project sends.
 
 ## What it prints, and why it prints rather than writes
 
@@ -187,11 +194,17 @@ module, a program, or a directory somebody copied a config into. Run from a
 subdirectory it still writes into the project root, not the current directory.
 Run outside a project it exits 1 with *this is not an Arandu project*.
 
-## This module takes no dependencies
+## This module takes one dependency
 
 Not a style preference: it is run from inside somebody's project, so every
-`require` here is something they download to publish 30 files. A CI step fails
-on one. That is why `render` in `publish.go:44` is a copy of the CLI's renderer
-rather than an import — importing it would put the CLI back in the way — and why
-the golden files exist, comparing the published output byte for byte so that
-what drifts is caught where it matters.
+`require` here is something they download to publish 30 files. A CI step reads
+the require directives and fails on anything but `github.com/arandu-io/hesape`,
+which is there for `publish.Merge` and nothing else.
+
+That one is the exception that proves where the line is. `render` in
+`publish.go:44` is still a copy of the CLI's renderer rather than an import —
+importing that would put the CLI back in the way — and the golden files still
+compare the published output byte for byte, so what drifts in the copy is caught
+where it matters. The merge is different: a copy of it does not drift into a
+formatting difference, it drifts into two answers to whether somebody's edit
+survived.

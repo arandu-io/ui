@@ -88,17 +88,30 @@ jobs:
             exit 1
           fi
 
-      # This module has to stay dependency-free.
+      # This module takes one dependency, and the list is closed.
       #
       # It is run as `go run github.com/arandu-io/ui@latest auth`, from inside
-      # somebody's project, and every require here is something they download to
-      # publish twenty-eight files. The renderer is a copy of the CLI's for
-      # exactly this reason (see publish.go).
-      - name: no dependencies
+      # somebody's project, so every require here is something they download in
+      # order to publish. One earns its place: the merge that carries a custom
+      # block through a republish answers "was the file I edited overwritten?",
+      # and a second copy of that algorithm here would answer it differently the
+      # first time either side changed. The renderer is still a copy of the
+      # CLI's, for the reason written above it in publish.go.
+      #
+      # The check reads the require directives rather than counting them, so a
+      # second dependency fails the build and the one that is allowed does not.
+      - name: one dependency, and it is the publishing engine
         run: |
-          if grep -qE '^\s*require' go.mod; then
-            echo "this module took a dependency:"
-            grep -A20 require go.mod
+          set -euo pipefail
+          unexpected=$(awk '
+            /^require \(/                       { block = 1; next }
+            block && /^\)/                      { block = 0; next }
+            block && $1 != "" && $1 !~ /^\/\// { print $1; next }
+            /^require [^(]/                     { print $2 }
+          ' go.mod | grep -vx 'github.com/arandu-io/hesape' || true)
+          if [ -n "$unexpected" ]; then
+            echo "this module took a dependency beyond the publishing engine:"
+            echo "$unexpected"
             exit 1
           fi
 
