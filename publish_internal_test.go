@@ -745,8 +745,8 @@ func authFile(t *testing.T, name string) string {
 // they drift apart.
 const (
 	publishedFramework = "v0.46.0"
-	publishedKyse      = "v0.25.0"
-	publishedHesape    = "v0.33.0"
+	publishedKyse      = "v0.26.0"
+	publishedHesape    = "v0.34.0"
 )
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
