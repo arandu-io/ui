@@ -43,18 +43,21 @@ type RegisterData = authui.AuthPage
 				     that decided a confirmation box is not worth the second
 				     typing draws only the first. --}}
 				@if(.AsksForPassword())
-					{!! components.Field(components.FieldProps{
-						Name: "password", Label: "Password", Type: "password",
+					{{-- The hint is gone because the panel says the same thing and
+					     says all of it: the checklist is drawn from the policy the
+					     server rejects with, so it cannot fall out of step with a
+					     sentence somebody typed here. --}}
+					{!! components.Password(components.PasswordProps{
+						Name: "password", Label: "Password",
 						Page: .,
-						Hint: "At least twelve characters.",
 						Autocomplete: "new-password", Required: true,
 					}) !!}
 				@endif
 
 				@if(.AsksForPasswordConfirmation())
-					{!! components.Field(components.FieldProps{
-						Name: "password_confirmation", Label: "Confirm password", Type: "password",
-						Page: .,
+					{!! components.Password(components.PasswordProps{
+						Name: "password_confirmation", Label: "Confirm password",
+						Page: ., Confirming: true,
 						Autocomplete: "new-password", Required: true,
 					}) !!}
 				@endif

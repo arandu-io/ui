@@ -73,9 +73,14 @@ type LoginFormData = authui.AuthPage
 		Autocomplete: "username", Required: true, Autofocus: true,
 	}) !!}
 
-	{!! components.Field(components.FieldProps{
-		Name: "password", Label: "Password", Type: "password",
-		Page: .,
+	{{-- Confirming, because this box is where a password is typed and not
+	     where one is chosen: the policy panel here would grade an existing
+	     password against the rule for new ones. What stays is the eye, which
+	     is the control a sign-in needs most -- a sign-in that failed is
+	     usually a sign-in that was mistyped. --}}
+	{!! components.Password(components.PasswordProps{
+		Name: "password", Label: "Password",
+		Page: ., Confirming: true,
 		Autocomplete: "current-password", Required: true,
 	}) !!}
 
