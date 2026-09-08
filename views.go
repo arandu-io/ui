@@ -1007,9 +1007,14 @@ type LoginFormData = authui.AuthPage
 		Autocomplete: "username", Required: true, Autofocus: true,
 	}) !!}
 
-	{!! components.Field(components.FieldProps{
-		Name: "password", Label: "Password", Type: "password",
-		Page: .,
+	{{-- Confirming, because this box is where a password is typed and not
+	     where one is chosen: the policy panel here would grade an existing
+	     password against the rule for new ones. What stays is the eye, which
+	     is the control a sign-in needs most -- a sign-in that failed is
+	     usually a sign-in that was mistyped. --}}
+	{!! components.Password(components.PasswordProps{
+		Name: "password", Label: "Password",
+		Page: ., Confirming: true,
 		Autocomplete: "current-password", Required: true,
 	}) !!}
 
@@ -1086,18 +1091,21 @@ type RegisterData = authui.AuthPage
 				     that decided a confirmation box is not worth the second
 				     typing draws only the first. --}}
 				@if(.AsksForPassword())
-					{!! components.Field(components.FieldProps{
-						Name: "password", Label: "Password", Type: "password",
+					{{-- The hint is gone because the panel says the same thing and
+					     says all of it: the checklist is drawn from the policy the
+					     server rejects with, so it cannot fall out of step with a
+					     sentence somebody typed here. --}}
+					{!! components.Password(components.PasswordProps{
+						Name: "password", Label: "Password",
 						Page: .,
-						Hint: "At least twelve characters.",
 						Autocomplete: "new-password", Required: true,
 					}) !!}
 				@endif
 
 				@if(.AsksForPasswordConfirmation())
-					{!! components.Field(components.FieldProps{
-						Name: "password_confirmation", Label: "Confirm password", Type: "password",
-						Page: .,
+					{!! components.Password(components.PasswordProps{
+						Name: "password_confirmation", Label: "Confirm password",
+						Page: ., Confirming: true,
 						Autocomplete: "new-password", Required: true,
 					}) !!}
 				@endif
@@ -1278,16 +1286,15 @@ type ResetData = authui.AuthPage
 					Page: ., Autofocus: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "New password", Type: "password",
+				{!! components.Password(components.PasswordProps{
+					Name: "password", Label: "New password",
 					Page: .,
-					Hint: "At least twelve characters.",
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
-					Name: "password_confirmation", Label: "Confirm the new password", Type: "password",
-					Page: .,
+				{!! components.Password(components.PasswordProps{
+					Name: "password_confirmation", Label: "Confirm the new password",
+					Page: ., Confirming: true,
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 
@@ -1494,9 +1501,9 @@ type ConfirmData = authui.AuthPage
 
 				<p class="text-muted-foreground text-sm">This is a protected area. Confirm your password before going on.</p>
 
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "Password", Type: "password",
-					Page: .,
+				{!! components.Password(components.PasswordProps{
+					Name: "password", Label: "Password",
+					Page: ., Confirming: true,
 					Autocomplete: "current-password", Required: true, Autofocus: true,
 				}) !!}
 

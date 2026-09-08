@@ -745,7 +745,7 @@ func authFile(t *testing.T, name string) string {
 // they drift apart.
 const (
 	publishedFramework = "v0.46.0"
-	publishedKyse      = "v0.22.0"
+	publishedKyse      = "v0.23.0"
 	publishedHesape    = "v0.32.0"
 )
 

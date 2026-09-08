@@ -42,16 +42,15 @@ type ResetData = authui.AuthPage
 					Page: ., Autofocus: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "New password", Type: "password",
+				{!! components.Password(components.PasswordProps{
+					Name: "password", Label: "New password",
 					Page: .,
-					Hint: "At least twelve characters.",
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
-					Name: "password_confirmation", Label: "Confirm the new password", Type: "password",
-					Page: .,
+				{!! components.Password(components.PasswordProps{
+					Name: "password_confirmation", Label: "Confirm the new password",
+					Page: ., Confirming: true,
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 

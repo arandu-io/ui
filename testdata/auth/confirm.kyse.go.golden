@@ -27,9 +27,9 @@ type ConfirmData = authui.AuthPage
 
 				<p class="text-muted-foreground text-sm">This is a protected area. Confirm your password before going on.</p>
 
-				{!! components.Field(components.FieldProps{
-					Name: "password", Label: "Password", Type: "password",
-					Page: .,
+				{!! components.Password(components.PasswordProps{
+					Name: "password", Label: "Password",
+					Page: ., Confirming: true,
 					Autocomplete: "current-password", Required: true, Autofocus: true,
 				}) !!}
 
