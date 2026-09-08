@@ -30,8 +30,11 @@ type VerifyData = authui.AuthPage
 					}) !!}
 				@endif
 
-				@if(.Status != "")
+				@if(.Status != "" && !.StatusAsToast)
 					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
+				@if(.Status != "" && .StatusAsToast)
+					{!! components.Toast(components.ToastProps{Title: .Status}) !!}
 				@endif
 
 				<p class="text-muted-foreground">Type the single-use code sent to your email address.</p>
@@ -42,9 +45,10 @@ type VerifyData = authui.AuthPage
 						Name: "email", Label: "Email", Type: "email",
 						Value: .Email, Page: ., Autocomplete: "email", Required: true,
 					}) !!}
-					{!! components.Field(components.FieldProps{
+					{!! components.Label(components.LabelProps{For: "email_code", Text: "Email code", Required: true}) !!}
+					{!! components.OneTimeCode(components.OneTimeCodeProps{
 						Name: "email_code", Label: "Email code",
-						Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+						Page: ., Autofocus: true,
 					}) !!}
 					<div class="flex items-center gap-3">
 						<button type="submit" class="btn">Confirm address</button>

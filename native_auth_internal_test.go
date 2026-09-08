@@ -105,8 +105,26 @@ func TestNativeCodeInputsHaveExactAutocompleteContracts(t *testing.T) {
 	}
 	for _, check := range checks {
 		source := authFile(t, check.file)
-		if !strings.Contains(source, `Name: "`+check.name+`"`) ||
-			!strings.Contains(source, `Autocomplete: "`+check.autocomplete+`"`) {
+		if !strings.Contains(source, `Name: "`+check.name+`"`) {
+			t.Errorf("%s does not publish the field %s", check.file, check.name)
+			continue
+		}
+		// A one-time code is drawn by OneTimeCode, which writes the
+		// autocomplete hint itself -- on the first square alone, because a
+		// browser filling every square with the whole code is what happens when
+		// they all ask. So the contract is that the component is used, and the
+		// hint is the component's to place.
+		//
+		// Anything else states its hint here, and a recovery code states "off":
+		// it is written down on paper and is not what a browser has stored.
+		if check.autocomplete == "one-time-code" {
+			if !strings.Contains(source, `components.OneTimeCode(components.OneTimeCodeProps{`) {
+				t.Errorf("%s draws %s with something other than OneTimeCode, so the code is one text box",
+					check.file, check.name)
+			}
+			continue
+		}
+		if !strings.Contains(source, `Autocomplete: "`+check.autocomplete+`"`) {
 			t.Errorf("%s does not publish %s with autocomplete=%s", check.file, check.name, check.autocomplete)
 		}
 	}

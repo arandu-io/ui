@@ -67,6 +67,22 @@ type AuthPage struct {
 	WithoutPasswordBox     bool
 	WithoutConfirmationBox bool
 
+	// StatusAsToast draws the status line as a toast instead of the banner
+	// above the form.
+	//
+	// It comes from the handler's own setting and from nothing a request
+	// carries, like the two above -- and it is stored as the positive because
+	// the banner is what these screens have always drawn: a publish of the
+	// screens alone, beside a handler that predates the setting, leaves it
+	// false and the project keeps the banner it had.
+	//
+	// A banner sits above the form and stays; a toast appears at the edge and
+	// leaves. Which is right is a question about the application, and this is
+	// where it is answered rather than in five views: "we sent you a code" is a
+	// sentence somebody reads once, and "that link has expired" is one they
+	// need while they retype the address.
+	StatusAsToast bool
+
 	// The addresses these screens post to and link to, beyond the navigation
 	// view.Page already carries. They come from the router, through the handler.
 	DashboardURL             string

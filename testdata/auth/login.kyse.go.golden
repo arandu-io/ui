@@ -21,9 +21,14 @@ type LoginData = authui.AuthPage
 		     address just confirmed, a password just changed. It is above the card
 		     because it is about what already happened, not about what to type. --}}
 		@if(.Status != "")
-			<div class="mb-6">
-				{!! components.Alert(components.AlertProps{Title: .Status}) !!}
-			</div>
+			@if(!.StatusAsToast)
+				<div class="mb-6">
+					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				</div>
+			@endif
+			@if(.StatusAsToast)
+				{!! components.Toast(components.ToastProps{Title: .Status}) !!}
+			@endif
 		@endif
 
 		<section class="card">

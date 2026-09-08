@@ -24,8 +24,11 @@ type ResetData = authui.AuthPage
 
 			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordUpdateURL }}">
 				@csrf
-				@if(.Status != "")
+				@if(.Status != "" && !.StatusAsToast)
 					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
+				@if(.Status != "" && .StatusAsToast)
+					{!! components.Toast(components.ToastProps{Title: .Status}) !!}
 				@endif
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
@@ -33,10 +36,10 @@ type ResetData = authui.AuthPage
 					Autocomplete: "email", Required: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
+				{!! components.Label(components.LabelProps{For: "email_code", Text: "Email code", Required: true}) !!}
+				{!! components.OneTimeCode(components.OneTimeCodeProps{
 					Name: "email_code", Label: "Email code",
-					Page: .,
-					Autocomplete: "one-time-code", Required: true, Autofocus: true,
+					Page: ., Autofocus: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{

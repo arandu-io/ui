@@ -36,9 +36,10 @@ type SetupData = authui.AuthPage
 					<code class="rounded border p-3 text-sm break-all">{{ .SecretKey }}</code>
 					<form class="flex flex-col gap-4" method="post" action="{{ .TwoFactorSetupConfirmURL }}">
 						@csrf
-						{!! components.Field(components.FieldProps{
+						{!! components.Label(components.LabelProps{For: "authenticator_code", Text: "Authenticator code", Required: true}) !!}
+						{!! components.OneTimeCode(components.OneTimeCodeProps{
 							Name: "authenticator_code", Label: "Authenticator code",
-							Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+							Page: ., Autofocus: true,
 						}) !!}
 						<button type="submit" class="btn">Confirm setup</button>
 					</form>

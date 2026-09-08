@@ -254,6 +254,22 @@ type AuthPage struct {
 	WithoutPasswordBox     bool
 	WithoutConfirmationBox bool
 
+	// StatusAsToast draws the status line as a toast instead of the banner
+	// above the form.
+	//
+	// It comes from the handler's own setting and from nothing a request
+	// carries, like the two above -- and it is stored as the positive because
+	// the banner is what these screens have always drawn: a publish of the
+	// screens alone, beside a handler that predates the setting, leaves it
+	// false and the project keeps the banner it had.
+	//
+	// A banner sits above the form and stays; a toast appears at the edge and
+	// leaves. Which is right is a question about the application, and this is
+	// where it is answered rather than in five views: "we sent you a code" is a
+	// sentence somebody reads once, and "that link has expired" is one they
+	// need while they retype the address.
+	StatusAsToast bool
+
 	// The addresses these screens post to and link to, beyond the navigation
 	// view.Page already carries. They come from the router, through the handler.
 	DashboardURL          string
@@ -772,9 +788,14 @@ type HomeData = authui.AuthPage
 			</header>
 			<div class="px-6 py-6 text-sm">
 				@if(.Status != "")
-					<div class="mb-4">
-						{!! components.Alert(components.AlertProps{Title: .Status}) !!}
-					</div>
+					@if(!.StatusAsToast)
+						<div class="mb-4">
+							{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+						</div>
+					@endif
+					@if(.StatusAsToast)
+						{!! components.Toast(components.ToastProps{Title: .Status}) !!}
+					@endif
 				@endif
 				<p class="text-muted-foreground">You are logged in.</p>
 			</div>
@@ -855,9 +876,14 @@ type LoginData = authui.AuthPage
 		     address just confirmed, a password just changed. It is above the card
 		     because it is about what already happened, not about what to type. --}}
 		@if(.Status != "")
-			<div class="mb-6">
-				{!! components.Alert(components.AlertProps{Title: .Status}) !!}
-			</div>
+			@if(!.StatusAsToast)
+				<div class="mb-6">
+					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				</div>
+			@endif
+			@if(.StatusAsToast)
+				{!! components.Toast(components.ToastProps{Title: .Status}) !!}
+			@endif
 		@endif
 
 		<section class="card">
@@ -1125,8 +1151,11 @@ type VerifyData = authui.AuthPage
 					}) !!}
 				@endif
 
-				@if(.Status != "")
+				@if(.Status != "" && !.StatusAsToast)
 					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
+				@if(.Status != "" && .StatusAsToast)
+					{!! components.Toast(components.ToastProps{Title: .Status}) !!}
 				@endif
 
 				<p class="text-muted-foreground">Type the single-use code sent to your email address.</p>
@@ -1137,9 +1166,10 @@ type VerifyData = authui.AuthPage
 						Name: "email", Label: "Email", Type: "email",
 						Value: .Email, Page: ., Autocomplete: "email", Required: true,
 					}) !!}
-					{!! components.Field(components.FieldProps{
+					{!! components.Label(components.LabelProps{For: "email_code", Text: "Email code", Required: true}) !!}
+					{!! components.OneTimeCode(components.OneTimeCodeProps{
 						Name: "email_code", Label: "Email code",
-						Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+						Page: ., Autofocus: true,
 					}) !!}
 					<div class="flex items-center gap-3">
 						<button type="submit" class="btn">Confirm address</button>
@@ -1180,8 +1210,11 @@ type EmailData = authui.AuthPage
 			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordEmailURL }}">
 				@csrf
 
-				@if(.Status != "")
+				@if(.Status != "" && !.StatusAsToast)
 					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
+				@if(.Status != "" && .StatusAsToast)
+					{!! components.Toast(components.ToastProps{Title: .Status}) !!}
 				@endif
 
 				{!! components.Field(components.FieldProps{
@@ -1227,8 +1260,11 @@ type ResetData = authui.AuthPage
 
 			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .PasswordUpdateURL }}">
 				@csrf
-				@if(.Status != "")
+				@if(.Status != "" && !.StatusAsToast)
 					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+				@endif
+				@if(.Status != "" && .StatusAsToast)
+					{!! components.Toast(components.ToastProps{Title: .Status}) !!}
 				@endif
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
@@ -1236,10 +1272,10 @@ type ResetData = authui.AuthPage
 					Autocomplete: "email", Required: true,
 				}) !!}
 
-				{!! components.Field(components.FieldProps{
+				{!! components.Label(components.LabelProps{For: "email_code", Text: "Email code", Required: true}) !!}
+				{!! components.OneTimeCode(components.OneTimeCodeProps{
 					Name: "email_code", Label: "Email code",
-					Page: .,
-					Autocomplete: "one-time-code", Required: true, Autofocus: true,
+					Page: ., Autofocus: true,
 				}) !!}
 
 				{!! components.Field(components.FieldProps{
@@ -1288,9 +1324,10 @@ type ChallengeData = authui.AuthPage
 			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .TwoFactorChallengeURL }}">
 				@csrf
 				<p class="text-muted-foreground text-sm">Type the code from your authenticator application.</p>
-				{!! components.Field(components.FieldProps{
+				{!! components.Label(components.LabelProps{For: "authenticator_code", Text: "Authenticator code", Required: true}) !!}
+				{!! components.OneTimeCode(components.OneTimeCodeProps{
 					Name: "authenticator_code", Label: "Authenticator code",
-					Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+					Page: ., Autofocus: true,
 				}) !!}
 				<div class="flex items-center justify-between gap-3">
 					<button type="submit" class="btn">Continue</button>
@@ -1377,9 +1414,10 @@ type SetupData = authui.AuthPage
 					<code class="rounded border p-3 text-sm break-all">{{ .SecretKey }}</code>
 					<form class="flex flex-col gap-4" method="post" action="{{ .TwoFactorSetupConfirmURL }}">
 						@csrf
-						{!! components.Field(components.FieldProps{
+						{!! components.Label(components.LabelProps{For: "authenticator_code", Text: "Authenticator code", Required: true}) !!}
+						{!! components.OneTimeCode(components.OneTimeCodeProps{
 							Name: "authenticator_code", Label: "Authenticator code",
-							Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+							Page: ., Autofocus: true,
 						}) !!}
 						<button type="submit" class="btn">Confirm setup</button>
 					</form>

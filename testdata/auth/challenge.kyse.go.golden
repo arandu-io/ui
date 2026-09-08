@@ -22,9 +22,10 @@ type ChallengeData = authui.AuthPage
 			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .TwoFactorChallengeURL }}">
 				@csrf
 				<p class="text-muted-foreground text-sm">Type the code from your authenticator application.</p>
-				{!! components.Field(components.FieldProps{
+				{!! components.Label(components.LabelProps{For: "authenticator_code", Text: "Authenticator code", Required: true}) !!}
+				{!! components.OneTimeCode(components.OneTimeCodeProps{
 					Name: "authenticator_code", Label: "Authenticator code",
-					Page: ., Autocomplete: "one-time-code", Required: true, Autofocus: true,
+					Page: ., Autofocus: true,
 				}) !!}
 				<div class="flex items-center justify-between gap-3">
 					<button type="submit" class="btn">Continue</button>

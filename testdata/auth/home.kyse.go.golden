@@ -23,9 +23,14 @@ type HomeData = authui.AuthPage
 			</header>
 			<div class="px-6 py-6 text-sm">
 				@if(.Status != "")
-					<div class="mb-4">
-						{!! components.Alert(components.AlertProps{Title: .Status}) !!}
-					</div>
+					@if(!.StatusAsToast)
+						<div class="mb-4">
+							{!! components.Alert(components.AlertProps{Title: .Status}) !!}
+						</div>
+					@endif
+					@if(.StatusAsToast)
+						{!! components.Toast(components.ToastProps{Title: .Status}) !!}
+					@endif
 				@endif
 				<p class="text-muted-foreground">You are logged in.</p>
 			</div>
