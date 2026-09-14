@@ -83,6 +83,54 @@ func TestTheAuthViewsAreEighteenAndWellFormed(t *testing.T) {
 	}
 }
 
+// TestEveryPublishedPasswordKeepsTheInputAndRevealOnOneLine protects projects
+// whose stylesheet predates the input-group component import. The Password
+// component still names its semantic component classes, but these literal
+// utilities carry the small structural contract this starter kit needs: the
+// group is a row, the input consumes the row, and the reveal stays at its end.
+//
+// The literals live at every call site because the asset compiler discovers
+// utilities by scanning the published views. A helper assembled elsewhere
+// would make the markup look right while leaving the corresponding CSS out of
+// the project build.
+func TestEveryPublishedPasswordKeepsTheInputAndRevealOnOneLine(t *testing.T) {
+	const call = "components.Password(components.PasswordProps{"
+	want := []string{
+		`ComponentProps: components.ComponentProps{`,
+		`"group": {Class: "relative flex w-full min-w-0 items-center outline-none"}`,
+		`"input": {Class: "text-foreground placeholder:text-muted-foreground block h-full min-w-0 flex-1 appearance-none rounded-none border-0 bg-transparent shadow-none outline-none ring-0 focus-visible:ring-0 aria-invalid:ring-0"}`,
+		`"reveal": {Class: "order-last me-1 shrink-0"}`,
+	}
+
+	found := 0
+	for _, f := range kyseOnly(mustAuthViews(t)) {
+		body := markup(f)
+		for {
+			at := strings.Index(body, call)
+			if at < 0 {
+				break
+			}
+			body = body[at:]
+			end := strings.Index(body, "}) !!}")
+			if end < 0 {
+				t.Fatalf("%s has an unterminated Password invocation", f.Path)
+			}
+			invocation := body[:end]
+			found++
+			for _, literal := range want {
+				if !strings.Contains(invocation, literal) {
+					t.Errorf("%s Password invocation lacks %q: it depends on optional input-group CSS", f.Path, literal)
+				}
+			}
+			body = body[end+len("}) !!}"):]
+		}
+	}
+
+	if found != 6 {
+		t.Errorf("checked %d Password invocations, want 6", found)
+	}
+}
+
 // TestEveryPageNamesItsDataAndTheLayoutNamesNone.
 //
 // The struct lives with the controller that fills it, and each screen names it

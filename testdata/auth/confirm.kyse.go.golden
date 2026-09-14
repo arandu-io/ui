@@ -28,6 +28,11 @@ type ConfirmData = authui.AuthPage
 				<p class="text-muted-foreground text-sm">This is a protected area. Confirm your password before going on.</p>
 
 				{!! components.Password(components.PasswordProps{
+					ComponentProps: components.ComponentProps{Parts: components.Parts{
+						"group": {Class: "relative flex w-full min-w-0 items-center outline-none"},
+						"input": {Class: "text-foreground placeholder:text-muted-foreground block h-full min-w-0 flex-1 appearance-none rounded-none border-0 bg-transparent shadow-none outline-none ring-0 focus-visible:ring-0 aria-invalid:ring-0"},
+						"reveal": {Class: "order-last me-1 shrink-0"},
+					}},
 					Name: "password", Label: "Password",
 					Page: ., Confirming: true,
 					Autocomplete: "current-password", Required: true, Autofocus: true,
