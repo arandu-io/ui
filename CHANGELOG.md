@@ -1,5 +1,9 @@
 # Release Notes
 
+## [v0.18.4](https://github.com/arandu-io/ui/compare/v0.18.3...v0.18.4) - 2026-09-17
+
+**Full Changelog**: https://github.com/arandu-io/ui/compare/v0.18.3...v0.18.4
+
 ## [v0.18.3](https://github.com/arandu-io/ui/compare/v0.18.2...v0.18.3) - 2026-09-14
 
 **Full Changelog**: https://github.com/arandu-io/ui/compare/v0.18.2...v0.18.3
