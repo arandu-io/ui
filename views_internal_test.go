@@ -199,6 +199,40 @@ func TestTheFormsCarryTheToken(t *testing.T) {
 	}
 }
 
+// TestTheTokenHeaderIsSentFromTheLayoutAlone holds the two places a published
+// request carries its token to the ones the CSRF check reads.
+//
+// The check reads the X-CSRF-Token header first and the _token field of the
+// body after it, from a urlencoded or a multipart body alike. The header is set
+// once, on the layout's <body>, and every hx- request inherits it; a form posted
+// without JavaScript carries the field @csrf writes. An hx-headers on any other
+// element repeating the token is a second copy of one value, drawn by a screen
+// rather than the layout, and the first one a swap leaves stale is a 419 that
+// reads like an expired session.
+//
+// Every published form posts urlencoded today. One that declares
+// multipart/form-data still passes the check through its _token field, and is
+// reported here so that whoever adds it knows the body is parsed before the
+// handler runs.
+func TestTheTokenHeaderIsSentFromTheLayoutAlone(t *testing.T) {
+	for _, f := range kyseOnly(mustAuthViews(t)) {
+		body := markup(f)
+		path := filepath.ToSlash(f.Path)
+		headers := strings.Count(body, "hx-headers")
+		switch {
+		case strings.HasSuffix(path, "layouts/app.kyse.go"):
+			if headers != 1 || !strings.Contains(body, `<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}'`) {
+				t.Errorf("%s does not set the token header exactly once, on <body>", path)
+			}
+		case headers != 0:
+			t.Errorf("%s sets hx-headers itself: the layout already sends the token on every hx- request", path)
+		}
+		if strings.Contains(body, "multipart/form-data") || strings.Contains(body, "hx-encoding") {
+			t.Logf("%s posts a multipart form: its token travels in the _token field of the body", path)
+		}
+	}
+}
+
 // TestTheAuthViewsInventNoDirective holds the starter kit to kyse's closed
 // directive set: a screen that reaches for a directive kyse does not have would
 // fail to compile in somebody else's project rather than in this test.
