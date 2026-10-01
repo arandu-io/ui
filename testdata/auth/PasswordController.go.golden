@@ -110,9 +110,11 @@ func (m *Module) showPasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.passwords.confirm", AuthPage{Page: m.page(r, "Confirm your password")})
 }
 
+// confirmPassword checks the password of the person RequireAuth let through,
+// whose subject the guard put on the request context.
 func (m *Module) confirmPassword(w http.ResponseWriter, r *http.Request) {
-	subject, err := m.sessions.Load(r.Context(), r)
-	if err != nil {
+	subject, ok := nativeauth.SubjectFrom(r.Context())
+	if !ok {
 		redirect(w, r, "/auth/login")
 		return
 	}

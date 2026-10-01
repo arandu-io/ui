@@ -490,9 +490,11 @@ func (m *Module) showPasswordConfirm(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.passwords.confirm", AuthPage{Page: m.page(r, "Confirm your password")})
 }
 
+// confirmPassword checks the password of the person RequireAuth let through,
+// whose subject the guard put on the request context.
 func (m *Module) confirmPassword(w http.ResponseWriter, r *http.Request) {
-	subject, err := m.sessions.Load(r.Context(), r)
-	if err != nil {
+	subject, ok := nativeauth.SubjectFrom(r.Context())
+	if !ok {
 		redirect(w, r, "/auth/login")
 		return
 	}
@@ -550,6 +552,7 @@ import (
 
 	"github.com/arandu-io/framework/observability"
 	twofactor "github.com/arandu-io/hesape/2fa"
+	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/qr"
 
@@ -744,9 +747,15 @@ func (m *Module) showTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.two-factor.setup", AuthPage{Page: m.page(r, "Set up two-factor authentication")})
 }
 
+// beginTwoFactorSetup starts enrolment for the signed-in person.
+//
+// The setup, disable and recovery-code routes sit behind RequireAuth and
+// RequireConfirmedPassword, and each reads the subject the guard loaded from
+// the request context rather than loading the session a second time. A request
+// that arrives without one was routed past the guards, and is sent to sign in.
 func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
-	subject, err := m.sessions.Load(r.Context(), r)
-	if err != nil {
+	subject, ok := nativeauth.SubjectFrom(r.Context())
+	if !ok {
 		redirect(w, r, "/auth/login")
 		return
 	}
@@ -778,8 +787,8 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) confirmTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
-	subject, err := m.sessions.Load(r.Context(), r)
-	if err != nil {
+	subject, ok := nativeauth.SubjectFrom(r.Context())
+	if !ok {
 		redirect(w, r, "/auth/login")
 		return
 	}
@@ -806,8 +815,8 @@ func (m *Module) confirmTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) disableTwoFactor(w http.ResponseWriter, r *http.Request) {
-	subject, err := m.sessions.Load(r.Context(), r)
-	if err != nil {
+	subject, ok := nativeauth.SubjectFrom(r.Context())
+	if !ok {
 		redirect(w, r, "/auth/login")
 		return
 	}
@@ -820,8 +829,8 @@ func (m *Module) disableTwoFactor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) regenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
-	subject, err := m.sessions.Load(r.Context(), r)
-	if err != nil {
+	subject, ok := nativeauth.SubjectFrom(r.Context())
+	if !ok {
 		redirect(w, r, "/auth/login")
 		return
 	}

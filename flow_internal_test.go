@@ -1577,3 +1577,110 @@ func main() {
 	fmt.Printf("sign-in screen: %s\n", w.Body.String())
 }
 `
+
+// TestTheSignedInScreensActForTheSubjectTheGuardLoaded runs the published
+// handlers behind RequireAuth and RequireConfirmedPassword.
+//
+// Those handlers read the subject from the request context, where the guards
+// put the one they loaded, instead of loading the session a second time. A
+// framework whose guards dropped it would send every signed-in person back to
+// sign in from the password confirmation and the two-factor settings, so this
+// asks the published module, through its own router, who each one acted for.
+func TestTheSignedInScreensActForTheSubjectTheGuardLoaded(t *testing.T) {
+	out := runAgainstPublishedKit(t, signedInProbe)
+
+	for _, want := range []string{
+		"guest confirm: status=303 location=/auth/login",
+		"confirm: status=303 acted-for=tenant-a/user-a",
+		"disable: status=303 location=/ acted-for=tenant-a/user-a",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// signedInProbe signs a session in, confirms its password and disables its
+// second factor, recording the subject each fake service was handed.
+const signedInProbe = `package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/session"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
+
+var actedFor string
+
+func record(s nativeauth.Subject) { actedFor = s.Tenant + "/" + s.ID }
+
+type users struct{ authui.Users }
+
+func (users) ConfirmPassword(_ context.Context, s nativeauth.Subject, _, _ string) error {
+	record(s)
+	return nil
+}
+
+type factors struct{ authui.Factors }
+
+func (factors) Disable(_ context.Context, s nativeauth.Subject) error {
+	record(s)
+	return nil
+}
+
+func main() {
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	module := authui.New(users{}, factors{}, nil, sessions, security.NewCSRF(appKey, time.Hour), nil,
+		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+
+	signedIn := httptest.NewRecorder()
+	if _, err := sessions.Rotate(context.Background(), signedIn, "",
+		security.Subject{ID: "user-a", Tenant: "tenant-a"}, security.Remember(false)); err != nil {
+		panic(err)
+	}
+	cookies := signedIn.Result().Cookies()
+
+	post := func(path string, form url.Values, cookies []*http.Cookie) *http.Response {
+		actedFor = ""
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w.Result()
+	}
+
+	res := post("/auth/password/confirm", url.Values{"password": {"secret"}}, nil)
+	fmt.Printf("guest confirm: status=%d location=%s\n", res.StatusCode, res.Header.Get("Location"))
+
+	res = post("/auth/password/confirm", url.Values{"password": {"secret"}}, cookies)
+	fmt.Printf("confirm: status=%d acted-for=%s\n", res.StatusCode, actedFor)
+	for _, c := range res.Cookies() {
+		for i := range cookies {
+			if cookies[i].Name == c.Name {
+				cookies[i] = c
+			}
+		}
+	}
+
+	res = post("/auth/two-factor/disable", nil, cookies)
+	fmt.Printf("disable: status=%d location=%s acted-for=%s\n", res.StatusCode, res.Header.Get("Location"), actedFor)
+}
+`
