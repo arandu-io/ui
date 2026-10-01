@@ -247,8 +247,12 @@ layout and this command replaces the layout. It is built in the same file, and
 it takes the application-owned user service and tenant so the header can greet by name rather
 than by the id in the session:
 
-    controllers.NewHomeController(cfg.App.Name, sessions, csrf,
-        userService, cfg.Auth.Tenant),
+    controllers.NewHomeController(cfg.App.Name, userService, cfg.Auth.Tenant),
+
+It reads who is signed in off the request, so GET / has to carry LoadSubject in
+routes/web.go, as a new project's already does:
+
+    r.Action("GET", "/{$}", d.Home.Index, middleware.LoadSubject(d.Sessions)).Name("home")
 
 Remove any former framework authentication module registration before adding
 this one: both answer the same paths, and native account policy and storage now

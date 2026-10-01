@@ -374,8 +374,9 @@ func TestTheLandingPageDrawsTheSignedInHalf(t *testing.T) {
 		}
 	}
 
-	// And they come from the session and the issuer, not from a constant: a page
-	// that hardcodes Authenticated is a page that is wrong half the time.
+	// And they come from the request, not from a constant: a page that hardcodes
+	// Authenticated is a page that is wrong half the time. The subject is the one
+	// the route's LoadSubject put there and the token the one CSRFProtect issued.
 	if got := filled["Authenticated"]; got == "true" || got == "false" {
 		t.Errorf("Authenticated is the constant %s rather than the state of the session", got)
 	}
@@ -385,15 +386,22 @@ func TestTheLandingPageDrawsTheSignedInHalf(t *testing.T) {
 	if got := filled["UserName"]; got == "subject.ID" {
 		t.Error("the landing page greets people with the id in their session rather than with their name")
 	}
-	for _, want := range []string{"c.sessions.Load(", "hhttp.CSRFTokenFrom(ctx.Ctx())"} {
+	for _, want := range []string{"ctx.User()", "hhttp.CSRFTokenFrom(ctx.Ctx())"} {
 		if !strings.Contains(source, want) {
 			t.Errorf("the landing page never calls %s, so it cannot know what it is drawing", want)
 		}
 	}
 }
 
-// TestTheLandingPageIsGivenWhatItReads: the two collaborators arrive through the
-// constructor, like every other controller's, rather than being reached for.
+// TestTheLandingPageIsGivenWhatItReads: what the page cannot read off the
+// request arrives through the constructor, like every other controller's, and
+// nothing else does.
+//
+// The session store and the CSRF issuer are refused by name. The kit's
+// constructor took both once, while the skeleton's bootstrap/app.go called the
+// three-argument one, and publishing broke that build: the subject is on the
+// request because GET / is mounted behind LoadSubject, and the token is on it
+// because CSRFProtect put it there.
 func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 	source := authFile(t, "HomeController.go")
 
@@ -407,13 +415,14 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 		if !ok || fn.Recv != nil || fn.Name.Name != "NewHomeController" {
 			continue
 		}
-		var params []string
-		for _, field := range fn.Type.Params.List {
-			params = append(params, types.ExprString(field.Type))
+		params := constructorNames(t, source, "NewHomeController")
+		if want := []string{"string", "authui.UserNames", "string"}; !slices.Equal(params, want) {
+			t.Errorf("NewHomeController takes %v and bootstrap/app.go calls it with (appName, userService, tenant) %v", params, want)
 		}
-		for _, want := range []string{"*security.SessionStore", "*security.CSRF"} {
-			if !slices.Contains(params, want) {
-				t.Errorf("NewHomeController does not take %s, which the call in bootstrap/app.go passes; it takes %v", want, params)
+		for _, refused := range []string{"*security.SessionStore", "*security.CSRF"} {
+			if slices.Contains(params, refused) {
+				t.Errorf("NewHomeController takes %s, which the page reads off the request instead; "+
+					"bootstrap/app.go does not pass one, so publishing breaks the build", refused)
 			}
 		}
 		// And the service the id in a session is turned into a name with. Without
@@ -427,6 +436,112 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 	}
 	t.Fatal("the generated controller declares no NewHomeController")
 }
+
+// TestTheLandingPageGreetsTheSubjectLoadSubjectPutOnTheRequest runs the
+// published HomeController the way the skeleton mounts it: GET / behind
+// middleware.LoadSubject, the whole router behind CSRFProtect, and the
+// controller built with the three arguments bootstrap/app.go passes.
+//
+// A guest has to get the welcome screen with the guest half of the header and a
+// token to post with. Somebody signed in has to get the home screen, greeted by
+// the name the application's service returns for the id in their session --
+// asked for under the configured tenant -- and not by the id itself.
+func TestTheLandingPageGreetsTheSubjectLoadSubjectPutOnTheRequest(t *testing.T) {
+	out := runAgainstPublishedKit(t, landingPageProbe)
+
+	for _, want := range []string{
+		"guest: status=200 screen=welcome authenticated=false name= token=true",
+		"signed-in: status=200 screen=home authenticated=true name=Ada Lovelace token=true asked=tenant-a/user-a",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published landing page did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// landingPageProbe asks for the front page as a guest and then with a signed-in
+// session, recording what each screen was handed.
+const landingPageProbe = `package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	controllers "example.test/project/app/Http/Controllers"
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
+
+var asked string
+
+type names struct{}
+
+func (names) PublicNames(_ context.Context, reader security.Subject, ids []string) (map[string]string, error) {
+	asked = reader.Tenant + "/" + reader.ID
+	out := map[string]string{}
+	for _, id := range ids {
+		if id == "user-a" {
+			out[id] = "Ada Lovelace"
+		}
+	}
+	return out, nil
+}
+
+func main() {
+	for _, name := range []string{"home", "welcome"} {
+		view.Register(name, func(w io.Writer, data any) error {
+			page := data.(authui.AuthPage)
+			_, err := fmt.Fprintf(w, "screen=%s authenticated=%t name=%s token=%t",
+				name, page.Authenticated, page.UserName, page.Token != "")
+			return err
+		})
+	}
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	csrf := security.NewCSRF(appKey, time.Hour)
+
+	home := controllers.NewHomeController("Probe", names{}, "tenant-a")
+	// The renderer the kernel hands every router at boot, given here by hand
+	// because nothing in this probe boots a kernel.
+	router := fhttp.NewRouter().WithRenderer(view.NewRenderer())
+	router.Action("GET", "/{$}", home.Index, middleware.LoadSubject(sessions)).Name("home")
+	app := middleware.CSRFProtect(csrf, sessions.IDFromRequest)(router)
+
+	get := func(cookies []*http.Cookie) *httptest.ResponseRecorder {
+		asked = ""
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("Accept", "text/html")
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w
+	}
+
+	w := get(nil)
+	fmt.Printf("guest: status=%d %s\n", w.Code, w.Body.String())
+
+	signedIn := httptest.NewRecorder()
+	if _, err := sessions.Rotate(context.Background(), signedIn, "",
+		security.Subject{ID: "user-a", Tenant: "tenant-a"}, security.Remember(false)); err != nil {
+		panic(err)
+	}
+	w = get(signedIn.Result().Cookies())
+	fmt.Printf("signed-in: status=%d %s asked=%s\n", w.Code, w.Body.String(), asked)
+}
+`
 
 // constructorNames returns the parameter list of one top-level function of a
 // generated file, one entry per parameter.

@@ -383,26 +383,27 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 // authHomeControllerTemplate is the HomeController the kit publishes, the same
 // file the starter kit generates.
 //
-// The constructor takes the session store, because a controller that cannot
-// read the session renders a landing page that says "Login" to somebody who just
-// signed in. It takes the CSRF issuer as well, which the page no longer reads --
-// the token comes from the request context, where CSRFProtect put it -- because
-// the parameter list is the one bootstrap/app.go already calls. That is one line
-// of wiring in bootstrap/app.go, and make:auth prints it.
+// The constructor takes the application name, the application-owned name reader
+// and the tenant, and nothing else. That is the signature the skeleton declares,
+// and it has to be: this file is in `replaced`, so a publish overwrites it with
+// no flag at all, and a constructor here that the project's bootstrap/app.go
+// does not call is a build that breaks on a command whose whole promise is that
+// it can be run again.
 //
-// It also takes the application-owned name reader and the tenant, and that is the signature the
-// skeleton declares too. It has to be: this file is in `replaced`, so a publish
-// overwrites it with no flag at all, and a constructor here that the project's
-// bootstrap/app.go does not call is a build that breaks on a command whose whole
-// promise is that it can be run again. The kit, the skeleton and the showcase
-// agree on the parameter list; the command prints the line that wires it, and
-// TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes keeps the two
-// from drifting apart.
+// There is no session store and no CSRF issuer among the parameters. The
+// skeleton mounts GET / behind middleware.LoadSubject, so who is signed in is
+// on the request, and CSRFProtect put the token there too; the page reads both
+// off the request it is answering. The kit took both collaborators once, and
+// publishing it into a project whose bootstrap/app.go called the three-argument
+// constructor left that project unable to compile.
+//
+// TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes keeps the line
+// the command prints in step with this constructor, and
+// TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes keeps the skeleton's.
 const authHomeControllerTemplate = `package controllers
 
 import (
 	"github.com/arandu-io/framework/http"
-	"github.com/arandu-io/framework/security"
 	hhttp "github.com/arandu-io/hesape/http"
 
 	authui "{{ .ModulePath }}/app/Http/Controllers/Auth"
@@ -421,15 +422,6 @@ type HomeController struct {
 	// environment is a controller no test can pin.
 	appName string
 
-	// sessions is what the chrome learns who is signed in from. It arrives
-	// through the constructor for the same reason appName does.
-	//
-	// csrf is kept for the call bootstrap/app.go already makes, and nothing
-	// here issues a token with it: Index draws the one CSRFProtect put on the
-	// request context.
-	sessions *security.SessionStore
-	csrf     *security.CSRF
-
 	// people and tenant are how the id in a session becomes a name to greet.
 	// A session carries an id and not a name on purpose -- a name kept in one
 	// stays wrong after somebody changes theirs -- so the header costs one
@@ -444,11 +436,12 @@ type HomeController struct {
 
 // NewHomeController returns the controller. bootstrap/app.go builds it and hands
 // it to the routes.
-func NewHomeController(appName string, sessions *security.SessionStore, csrf *security.CSRF, people authui.UserNames, tenant string) *HomeController {
-	return &HomeController{
-		appName: appName, sessions: sessions, csrf: csrf,
-		people: people, tenant: tenant,
-	}
+//
+// There is no session store and no CSRF issuer here: the route puts who is
+// signed in on the request, and the middleware that protects forms puts the
+// token there, so the page reads both off the request it is answering.
+func NewHomeController(appName string, people authui.UserNames, tenant string) *HomeController {
+	return &HomeController{appName: appName, people: people, tenant: tenant}
 }
 
 // Compile-time proof that this controller answers GET / the way Resource and the
@@ -457,16 +450,20 @@ var _ http.Indexer = (*HomeController)(nil)
 
 // Index renders the landing page.
 //
-// The session and the token are read above the custom block, and deliberately:
+// The subject and the token are read above the custom block, and deliberately:
 // they are what the layout draws its navigation and its hx-headers from, so a
 // regeneration that carried over an edited block would otherwise carry over a
 // page that greets a signed-in visitor with a sign-in link.
+//
+// The route has to mount this behind middleware.LoadSubject, as the skeleton's
+// routes/web.go does. Without it nothing puts a subject on the request, and
+// every visitor is drawn the guest half.
 func (c *HomeController) Index(ctx *http.Context) error {
-	// Who is signed in, from the session cookie and never from the request. An
-	// error here is the anonymous case -- no cookie, a forged one, or a session
-	// that expired -- and the guest half of the navigation is what gets drawn.
-	subject, err := c.sessions.Load(ctx.Ctx(), ctx.Request)
-	signedIn := err == nil
+	// Who is signed in, put on the request by the route's LoadSubject from the
+	// session cookie and never from the request body. No subject is the
+	// anonymous case -- no cookie, a forged one, or a session that expired --
+	// and the guest half of the navigation is what gets drawn.
+	subject, signedIn := ctx.User()
 
 	// The token reaches the markup twice: the hidden field of the sign-out form
 	// and the hx-headers attribute on <body>. A page rendered without one
