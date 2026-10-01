@@ -42,6 +42,13 @@ files and the two mailables — and refreshes twenty-one files: the eighteen
 views plus `page.go`, `render.go` and `HomeController`, which they do not compile
 without.
 
+**A security fix in a controller does not arrive with `--views`.** It leaves the
+five authentication controller files and the two mailables exactly as they are,
+so a fix the kit makes in the flow behind the screens — how a code is checked,
+what a refusal answers — reaches a project only through `auth --force`. Commit
+first, run it, and review the diff before keeping it: `--force` overwrites
+those files, carrying over only what sits inside `arandu:begin custom` blocks.
+
 **Nothing is added to your `go.mod`.** `go run <module>@latest` runs a published
 module without touching the caller's dependency graph, so there is no package to
 install and none to remove afterwards. That is what makes this a package instead
