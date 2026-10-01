@@ -179,6 +179,25 @@ the form did not draw before calling `Register` — so no path here puts an empt
 value into a comparison.
 `TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison` reads all four.
 
+**Every second-factor code goes through the account's attempt budget.** The
+challenge handlers hand each authenticator code to
+`m.factors.VerifyAuthenticator` and each recovery code to
+`m.factors.ConsumeRecovery`, and nothing else checks a code. The application's
+service counts both kinds against one budget per tenant and user — five codes
+per fifteen minutes, counted before the code is checked — because a pending
+sign-in lives for five minutes, a wrong code does not spend it, and whoever
+holds the password can start as many as they like. A handler that validated a
+code itself, through `otp` or `2fa` directly, or that cleared the count when it
+issued a new pending sign-in, would hand back unlimited guesses. A spent budget
+refuses the right code too, with an error that carries `Seconds()` and also
+matches `twofactor.ErrInvalidCode`, so `challengeLocked` checks for it **before**
+the wrong-code branch: it clears the pending cookie, sets `Retry-After`, leaves
+*Too many codes. Sign in again in N minutes.* in the flash and redirects to the
+sign-in screen, which draws it as its status line. Answered as a wrong code, the
+challenge would stay on screen with a live pending cookie, refusing every try.
+`TestALockedChallengeSendsThePersonBackToSignIn` runs both challenge screens
+against a fake service returning a lock and a wrong code.
+
 **The reset says the same thing either way.** *If that address is registered, a
 code is on its way.* — whether it is or not, and nothing is mailed to an address
 nobody looked up. `flow_internal_test.go:136` and `:67`.
