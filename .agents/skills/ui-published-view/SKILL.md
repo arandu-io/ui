@@ -154,9 +154,14 @@ one such site — a helper answering `checked` or nothing — and nothing could 
 injected through it; it was still wrong to publish, because these screens are
 what a project copies.
 
-**`{!! !!}` is for a call, not a value.** It is entitled to skip escaping only
-because a component escaped everything it interpolated. `{!! .Status !!}` is
-stored cross-site scripting the first time a `Status` comes from a person.
+**`{!! !!}` accepts only a `template.HTML`, and that is a compile rule.** The
+view compiler assigns the value to a `template.HTML` before writing it, so a
+component call compiles and `{!! .Status !!}` with a `string` field stops the
+build at the line of the screen. A component is entitled to skip escaping only
+because it escaped everything it interpolated. Never convert a string to
+`template.HTML` to make a screen build: these screens are what a project
+copies, and a converted `Status` is stored cross-site scripting the first time
+one comes from a person.
 
 **No Bootstrap class, and no invented one.** The styling is Tailwind utilities
 plus the semantic classes the stylesheet ships — `card`, `btn`, `input`,
