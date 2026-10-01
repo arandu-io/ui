@@ -268,6 +268,7 @@ import (
 	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/observability"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/view"
 
 	models "{{ .ModulePath }}/app/Models"
@@ -337,13 +338,14 @@ func (m *Module) fragment(w http.ResponseWriter, r *http.Request, status int, sc
 	m.screenStatus(w, r, status, name, data)
 }
 
+// screenStatus renders a screen of the kit with the status given.
+//
+// The token every screen carries is the one CSRFProtect put on the request
+// context: issued on a GET for this visitor's session, or for their guest cookie
+// when they have none, and on a POST it accepted, the token that was submitted,
+// so a form redrawn after a rejection still validates. No screen issues one.
 func (m *Module) screenStatus(w http.ResponseWriter, r *http.Request, status int, name string, data AuthPage) {
-	token, err := m.csrf.Issue(m.sessions.IDFromRequest(r))
-	if err != nil {
-		observability.Log(r.Context()).Error("issuing csrf token", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
+	token, _ := hhttp.CSRFTokenFrom(r.Context())
 	if data.Page.Title == "" {
 		data.Page = m.page(r, "Account")
 	}

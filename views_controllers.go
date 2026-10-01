@@ -161,6 +161,10 @@ type Module struct {
 }
 
 // New returns the authentication screen module.
+//
+// csrf is kept for the call bootstrap/app.go already makes, and no screen
+// issues a token with it: each draws the one CSRFProtect put on the request
+// context.
 func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *security.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
@@ -379,13 +383,12 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 // authHomeControllerTemplate is the HomeController the kit publishes, the same
 // file the starter kit generates.
 //
-// The constructor takes the session store and the CSRF issuer, which the
-// skeleton's did not: the layout this command installs draws a sign-out form and
-// puts the token in hx-headers, and a controller that cannot read the session
-// renders a landing page that says "Login" to somebody who just signed in, with
-// an empty token that makes the next write fail the CSRF check. That is one line
-// of wiring in bootstrap/app.go, and make:auth prints it -- the same shape
-// `aru make:module` uses for every controller it writes.
+// The constructor takes the session store, because a controller that cannot
+// read the session renders a landing page that says "Login" to somebody who just
+// signed in. It takes the CSRF issuer as well, which the page no longer reads --
+// the token comes from the request context, where CSRFProtect put it -- because
+// the parameter list is the one bootstrap/app.go already calls. That is one line
+// of wiring in bootstrap/app.go, and make:auth prints it.
 //
 // It also takes the application-owned name reader and the tenant, and that is the signature the
 // skeleton declares too. It has to be: this file is in `replaced`, so a publish
@@ -400,6 +403,7 @@ const authHomeControllerTemplate = `package controllers
 import (
 	"github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/security"
+	hhttp "github.com/arandu-io/hesape/http"
 
 	authui "{{ .ModulePath }}/app/Http/Controllers/Auth"
 )
@@ -417,11 +421,12 @@ type HomeController struct {
 	// environment is a controller no test can pin.
 	appName string
 
-	// sessions and csrf are what the chrome is drawn from: who is signed in,
-	// and the token every write of this session carries. They arrive through
-	// the constructor for the same reason appName does, and they are the same
-	// two every controller ` + "`aru make:module`" + ` writes takes -- a screen is
-	// allowed to know about a token and a cookie.
+	// sessions is what the chrome learns who is signed in from. It arrives
+	// through the constructor for the same reason appName does.
+	//
+	// csrf is kept for the call bootstrap/app.go already makes, and nothing
+	// here issues a token with it: Index draws the one CSRFProtect put on the
+	// request context.
 	sessions *security.SessionStore
 	csrf     *security.CSRF
 
@@ -466,11 +471,10 @@ func (c *HomeController) Index(ctx *http.Context) error {
 	// The token reaches the markup twice: the hidden field of the sign-out form
 	// and the hx-headers attribute on <body>. A page rendered without one
 	// answers 200 and then refuses the next write with 419, which reads like a
-	// broken session rather than a missing field.
-	token, err := c.csrf.Issue(c.sessions.IDFromRequest(ctx.Request))
-	if err != nil {
-		return err
-	}
+	// broken session rather than a missing field. CSRFProtect issued it for
+	// this request, bound to the session or, for a visitor with none, to their
+	// guest cookie, and put it on the request context.
+	token, _ := hhttp.CSRFTokenFrom(ctx.Ctx())
 
 	// arandu:begin custom
 	// The name to greet, through the helper the kit's own screens greet with, so

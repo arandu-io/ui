@@ -1684,3 +1684,94 @@ func main() {
 	fmt.Printf("disable: status=%d location=%s acted-for=%s\n", res.StatusCode, res.Header.Get("Location"), actedFor)
 }
 `
+
+// TestAGuestScreenCarriesTheTokenCSRFProtectIssued runs the published sign-in
+// screen behind the framework's CSRFProtect, the way an application mounts it.
+//
+// A visitor with no session is bound to a guest cookie, and the issuer refuses
+// a token bound to nothing, so a screen that issued its own token from the
+// session id answered 500 to every guest. The screen draws the token the
+// middleware put on the request context instead; posting it back with the guest
+// cookie has to pass the check, and the rejected form has to come back carrying
+// a token that still validates.
+func TestAGuestScreenCarriesTheTokenCSRFProtectIssued(t *testing.T) {
+	out := runAgainstPublishedKit(t, guestTokenProbe)
+
+	for _, want := range []string{
+		"get: status=200 token=true guest-cookie=true",
+		"post: status=401 same-token=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// guestTokenProbe loads the sign-in screen as a guest, then submits it with a
+// password the fake account service refuses.
+const guestTokenProbe = `package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+type users struct{ authui.Users }
+
+func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
+	return models.User{}, nativeauth.ErrInvalidCredentials
+}
+
+func main() {
+	for _, name := range []string{"auth.login", "partials.login_form"} {
+		view.Register(name, func(w io.Writer, data any) error {
+			_, err := io.WriteString(w, data.(authui.AuthPage).Token)
+			return err
+		})
+	}
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	csrf := security.NewCSRF(appKey, time.Hour)
+	module := authui.New(users{}, nil, nil, sessions, csrf, nil,
+		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.CSRFProtect(csrf, sessions.IDFromRequest)(router)
+
+	r := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+	r.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, r)
+	token := w.Body.String()
+	cookies := w.Result().Cookies()
+	fmt.Printf("get: status=%d token=%t guest-cookie=%t\n", w.Code, token != "", len(cookies) > 0)
+
+	form := url.Values{"_token": {token}, "email": {"a@example.test"}, "password": {"wrong"}}
+	r = httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		r.AddCookie(c)
+	}
+	w = httptest.NewRecorder()
+	app.ServeHTTP(w, r)
+	fmt.Printf("post: status=%d same-token=%t\n", w.Code, w.Body.String() == token)
+}
+`

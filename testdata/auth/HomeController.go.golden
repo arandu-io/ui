@@ -3,6 +3,7 @@ package controllers
 import (
 	"github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/security"
+	hhttp "github.com/arandu-io/hesape/http"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
 )
@@ -20,11 +21,12 @@ type HomeController struct {
 	// environment is a controller no test can pin.
 	appName string
 
-	// sessions and csrf are what the chrome is drawn from: who is signed in,
-	// and the token every write of this session carries. They arrive through
-	// the constructor for the same reason appName does, and they are the same
-	// two every controller `aru make:module` writes takes -- a screen is
-	// allowed to know about a token and a cookie.
+	// sessions is what the chrome learns who is signed in from. It arrives
+	// through the constructor for the same reason appName does.
+	//
+	// csrf is kept for the call bootstrap/app.go already makes, and nothing
+	// here issues a token with it: Index draws the one CSRFProtect put on the
+	// request context.
 	sessions *security.SessionStore
 	csrf     *security.CSRF
 
@@ -69,11 +71,10 @@ func (c *HomeController) Index(ctx *http.Context) error {
 	// The token reaches the markup twice: the hidden field of the sign-out form
 	// and the hx-headers attribute on <body>. A page rendered without one
 	// answers 200 and then refuses the next write with 419, which reads like a
-	// broken session rather than a missing field.
-	token, err := c.csrf.Issue(c.sessions.IDFromRequest(ctx.Request))
-	if err != nil {
-		return err
-	}
+	// broken session rather than a missing field. CSRFProtect issued it for
+	// this request, bound to the session or, for a visitor with none, to their
+	// guest cookie, and put it on the request context.
+	token, _ := hhttp.CSRFTokenFrom(ctx.Ctx())
 
 	// arandu:begin custom
 	// The name to greet, through the helper the kit's own screens greet with, so

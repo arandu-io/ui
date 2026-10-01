@@ -172,17 +172,22 @@ func TestTheFormCarriesAFreshToken(t *testing.T) {
 	// so it is where the token, the swap and the absent password have to be.
 	views := authFile(t, "partials/login_form.kyse.go")
 
-	// The token is issued in render.go now, which is the one place every screen
-	// of the kit goes through. It used to be issued in each handler, and the
-	// duplication is what let showLogin drift: it built its own view.Page,
-	// skipped the wiring, and shipped a sign-in screen with no way to register
-	// and no way to recover a password.
-	if !strings.Contains(authFile(t, "render.go"), "csrf.Issue(") {
-		t.Error("no screen of the kit issues a token")
+	// The token is read in render.go, which is the one place every screen of
+	// the kit goes through, from the request context where CSRFProtect put it:
+	// issued for this visitor on a GET, and the one it accepted on a POST, so a
+	// redrawn form still validates. It used to be issued here, bound to the
+	// session id alone, and a guest has none -- the issuer refuses an empty
+	// binding, so every screen a guest sees answered 500. And it used to be
+	// issued in each handler, which is what let showLogin drift: it built its
+	// own view.Page, skipped the wiring, and shipped a sign-in screen with no way
+	// to register and no way to recover a password.
+	if !strings.Contains(authFile(t, "render.go"), "hhttp.CSRFTokenFrom(r.Context())") {
+		t.Error("no screen of the kit draws the token CSRFProtect issued")
 	}
-	for _, handler := range []string{"LoginController_handlers.go", "RegisterController.go", "PasswordController.go"} {
+	for _, handler := range []string{"render.go", "LoginController_handlers.go", "RegisterController.go",
+		"PasswordController.go", "TwoFactorController.go", "HomeController.go"} {
 		if strings.Contains(authFile(t, handler), "csrf.Issue(") {
-			t.Errorf("%s issues its own token: that is the duplication render.go exists to remove", handler)
+			t.Errorf("%s issues its own token: CSRFProtect already issued one for this request", handler)
 		}
 	}
 	// @csrf is the directive; it compiles to the hidden input with the token.
@@ -380,7 +385,7 @@ func TestTheLandingPageDrawsTheSignedInHalf(t *testing.T) {
 	if got := filled["UserName"]; got == "subject.ID" {
 		t.Error("the landing page greets people with the id in their session rather than with their name")
 	}
-	for _, want := range []string{"c.sessions.Load(", "c.csrf.Issue("} {
+	for _, want := range []string{"c.sessions.Load(", "hhttp.CSRFTokenFrom(ctx.Ctx())"} {
 		if !strings.Contains(source, want) {
 			t.Errorf("the landing page never calls %s, so it cannot know what it is drawing", want)
 		}
@@ -408,7 +413,7 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 		}
 		for _, want := range []string{"*security.SessionStore", "*security.CSRF"} {
 			if !slices.Contains(params, want) {
-				t.Errorf("NewHomeController does not take %s, so the page cannot read the session or issue a token; it takes %v", want, params)
+				t.Errorf("NewHomeController does not take %s, which the call in bootstrap/app.go passes; it takes %v", want, params)
 			}
 		}
 		// And the service the id in a session is turned into a name with. Without
