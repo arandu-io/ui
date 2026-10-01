@@ -808,10 +808,38 @@ func TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework(t *testi
 	}
 
 	root := t.TempDir()
+	published := layPublishedKit(t, root)
+	downloadPublishedKit(t, tool, root)
 
-	// Every published file the compiler reads, enumerated from the publisher
-	// rather than listed here: a tenth Go file added to the kit is covered the
-	// day it is added, which is the only way this stays true.
+	build := exec.Command(tool, "build", "./...")
+	build.Dir = root
+	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off", "GOTOOLCHAIN=local")
+	out, err := build.CombinedOutput()
+	if err == nil {
+		return
+	}
+
+	named := "none by name -- read the output below"
+	if files := publishedIn(string(out), published); len(files) > 0 {
+		named = strings.Join(files, "\n  ")
+	}
+	t.Fatalf("the Go this kit publishes does not compile against github.com/arandu-io/framework %s.\n\n"+
+		"Every project that runs `go run github.com/arandu-io/ui@latest auth` receives these files, and a "+
+		"project that receives them cannot build.\n\n"+
+		"published file(s) the compiler named:\n  %s\n\n`go build ./...` said:\n%s\n(%v)",
+		publishedFramework, named, out, err)
+}
+
+// layPublishedKit writes the Go this kit publishes into root, as a module that
+// requires the framework, hesape and kyse by published tag, and returns the
+// published paths it wrote.
+//
+// Every published file the compiler reads is enumerated from the publisher
+// rather than listed here: a tenth Go file added to the kit is covered the day
+// it is added, which is the only way this stays true.
+func layPublishedKit(t *testing.T, root string) []string {
+	t.Helper()
+
 	var published []string
 	for _, f := range mustGenerateAuth(t) {
 		path := filepath.ToSlash(f.Path)
@@ -865,6 +893,14 @@ func (u User) PasswordFingerprint() string {
 			"\tgithub.com/arandu-io/framework "+publishedFramework+"\n"+
 			"\tgithub.com/arandu-io/hesape "+publishedHesape+"\n"+
 			"\tgithub.com/arandu-io/kyse "+publishedKyse+"\n)\n"))
+	return published
+}
+
+// downloadPublishedKit resolves the module layPublishedKit wrote, and skips the
+// test, saying that nothing was compiled, when the tags are neither in the
+// module cache nor reachable.
+func downloadPublishedKit(t *testing.T, tool, root string) {
+	t.Helper()
 
 	download := exec.Command(tool, "mod", "download", "all")
 	download.Dir = root
@@ -874,24 +910,36 @@ func (u User) PasswordFingerprint() string {
 			"module cache and could not be fetched, so NOTHING WAS COMPILED here and this is not a pass: %v\n%s",
 			publishedFramework, publishedHesape, publishedKyse, err, out)
 	}
+}
 
-	build := exec.Command(tool, "build", "./...")
-	build.Dir = root
-	build.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off", "GOTOOLCHAIN=local")
-	out, err := build.CombinedOutput()
-	if err == nil {
-		return
-	}
+// runAgainstPublishedKit runs probe, the source of a main package, inside the
+// module layPublishedKit writes, and returns everything it printed.
+//
+// It is runInPublishedKit against the published tags instead of the sibling
+// checkouts, for the behaviour a project receives: the module is the one the
+// compile gate above builds, so a probe that runs here runs against the
+// framework a person gets. probe imports the published package itself, as
+// "example.test/project/app/Http/Controllers/Auth".
+func runAgainstPublishedKit(t *testing.T, probe string) string {
+	t.Helper()
 
-	named := "none by name -- read the output below"
-	if files := publishedIn(string(out), published); len(files) > 0 {
-		named = strings.Join(files, "\n  ")
+	tool, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go is not on PATH, so nothing here ran and this is not a pass")
 	}
-	t.Fatalf("the Go this kit publishes does not compile against github.com/arandu-io/framework %s.\n\n"+
-		"Every project that runs `go run github.com/arandu-io/ui@latest auth` receives these files, and a "+
-		"project that receives them cannot build.\n\n"+
-		"published file(s) the compiler named:\n  %s\n\n`go build ./...` said:\n%s\n(%v)",
-		publishedFramework, named, out, err)
+	root := t.TempDir()
+	layPublishedKit(t, root)
+	writeInto(t, filepath.Join(root, "cmd", "probe", "main.go"), []byte(probe))
+	downloadPublishedKit(t, tool, root)
+
+	run := exec.Command(tool, "run", "./cmd/probe")
+	run.Dir = root
+	run.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off", "GOTOOLCHAIN=local")
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("running the published kit against framework %s: %v\n%s", publishedFramework, err, out)
+	}
+	return string(out)
 }
 
 // TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne is the gate over the

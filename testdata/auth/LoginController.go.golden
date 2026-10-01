@@ -67,6 +67,7 @@ type Module struct {
 	csrf     *security.CSRF
 	mailer   *mail.Mailer
 	signer   *encryption.Signer
+	flash    *security.Flash
 	appName  string
 	tenant   TenantResolver
 	secure   bool
@@ -80,6 +81,7 @@ func New(users Users, factors Factors, codes onetime.CodeStore, sessions *securi
 	return &Module{
 		users: users, factors: factors, codes: codes, sessions: sessions,
 		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
+		flash:   security.NewFlash(appKey, secure),
 		appName: appName, tenant: tenant, secure: secure,
 	}
 }

@@ -1421,3 +1421,159 @@ func writeInto(t *testing.T, path string, content []byte) {
 		t.Fatal(err)
 	}
 }
+
+// TestALockedChallengeSendsThePersonBackToSignIn runs the published two-factor
+// handlers against an account whose challenge budget is spent.
+//
+// The application's service answers that with an error carrying Seconds() that
+// also matches twofactor.ErrInvalidCode, so a handler that only knew about wrong
+// codes would answer 422 and leave the challenge on screen, to be refused again
+// on every try with the pending cookie still live. Both challenge screens must
+// instead end the pending sign-in, say how long the account waits, and send the
+// person to sign in, where the reason is drawn. A plain wrong code must still be
+// the 422 it was.
+func TestALockedChallengeSendsThePersonBackToSignIn(t *testing.T) {
+	out := runAgainstPublishedKit(t, lockedChallengeProbe)
+
+	for _, want := range []string{
+		"login status=303",
+		"challenge: wrong status=422 pending-cleared=false",
+		"challenge: locked status=303 location=/auth/login retry-after=900 pending-cleared=true",
+		"recovery: wrong status=422 pending-cleared=false",
+		"recovery: locked status=303 location=/auth/login retry-after=900 pending-cleared=true",
+		"sign-in screen: Too many codes. Sign in again in 15 minutes.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// lockedChallengeProbe drives the published module through its own router: a
+// password sign-in that starts a challenge, then each challenge screen offered a
+// wrong code and a code the account may no longer offer.
+const lockedChallengeProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/security"
+	twofactor "github.com/arandu-io/hesape/2fa"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+// locked is what the application's service returns once the account has
+// offered too many codes: it matches the invalid-code sentinel as well.
+type locked struct{}
+
+func (locked) Error() string { return "two-factor: too many codes" }
+func (locked) Seconds() int { return 900 }
+func (locked) Unwrap() error { return twofactor.ErrInvalidCode }
+
+var user = models.User{ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: "secret"}
+
+type users struct{ authui.Users }
+
+func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
+	return user, nil
+}
+
+func (users) FindForAuthentication(context.Context, string, string) (models.User, error) {
+	return user, nil
+}
+
+type factors struct {
+	authui.Factors
+	err error
+}
+
+func (factors) Required(context.Context, string, string) (bool, error) { return true, nil }
+
+func (f *factors) VerifyAuthenticator(context.Context, string, string, string) error { return f.err }
+
+func (f *factors) ConsumeRecovery(context.Context, string, string, string) error { return f.err }
+
+func main() {
+	for _, name := range []string{"auth.login", "auth.two-factor.challenge", "auth.two-factor.recovery"} {
+		view.Register(name, func(w io.Writer, data any) error {
+			_, err := io.WriteString(w, data.(authui.AuthPage).Status)
+			return err
+		})
+	}
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	f := &factors{}
+	module := authui.New(users{}, f, nil, sessions, security.NewCSRF(appKey, time.Hour), nil,
+		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+
+	post := func(path string, form url.Values, cookies []*http.Cookie) *http.Response {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w.Result()
+	}
+	cleared := func(res *http.Response) bool {
+		for _, c := range res.Cookies() {
+			if c.Name == "two-factor-pending" && c.MaxAge < 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	signIn := post("/auth/login", url.Values{"email": {user.Email}, "password": {user.Password}}, nil)
+	fmt.Printf("login status=%d\n", signIn.StatusCode)
+	pending := signIn.Cookies()
+
+	var flash []*http.Cookie
+	for _, screen := range []struct{ name, path, field string }{
+		{"challenge", "/auth/two-factor/challenge", "authenticator_code"},
+		{"recovery", "/auth/two-factor/recovery", "recovery_code"},
+	} {
+		f.err = fmt.Errorf("wrapped: %w", twofactor.ErrInvalidCode)
+		res := post(screen.path, url.Values{screen.field: {"123456"}}, pending)
+		fmt.Printf("%s: wrong status=%d pending-cleared=%t\n", screen.name, res.StatusCode, cleared(res))
+
+		f.err = fmt.Errorf("wrapped: %w", locked{})
+		res = post(screen.path, url.Values{screen.field: {"123456"}}, pending)
+		fmt.Printf("%s: locked status=%d location=%s retry-after=%s pending-cleared=%t\n", screen.name,
+			res.StatusCode, res.Header.Get("Location"), res.Header.Get("Retry-After"), cleared(res))
+		flash = res.Cookies()
+	}
+	if !errors.Is(locked{}, twofactor.ErrInvalidCode) {
+		panic("the probe's lock does not match the invalid-code sentinel, so it proves nothing")
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+	r.Header.Set("Accept", "text/html")
+	for _, c := range flash {
+		if c.MaxAge >= 0 {
+			r.AddCookie(c)
+		}
+	}
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+	fmt.Printf("sign-in screen: %s\n", w.Body.String())
+}
+`

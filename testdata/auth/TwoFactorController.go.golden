@@ -4,8 +4,10 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -113,6 +115,9 @@ func (m *Module) verifyTwoFactorChallenge(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, code); err != nil {
+		if m.challengeLocked(w, r, err) {
+			return
+		}
 		if errors.Is(err, twofactor.ErrInvalidCode) {
 			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.challenge", AuthPage{
 				Page: m.page(r, "Two-factor challenge"), AuthenticatorCodeError: "that code is not valid",
@@ -150,6 +155,9 @@ func (m *Module) verifyRecoveryChallenge(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, code); err != nil {
+		if m.challengeLocked(w, r, err) {
+			return
+		}
 		if errors.Is(err, twofactor.ErrInvalidCode) {
 			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.recovery", AuthPage{
 				Page: m.page(r, "Use a recovery code"), RecoveryCodeError: "that recovery code is not valid",
@@ -161,6 +169,38 @@ func (m *Module) verifyRecoveryChallenge(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	m.finishSignIn(w, r, u, remember)
+}
+
+// challengeLocked ends the pending sign-in when the account has offered too
+// many codes to the challenge, and reports whether it did.
+//
+// It runs before the wrong-code branch because a lock also matches
+// twofactor.ErrInvalidCode: answered as a wrong code, it would leave the
+// challenge on screen to be tried again, and every try would be refused. The
+// count belongs to the account, so nothing the pending cookie carries can
+// succeed until the window passes -- the cookie is cleared, the person is sent
+// back to sign in with the reason on the screen, and Retry-After says how long
+// the account waits.
+func (m *Module) challengeLocked(w http.ResponseWriter, r *http.Request, err error) bool {
+	var locked retryAfterError
+	if !errors.As(err, &locked) {
+		return false
+	}
+	m.clearPending(w)
+	m.flash.Write(w, map[string][]string{signInNotice: {lockedMessage(locked.Seconds())}}, nil)
+	w.Header().Set("Retry-After", strconv.Itoa(locked.Seconds()))
+	redirect(w, r, "/auth/login")
+	return true
+}
+
+// lockedMessage is what the sign-in screen says after a lock, in whole minutes
+// rounded up.
+func lockedMessage(seconds int) string {
+	minutes := (seconds + 59) / 60
+	if minutes <= 1 {
+		return "Too many codes. Sign in again in a minute."
+	}
+	return fmt.Sprintf("Too many codes. Sign in again in %d minutes.", minutes)
 }
 
 func (m *Module) showTwoFactorSetup(w http.ResponseWriter, r *http.Request) {

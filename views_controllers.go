@@ -154,6 +154,7 @@ type Module struct {
 	csrf     *security.CSRF
 	mailer   *mail.Mailer
 	signer   *encryption.Signer
+	flash    *security.Flash
 	appName  string
 	tenant   TenantResolver
 	secure   bool
@@ -167,6 +168,7 @@ func New(users Users, factors Factors, codes onetime.CodeStore, sessions *securi
 	return &Module{
 		users: users, factors: factors, codes: codes, sessions: sessions,
 		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
+		flash: security.NewFlash(appKey, secure),
 		appName: appName, tenant: tenant, secure: secure,
 	}
 }
@@ -240,9 +242,18 @@ type retryAfterError interface {
 	Seconds() int
 }
 
-// showLogin renders the form.
+// signInNotice is the key, in the flash a redirect to the sign-in screen
+// leaves, of the sentence that screen draws as its status line.
+const signInNotice = "status"
+
+// showLogin renders the form, with the reason a redirect sent somebody here
+// when one left it in the flash.
 func (m *Module) showLogin(w http.ResponseWriter, r *http.Request) {
-	m.screen(w, r, "auth.login", AuthPage{Page: m.page(r, "Sign in")})
+	page := AuthPage{Page: m.page(r, "Sign in")}
+	if notes, _, ok := m.flash.Take(w, r); ok {
+		page.Status = first(notes[signInNotice])
+	}
+	m.screen(w, r, "auth.login", page)
 }
 
 // doLogin validates the password without creating identity. A final session is
