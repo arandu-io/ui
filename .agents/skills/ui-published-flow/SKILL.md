@@ -64,7 +64,7 @@ form posts, and a second name for one address is a choice nobody can make
 correctly.
 
 `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-`flow_internal_test.go:1225` holds this table **exactly, order included, the
+`flow_internal_test.go:1226` holds this table **exactly, order included, the
 last column too**. A route added to the kit is therefore a row somebody wrote
 there, rather than a screen that quietly arrives unnamed — and a route that
 moved from `Action` back to `Post` is a handler that would have to draw its own
@@ -72,7 +72,7 @@ refusal.
 
 The application-owned module preserves the established authentication names:
 `auth.login` resolves to `/auth/login` and `auth.logout` to `/auth/logout`.
-`TestTheNamesSurviveTheSubstitution` at `flow_internal_test.go:1293`
+`TestTheNamesSurviveTheSubstitution` at `flow_internal_test.go:1294`
 compiles the published Go into a module of its own and asks. It also checks the
 two the guards redirect to — `auth.login` against `middleware.SignInPath`,
 `auth.password.confirm` against `middleware.PasswordConfirmPath` — because a
@@ -89,13 +89,13 @@ comments.
 fill it in here, in the same change.** A URL field read by a template and
 assigned by nobody renders `action=""`, which posts to the current URL and looks
 like it worked. `TestEveryAddressAScreenReadsIsFilledInSomewhere` at
-`flow_internal_test.go:559` fails on either half.
+`flow_internal_test.go:560` fails on either half.
 
 **3. If you added a route, add its row to the table** of
 `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-`flow_internal_test.go:1225`, and make sure something draws the screen it serves.
+`flow_internal_test.go:1226`, and make sure something draws the screen it serves.
 `TestEveryScreenThisKitPublishesIsDrawnBySomething` at
-`flow_internal_test.go:898` parses every published Go file and requires each
+`flow_internal_test.go:899` parses every published Go file and requires each
 view to be named by one. The landing page shipped once with the Login and
 Register buttons on it, reachable by nothing, while the dashboard was drawn for
 guests and signed-in people alike.
@@ -123,7 +123,7 @@ file that does not build.
 
 It **compiles** in
 `TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework` at
-`publish_internal_test.go:927`, which lays the ten Go files into a throwaway
+`publish_internal_test.go:1019`, which lays the ten Go files into a throwaway
 module requiring the framework by published tag — no `replace`, so it is the
 framework a person receives and not the checkout beside this one — and runs
 `go build`. That is the test that fails when a handler calls a symbol the
@@ -138,7 +138,8 @@ a request struct beside it — `loginRequest`, `registrationRequest`,
 `LogValue` that says which fields arrived and nothing they carried, and fills
 it with `ctx.Bind(&in)`, returning the error as it came. A key the struct does
 not declare reaches no field, an unticked box is `false`, and every value
-arrives trimmed — the password too. No handler calls `PostFormValue`,
+arrives trimmed but a password, which arrives as typed from hesape v0.50.2 on.
+No handler calls `PostFormValue`,
 `FormValue`, `ParseForm` or `Validate()`; the checks a form needs are written
 in the handler, where they were. `aru doctor` reports the first shape as
 `input-read-by-hand` and the second as `validate-called-by-controller`, and
@@ -173,9 +174,15 @@ input is carried back and dropped.
 Only an `Action` has a router to return to and a context to bind from, so a
 handler that reads a form is registered with `g.Action(stdhttp.MethodPost, …)`
 and takes the response and request off the context (`w, r := ctx.Response,
-ctx.Request`). `Routes` hands the router the
-module's own flash, so a rejection and a notice travel in one cookie format on
-any router, including one a test builds. A status a refusal carries goes on the
+ctx.Request`). `Routes` writes the module's notices with the
+router's flash when the router carries one, as the kernel's does, and hands a
+router that carries none — one a test builds — the flash `New` made, so a
+rejection and a notice always travel in one cookie with one key and one Secure
+attribute. It asks through the `flashCarrier` interface rather than calling
+`r.Flash()`, so the file still compiles against a framework older than v0.53.0,
+where the module wires its own flash as before.
+`TestTheKitWritesItsNoticesWithTheRoutersFlash` tells the two apart by key and
+by Secure. A status a refusal carries goes on the
 header before returning — the sign-in lock sets `Retry-After` and returns the
 message. `TestARejectedFormIsReturnedToTheRouter` refuses a published Go file
 that writes a refusal status, and
@@ -200,14 +207,31 @@ scripts are deferred and may never arrive. A handler must go through
 `HX-Redirect` under HTMX and a 303 with a `Location` otherwise. Setting the
 header directly gives a plain browser form post 200 and an empty body — a blank
 page. `TestTheRedirectSurvivesWithoutJavaScript` at
-`publish_internal_test.go:714` checks both exits.
+`publish_internal_test.go:806` checks both exits.
+
+**A password stored trimmed signs in once more.** Bind trimmed the password
+until hesape v0.50.2, so one chosen with spaces at its ends through the v0.21.0
+handlers was hashed without them. `doLogin` asks `Users.VerifyCredentials` with
+the password as typed; only when that is a plain refusal — not a lock, which is
+why `wrongPassword` rules out a `retryAfterError` that also matches
+`ErrInvalidCredentials` — and the typed password differs from a non-empty
+trimmed form does it call `verifyTrimmedPassword`. That compares the trimmed
+form against the hash `Users.Lookup` returns, or a decoy when no account with a
+password answers, inside a timebox as long as the service's, so the refusal
+takes as long either way. On success it stores the password as typed through
+`Users.ResetPassword`, bound to the fingerprint of the hash it compared, and the
+sign-in goes on with the rewritten account — so the pending two-factor cookie
+carries the new fingerprint. It is one attempt: the service counted the typed
+form and nothing here counts again. The refusal is the usual one. Its doc
+comment says when to delete it, and
+`TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped` runs every branch.
 
 **Verification and reset use purpose-bound native codes.** Both flows issue and
 consume through the application's `onetime.CodeStore`; the purpose and subject
 keep a code from crossing flows or accounts, and consumption is single-use and
 atomic. `TestTheResetUsesOnlyPurposeBoundNativeCodes` at
-`flow_internal_test.go:337` and `TestNothingIsConsumedUntilThePasswordIsAcceptable`
-at `flow_internal_test.go:398` keep the password flow on that boundary.
+`flow_internal_test.go:338` and `TestNothingIsConsumedUntilThePasswordIsAcceptable`
+at `flow_internal_test.go:399` keep the password flow on that boundary.
 
 **What the sign-up form asks for is a setting, not a shape.** `registrationAsks`
 in `RegisterController.go` is one of `PasswordTwice` (the zero value, and what
@@ -266,8 +290,8 @@ against a fake service returning a lock and a wrong code.
 code is on its way.* — whether it is or not, and nothing is mailed to an address
 nobody looked up.
 `TestTheResetSaysTheSameThingWhetherTheAddressIsRegisteredOrNot` at
-`flow_internal_test.go:426` and `TestNothingIsMailedToAnAddressNobodyLookedUp` at
-`flow_internal_test.go:357`.
+`flow_internal_test.go:427` and `TestNothingIsMailedToAnAddressNobodyLookedUp` at
+`flow_internal_test.go:358`.
 
 **Provisioning material and CSRF do not survive serialization.** `AuthPage`
 carries the session's CSRF token plus the authenticator secret, the QR code and
@@ -275,7 +299,7 @@ recovery codes. The QR code is an image: the setup screen spells out the
 `data:image/svg+xml;base64,` scheme and `AuthPage.QRCodeImage` answers the
 body, so no published Go names `html/template` or `template.HTML`. A type that serializes itself whole is one debug dump away from
 publishing them, so `MarshalJSON` and `LogValue` are written by hand.
-`TestNeitherTokenSurvivesBeingSerialized` at `flow_internal_test.go:1039`.
+`TestNeitherTokenSurvivesBeingSerialized` at `flow_internal_test.go:1040`.
 
 **The tenant does not come from the request body**, and the kit does not
 migrate. `TestTheTenantDoesNotComeFromTheRequestBody` at
@@ -295,8 +319,11 @@ Two checks stand there, and both must pass before a signature changes:
 - `TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes` at
   `publish_internal_test.go:647` — the printed instruction against the emitted
   constructor, for `controllers.NewHomeController` and `authui.New`.
+- `TestTheWiringPassesTheOneSecureDecision` — the last argument of the printed
+  `authui.New` is `cfg.Framework.Session.Secure`, the value the session cookie
+  and the kernel's flash follow, and not the skeleton's own reading.
 - `TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes` at
-  `publish_internal_test.go:681` — the emitted constructor against the sibling
+  `publish_internal_test.go:773` — the emitted constructor against the sibling
   `../arandu` skeleton. It **skips** when that checkout is not beside this
   module, so a green run on a machine with only this repository proves nothing
   about it. Check the sibling out before changing a signature.

@@ -32,7 +32,14 @@ rewrite them.
 Every form is converted with `ctx.Bind` into a request struct declared beside
 its handler, and no handler reads a field by hand. A new password is checked
 against one policy, `passwordPolicy`, and the password box on the sign-up and
-reset screens draws its checklist from that same policy.
+reset screens draws its checklist from that same policy. A password reaches the
+handler as typed from hesape v0.50.2 on; one stored without the spaces at its
+ends, because an earlier `Bind` trimmed it, still signs in when typed with them,
+once, and is then stored as typed.
+
+The module writes its notices with the flash the router already carries, and the
+cookies it sets itself take `cfg.Framework.Session.Secure`, the decision the
+session cookie follows. The wiring the command prints passes that value.
 
 Every screen is answered whole, and so is a rejected form. A handler that
 refuses one returns `validation.Errors` and the router sends the person back to

@@ -91,9 +91,9 @@ If a screen needs something new, add the field to `authPageTemplate` **and fill
 it in from a handler in the same change.** A URL field read by a template and
 assigned by nobody renders `action=""`, which posts to the current URL and looks
 like it worked. `TestEveryAddressAScreenReadsIsFilledInSomewhere` in
-`flow_internal_test.go:559` fails on either half — read and never filled, filled
+`flow_internal_test.go:560` fails on either half — read and never filled, filled
 and never read — and `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` at
-`flow_internal_test.go:741` does the same for the messages: every field a
+`flow_internal_test.go:742` does the same for the messages: every field a
 handler rejects with needs an input of that `Name` on some screen, and a notice
 needs a screen that draws `.Status`.
 
@@ -245,7 +245,7 @@ received a layout that panicked on every request, and the layout is in
 `.BrandName`, filled from the application's own configuration. The verification
 mail once carried the literal word, so every project running this command signed
 its first message to its own users with a name that was not theirs.
-`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:633`
+`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:634`
 searches every published file for it.
 
 ## Message bodies
@@ -263,6 +263,6 @@ custom block in kyse comment syntax:
 
 That block is the wording a project decided to send its own users, and a
 republish carries it over. `TestBothMessagesAreBuiltTheSameWay` at
-`flow_internal_test.go:667` fails if a mail view loses it. Both parts of both
+`flow_internal_test.go:668` fails if a mail view loses it. Both parts of both
 messages ship — a mail with no plain-text part is filed as spam more often and
 shows nothing in a client that cannot render HTML.

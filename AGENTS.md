@@ -1,4 +1,3 @@
-| `TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault` | an `htmx-config` in the published layout that sets anything but `includeIndicatorStyles:false` |
 # Working in this repository
 
 This is the starter kit. It is a `package main` whose whole job is to write
@@ -129,7 +128,7 @@ a fixture under `testdata/retired/`, taken from the golden file at the tag.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 102 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 106 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 1 file retired, removed by `--force` while it is still the kit's bytes, and 3 fixtures, one per version published | `sed -n '/^var retired/,/^}/p' publish.go \| grep -c 'Path:'` and `ls testdata/retired \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 10 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
@@ -140,7 +139,7 @@ screens and four two-factor screens — 4 are message bodies, an HTML part and a
 plain-text part for each of the two messages the flow sends, and none is a
 fragment. The three are counted separately by
 `TestTheAuthViewsAreSeventeenAndWellFormed` in
-`views_internal_test.go:20`, because they are different things: a mail body has
+`views_internal_test.go:21`, because they are different things: a mail body has
 no layout, no navigation and no token, and a fragment has no layout either but
 for the opposite reason — it is swapped **into** a page that already drew one.
 
@@ -149,7 +148,15 @@ router.** The ten routes that read a form are registered with `Action`. Each
 handler converts its form with `ctx.Bind` into a request struct declared beside
 it — form tags, and a `LogValue` that says which fields arrived and nothing they
 carried — reads no field by hand and calls no `Validate()`; the checks the form
-needs stay in the handler. `Bind` trims every value, the password included. A
+needs stay in the handler. `Bind` trims every value but a password, which
+reaches the handler as typed from hesape v0.50.2 on. A password stored trimmed
+before that — chosen with spaces at its ends through the v0.21.0 handlers — gets
+one more try: when the typed form is refused, is not a lock and differs from its
+trimmed form, `verifyTrimmedPassword` in `LoginController_handlers.go` compares
+the trimmed form, stores the password as typed through `Users.ResetPassword` on
+success, and refuses the rest with the usual message, as one attempt and inside
+the same timebox whether the account exists or not. Its doc comment says when to
+delete it. A
 handler that refuses the form returns `validation.Errors`, and a new password is
 checked against `passwordPolicy` in `RegisterController.go`, the same
 declaration the sign-up and reset screens hand the password box as
@@ -167,12 +174,27 @@ refusal can be sent back to and a reload never repeats the post. The layout
 leaves htmx's response handling at its default: teaching it to swap a 422 would
 be a second way to answer the same rejection.
 
+**One flash and one Secure decision.** The kernel's router carries the flash the
+application reads back, and `Routes` writes the module's notices with it; only a
+router with none — one a test builds — is handed the flash `New` made. The
+router is asked through a small interface rather than `r.Flash()`, so the
+published file still compiles against a framework older than v0.53.0. The
+printed wiring passes `cfg.Framework.Session.Secure` as the module's `secure`,
+the value the session cookie and the kernel's flash follow, and the pending
+two-factor cookie takes it. `TestTheWiringPassesTheOneSecureDecision` holds the
+printed argument and `TestThePendingCookieCarriesTheSecureNewWasGiven` reads the
+cookie off a running module. The compile and run gates pin framework v0.53.0 and
+hesape v0.50.2.
+
 | gate | what it refuses |
 | --- | --- |
 | `TestARejectedFormIsReturnedToTheRouter` | a published Go file that writes a refusal status or draws a refusal itself |
 | `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` | a route whose name, method or `Action` registration differs from the table — the last column is who answers a rejection |
 | `TestARejectedSignInGoesBackToTheFormInEveryTransport` | runs the published module: page, htmx and JSON answers to a refused sign-in, and the reset code reached by a redirect |
 | `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` | a field a handler rejects with that no screen has an input for, or a notice no screen draws |
+| `TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault` | an `htmx-config` in the published layout that sets anything but `includeIndicatorStyles:false` |
+| `TestTheKitWritesItsNoticesWithTheRoutersFlash` | runs the published module: a notice or a refusal written with a flash other than the router's, or a router with no flash left without the module's |
+| `TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped` | runs the published sign-in against a user service that hashes for real: a password stored trimmed that stays locked out or is not rewritten as typed, a second attempt counted, a second form tried on a lock or on an empty trimmed form, or a refusal that differs or escapes the timebox |
 | `TestNoPublishedHandlerReadsItsFormByHand` | a published controller that reads a field by hand or calls `Validate()`, or an `Action` whose handler does not call `ctx.Bind(&in)` |
 | `TestTheChecklistAndTheHandlerAreOnePasswordPolicy` | a password box that chooses a password without `Policy: .PasswordPolicy`, a screen whose handler does not fill it, or a handler that checks a new password against anything but `passwordPolicy` |
 | `TestTheQRCodeIsAnImageAndNoPublishedGoImportsHTMLTemplate` | published Go naming `html/template` or `template.HTML`, a `{!! !!}` that is not a component, or a setup screen not drawing the QR code as an image |
@@ -285,4 +307,4 @@ shipped the literal word, so every project running this command signed its first
 message to its own users with the name of the framework. The brand is a field,
 filled from the application's configuration, and
 `TestNothingTheKitPublishesIsBrandedWithItsOwnName` in
-`flow_internal_test.go:633` reads every published file to keep it that way.
+`flow_internal_test.go:634` reads every published file to keep it that way.

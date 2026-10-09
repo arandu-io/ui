@@ -151,7 +151,8 @@ because both have shipped wrong:
   `TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes` at
   `publish_internal_test.go:647` parses both the printed call and the published
   constructor and compares the arity. It shipped with three parameters emitted
-  and five passed.
+  and five passed. `TestTheWiringPassesTheOneSecureDecision` holds the last
+  argument of `authui.New` to `cfg.Framework.Session.Secure`.
 - The blank-import block is computed by `blankImports` in `main.go:73` from what
   `AuthViews` actually writes, never typed out. A view added to the kit cannot
   ship with an instruction that does not mention it — which is how a project
@@ -171,7 +172,7 @@ because both have shipped wrong:
    one new golden file per new published file.
 4. If it mounts a route, the route and its name go in the table of
    `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-   `flow_internal_test.go:1225`, which is exact and ordered on purpose.
+   `flow_internal_test.go:1226`, which is exact and ordered on purpose.
 5. Run the gates.
 
 ## What it refuses to publish into
