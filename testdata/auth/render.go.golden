@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/arandu-io/framework/mail"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
+	"github.com/arandu-io/hesape/validation"
 	"github.com/arandu-io/hesape/view"
 
 	models "example.test/project/app/Models"
@@ -67,29 +69,56 @@ func (m *Module) page(r *http.Request, title string) view.Page {
 	})
 }
 
-func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, data AuthPage) {
-	m.screenStatus(w, r, http.StatusOK, name, data)
+// statusNotice is the key, in the flash a redirect leaves, of the sentence the
+// screen it lands on draws as its status line: an address just confirmed, a
+// code just sent, a sign-in turned away by the challenge.
+const statusNotice = "status"
+
+// notify sends the person to another screen with a sentence for it to draw.
+//
+// Every screen this kit draws after a form succeeded is reached this way, by a
+// redirect rather than by a body answering the post. Two reasons, and either
+// would do: a reload of the screen that follows asks for that screen instead of
+// posting the form again, and the form on it remembers an address it can be
+// sent back to. A rejected form goes back to the Referer, and a screen drawn at
+// a POST-only address is one nothing can be sent back to.
+//
+// old is what the next screen's boxes start with, such as the address the
+// person just used; a password field in it is dropped by the flash.
+func (m *Module) notify(w http.ResponseWriter, r *http.Request, to, notice string, old url.Values) {
+	m.flash.Write(w, map[string][]string{statusNotice: {notice}}, old)
+	redirect(w, r, to)
 }
 
-func (m *Module) fragment(w http.ResponseWriter, r *http.Request, status int, screen, part string, data AuthPage) {
-	name := screen
-	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") != "true" {
-		name = part
-	}
-	m.screenStatus(w, r, status, name, data)
-}
-
-// screenStatus renders a screen of the kit with the status given.
+// screen renders a screen of the kit.
+//
+// It is always 200, because nothing here draws a refusal: a rejected form is
+// returned to the router, which sends the person back to it. What that attempt
+// left in the flash is put on the page here, for every screen at once -- the
+// messages by field, which the components ask for through view.Page.FieldError,
+// what was typed, which they start from through view.Page.OldOr, and a notice
+// another screen left, which becomes the status line.
 //
 // The token every screen carries is the one CSRFProtect put on the request
-// context: issued on a GET for this visitor's session, or for their guest cookie
-// when they have none, and on a POST it accepted, the token that was submitted,
-// so a form redrawn after a rejection still validates. No screen issues one.
-func (m *Module) screenStatus(w http.ResponseWriter, r *http.Request, status int, name string, data AuthPage) {
+// context, issued for this visitor's session or for their guest cookie when
+// they have none. No screen issues one.
+func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, data AuthPage) {
 	token, _ := hhttp.CSRFTokenFrom(r.Context())
 	if data.Page.Title == "" {
 		data.Page = m.page(r, "Account")
 	}
+	state := hhttp.StateFrom(r.Context())
+	data.Page.Errors = validation.Errors{}
+	for field, messages := range state.Errors {
+		if field == statusNotice {
+			if data.Status == "" {
+				data.Status = first(messages)
+			}
+			continue
+		}
+		data.Page.Errors[field] = messages
+	}
+	data.Page.Old = state.Old
 	data.Page.Path = r.URL.Path
 	data.Page.AppName = m.appName
 	data.Page.Token = token
@@ -107,7 +136,7 @@ func (m *Module) screenStatus(w http.ResponseWriter, r *http.Request, status int
 	data.TwoFactorSetupConfirmURL = "/auth/two-factor/setup/confirm"
 	data.TwoFactorDisableURL = "/auth/two-factor/disable"
 	data.RecoveryCodesURL = "/auth/two-factor/recovery-codes"
-	if err := view.NewRenderer().Render(r.Context(), w, status, name, data); err != nil {
+	if err := view.NewRenderer().Render(r.Context(), w, http.StatusOK, name, data); err != nil {
 		log.For(r.Context()).Error("rendering "+name, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}

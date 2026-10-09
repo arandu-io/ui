@@ -9,9 +9,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/arandu-io/hesape/hashing"
+	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/onetime"
 	"github.com/arandu-io/hesape/validation"
@@ -100,7 +102,10 @@ func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
+// doRegister creates the account. A refused form is returned to the router,
+// which sends the person back to it with the messages and what was typed.
+func (m *Module) doRegister(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	in := registrationInput{
 		Name: strings.TrimSpace(r.PostFormValue("name")),
 		Email: strings.TrimSpace(r.PostFormValue("email")),
@@ -129,32 +134,30 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
 		errs["password_confirmation"] = []string{"the two passwords do not match"}
 	}
-	if len(errs) != 0 {
-		m.rejectedRegistration(w, r, in, errs)
-		return
+	if errs.Any() {
+		return errs
 	}
 
 	u, err := m.users.Register(r.Context(), m.tenant(r), in.Name, in.Email, in.Password)
 	if err != nil {
 		if errors.Is(err, services.ErrEmailTaken) {
-			m.rejectedRegistration(w, r, in, validation.Errors{
-				"email": {"that address is already registered. Sign in instead."},
-			})
-			return
+			return validation.Errors{"email": {"that address is already registered. Sign in instead."}}
 		}
+		// The application's own rules answer the same way as the ones above:
+		// validation.Errors is returned as it came, and the router draws it.
 		var invalid validation.Errors
 		if errors.As(err, &invalid) {
-			m.rejectedRegistration(w, r, in, invalid)
-			return
+			return err
 		}
 		log.For(r.Context()).Error("registration failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	if err := m.sendVerification(r, u); err != nil {
 		log.For(r.Context()).Error("sending the verification code", "error", err)
 	}
 	redirect(w, r, "/auth/verify")
+	return nil
 }
 
 func (m *Module) showVerifyNotice(w http.ResponseWriter, r *http.Request) {
@@ -166,31 +169,28 @@ func (m *Module) showVerifyNotice(w http.ResponseWriter, r *http.Request) {
 
 // verify is deliberately POST-only. The code is bound to purpose, tenant and
 // user, and MarkVerified repeats the captured address condition at the write.
-func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
+func (m *Module) verify(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	code := strings.TrimSpace(r.PostFormValue("email_code"))
 	if email == "" || code == "" {
-		m.rejectedVerification(w, r, email, "type the code from your email")
-		return
+		return validation.Errors{"email_code": {"type the code from your email"}}
 	}
 	u, err := m.users.Lookup(r.Context(), m.tenant(r), email)
 	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), code) != nil {
-		m.rejectedVerification(w, r, email, "that code is not valid")
-		return
+		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
 	if err != nil {
 		log.For(r.Context()).Error("marking an address verified", "error", err)
-		m.rejectedVerification(w, r, email, "that code is not valid")
-		return
+		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	status := "That address was already confirmed. Sign in."
 	if firstVerification {
 		status = "Your address is confirmed. Welcome."
 	}
-	m.screen(w, r, "auth.login", AuthPage{
-		Page: m.page(r, "Sign in"), Email: u.Email, Status: status,
-	})
+	m.notify(w, r, "/auth/login", status, url.Values{"email": {u.Email}})
+	return nil
 }
 
 // resendVerification does not reveal whether the address exists. The native
@@ -202,10 +202,7 @@ func (m *Module) resendVerification(w http.ResponseWriter, r *http.Request) {
 			log.For(r.Context()).Error("resending the verification code", "error", err)
 		}
 	}
-	m.screen(w, r, "auth.verify", AuthPage{
-		Page: m.page(r, "Confirm your address"), Email: email,
-		Status: verificationSent, Resent: true,
-	})
+	m.notify(w, r, "/auth/verify", verificationSent, url.Values{"email": {email}})
 }
 
 func (m *Module) sendVerification(r *http.Request, u models.User) error {
@@ -220,23 +217,6 @@ func (m *Module) sendVerification(r *http.Request, u models.User) error {
 
 func emailCodeSubject(u models.User) string {
 	return u.TenantID + "\x00" + u.ID + "\x00" + services.NormalizeEmail(u.Email)
-}
-
-func (m *Module) rejectedVerification(w http.ResponseWriter, r *http.Request, email, message string) {
-	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.verify", AuthPage{
-		Page: m.page(r, "Confirm your address"), Email: email, EmailCodeError: message,
-	})
-}
-
-func (m *Module) rejectedRegistration(w http.ResponseWriter, r *http.Request, in registrationInput, errs validation.Errors) {
-	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.register", AuthPage{
-		Page: m.page(r, "Create an account"), Name: in.Name, Email: in.Email,
-		WithoutPasswordBox: !registrationAsks.asksForPassword(),
-		WithoutConfirmationBox: !registrationAsks.asksForConfirmation(),
-		NameError: first(errs["name"]), EmailError: first(errs["email"]),
-		PasswordError: first(errs["password"]),
-		PasswordConfirmationError: first(errs["password_confirmation"]),
-	})
 }
 
 func first(messages []string) string {
@@ -264,11 +244,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/arandu-io/framework/mail"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
+	"github.com/arandu-io/hesape/validation"
 	"github.com/arandu-io/hesape/view"
 
 	models "{{ .ModulePath }}/app/Models"
@@ -326,29 +308,56 @@ func (m *Module) page(r *http.Request, title string) view.Page {
 	})
 }
 
-func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, data AuthPage) {
-	m.screenStatus(w, r, http.StatusOK, name, data)
+// statusNotice is the key, in the flash a redirect leaves, of the sentence the
+// screen it lands on draws as its status line: an address just confirmed, a
+// code just sent, a sign-in turned away by the challenge.
+const statusNotice = "status"
+
+// notify sends the person to another screen with a sentence for it to draw.
+//
+// Every screen this kit draws after a form succeeded is reached this way, by a
+// redirect rather than by a body answering the post. Two reasons, and either
+// would do: a reload of the screen that follows asks for that screen instead of
+// posting the form again, and the form on it remembers an address it can be
+// sent back to. A rejected form goes back to the Referer, and a screen drawn at
+// a POST-only address is one nothing can be sent back to.
+//
+// old is what the next screen's boxes start with, such as the address the
+// person just used; a password field in it is dropped by the flash.
+func (m *Module) notify(w http.ResponseWriter, r *http.Request, to, notice string, old url.Values) {
+	m.flash.Write(w, map[string][]string{statusNotice: {notice}}, old)
+	redirect(w, r, to)
 }
 
-func (m *Module) fragment(w http.ResponseWriter, r *http.Request, status int, screen, part string, data AuthPage) {
-	name := screen
-	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") != "true" {
-		name = part
-	}
-	m.screenStatus(w, r, status, name, data)
-}
-
-// screenStatus renders a screen of the kit with the status given.
+// screen renders a screen of the kit.
+//
+// It is always 200, because nothing here draws a refusal: a rejected form is
+// returned to the router, which sends the person back to it. What that attempt
+// left in the flash is put on the page here, for every screen at once -- the
+// messages by field, which the components ask for through view.Page.FieldError,
+// what was typed, which they start from through view.Page.OldOr, and a notice
+// another screen left, which becomes the status line.
 //
 // The token every screen carries is the one CSRFProtect put on the request
-// context: issued on a GET for this visitor's session, or for their guest cookie
-// when they have none, and on a POST it accepted, the token that was submitted,
-// so a form redrawn after a rejection still validates. No screen issues one.
-func (m *Module) screenStatus(w http.ResponseWriter, r *http.Request, status int, name string, data AuthPage) {
+// context, issued for this visitor's session or for their guest cookie when
+// they have none. No screen issues one.
+func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, data AuthPage) {
 	token, _ := hhttp.CSRFTokenFrom(r.Context())
 	if data.Page.Title == "" {
 		data.Page = m.page(r, "Account")
 	}
+	state := hhttp.StateFrom(r.Context())
+	data.Page.Errors = validation.Errors{}
+	for field, messages := range state.Errors {
+		if field == statusNotice {
+			if data.Status == "" {
+				data.Status = first(messages)
+			}
+			continue
+		}
+		data.Page.Errors[field] = messages
+	}
+	data.Page.Old = state.Old
 	data.Page.Path = r.URL.Path
 	data.Page.AppName = m.appName
 	data.Page.Token = token
@@ -366,7 +375,7 @@ func (m *Module) screenStatus(w http.ResponseWriter, r *http.Request, status int
 	data.TwoFactorSetupConfirmURL = "/auth/two-factor/setup/confirm"
 	data.TwoFactorDisableURL = "/auth/two-factor/disable"
 	data.RecoveryCodesURL = "/auth/two-factor/recovery-codes"
-	if err := view.NewRenderer().Render(r.Context(), w, status, name, data); err != nil {
+	if err := view.NewRenderer().Render(r.Context(), w, http.StatusOK, name, data); err != nil {
 		log.For(r.Context()).Error("rendering "+name, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
@@ -386,13 +395,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/hashing"
+	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	hmiddleware "github.com/arandu-io/hesape/routing/middleware"
+	"github.com/arandu-io/hesape/validation"
 
 	appmail "{{ .ModulePath }}/app/Mail"
 	models "{{ .ModulePath }}/app/Models"
@@ -415,9 +427,7 @@ func (m *Module) sendPasswordCode(w http.ResponseWriter, r *http.Request) {
 			log.For(r.Context()).Error("sending the password reset code", "error", err)
 		}
 	}
-	m.screen(w, r, "auth.passwords.reset", AuthPage{
-		Page: m.page(r, "Choose a new password"), Email: email, Status: codeSent,
-	})
+	m.notify(w, r, "/auth/password/reset", codeSent, url.Values{"email": {email}})
 }
 
 func (m *Module) sendPasswordReset(r *http.Request, u models.User) error {
@@ -441,51 +451,40 @@ func (m *Module) showPasswordReset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (m *Module) updatePassword(w http.ResponseWriter, r *http.Request) {
+// updatePassword writes the new password. A refused form is returned to the
+// router, which sends the person back to it; the code is consumed only once
+// the password is acceptable, so a rejection never spends it.
+func (m *Module) updatePassword(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	code := strings.TrimSpace(r.PostFormValue("email_code"))
 	password := r.PostFormValue("password")
 	confirmation := r.PostFormValue("password_confirmation")
 	if code == "" {
-		m.rejectedReset(w, r, email, "type the code from your email", "", "")
-		return
+		return validation.Errors{"email_code": {"type the code from your email"}}
 	}
 	if password != confirmation {
-		m.rejectedReset(w, r, email, "", "", "the two passwords do not match")
-		return
+		return validation.Errors{"password_confirmation": {"the two passwords do not match"}}
 	}
 	if len([]rune(password)) < hashing.MinPasswordLen {
-		m.rejectedReset(w, r, email, "", fmt.Sprintf("must be at least %d characters", hashing.MinPasswordLen), "")
-		return
+		return validation.Errors{"password": {fmt.Sprintf("must be at least %d characters", hashing.MinPasswordLen)}}
 	}
 	u, err := m.users.Lookup(r.Context(), m.tenant(r), email)
 	if err != nil || m.codes.Consume(r.Context(), resetPurpose, resetCodeSubject(u), code) != nil {
-		m.rejectedReset(w, r, email, "that code is not valid", "", "")
-		return
+		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	capturedEmail := u.Email
 	capturedPasswordFingerprint := u.PasswordFingerprint()
 	u, err = m.users.ResetPassword(r.Context(), u.TenantID, u.ID, capturedEmail, capturedPasswordFingerprint, password)
 	if err != nil {
 		log.For(r.Context()).Error("writing the new password", "error", err)
-		m.rejectedReset(w, r, email, "that code is not valid", "", "")
-		return
+		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	if err := m.sessions.DestroyOthers(r.Context(), subjectOf(u), ""); err != nil {
 		log.For(r.Context()).Error("signing the account's other sessions out", "error", err)
 	}
-	m.screen(w, r, "auth.login", AuthPage{
-		Page: m.page(r, "Sign in"), Email: u.Email,
-		Status: "Your password has been changed. Sign in with it.",
-	})
-}
-
-func (m *Module) rejectedReset(w http.ResponseWriter, r *http.Request, email, codeError, passwordError, confirmationError string) {
-	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.passwords.reset", AuthPage{
-		Page: m.page(r, "Choose a new password"), Email: email,
-		EmailCodeError: codeError, PasswordError: passwordError,
-		PasswordConfirmationError: confirmationError,
-	})
+	m.notify(w, r, "/auth/login", "Your password has been changed. Sign in with it.", url.Values{"email": {u.Email}})
+	return nil
 }
 
 func (m *Module) showPasswordConfirm(w http.ResponseWriter, r *http.Request) {
@@ -494,45 +493,39 @@ func (m *Module) showPasswordConfirm(w http.ResponseWriter, r *http.Request) {
 
 // confirmPassword checks the password of the person RequireAuth let through,
 // whose subject the guard put on the request context.
-func (m *Module) confirmPassword(w http.ResponseWriter, r *http.Request) {
+func (m *Module) confirmPassword(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	subject, ok := nativeauth.SubjectFrom(r.Context())
 	if !ok {
 		redirect(w, r, "/auth/login")
-		return
+		return nil
 	}
 	password := r.PostFormValue("password")
 	if password == "" {
-		m.rejectedConfirmation(w, r, http.StatusUnprocessableEntity, "type your password to go on")
-		return
+		return validation.Errors{"password": {"type your password to go on"}}
 	}
 	if err := m.users.ConfirmPassword(r.Context(), subject, password, hmiddleware.KeyByIP(r)); err != nil {
 		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
-			m.rejectedConfirmation(w, r, http.StatusUnauthorized, "that is not the password for this account")
-			return
+			return validation.Errors{"password": {"that is not the password for this account"}}
 		}
 		var locked retryAfterError
 		if errors.As(err, &locked) {
 			w.Header().Set("Retry-After", strconv.Itoa(locked.Seconds()))
-			m.rejectedConfirmation(w, r, http.StatusTooManyRequests,
-				fmt.Sprintf("too many attempts, try again in %d seconds", locked.Seconds()))
-			return
+			return validation.Errors{
+				"password": {fmt.Sprintf("too many attempts, try again in %d seconds", locked.Seconds())},
+			}
 		}
 		log.For(r.Context()).Error("confirming a password", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	if err := m.sessions.Confirm(r.Context(), w, r); err != nil {
 		log.For(r.Context()).Error("recording the password confirmation", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	redirect(w, r, m.sessions.TakeIntended(w, r, "/"))
-}
-
-func (m *Module) rejectedConfirmation(w http.ResponseWriter, r *http.Request, status int, message string) {
-	m.screenStatus(w, r, status, "auth.passwords.confirm", AuthPage{
-		Page: m.page(r, "Confirm your password"), PasswordError: message,
-	})
+	return nil
 }
 `
 
@@ -554,9 +547,11 @@ import (
 
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/qr"
+	"github.com/arandu-io/hesape/validation"
 
 	models "{{ .ModulePath }}/app/Models"
 )
@@ -642,35 +637,35 @@ func (m *Module) showTwoFactorChallenge(w http.ResponseWriter, r *http.Request) 
 	m.screen(w, r, "auth.two-factor.challenge", AuthPage{Page: m.page(r, "Two-factor challenge")})
 }
 
-func (m *Module) verifyTwoFactorChallenge(w http.ResponseWriter, r *http.Request) {
+// verifyTwoFactorChallenge finishes a pending sign-in with an authenticator
+// code. A wrong code is returned to the router, which sends the person back to
+// the challenge with the message; the pending cookie lives on, so they can try
+// again until the account's budget says otherwise.
+func (m *Module) verifyTwoFactorChallenge(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	u, remember, err := m.readPending(r)
 	if err != nil {
 		m.clearPending(w)
 		redirect(w, r, "/auth/login")
-		return
+		return nil
 	}
 	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
 	if code == "" {
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.challenge", AuthPage{
-			Page: m.page(r, "Two-factor challenge"), AuthenticatorCodeError: "that code is not valid",
-		})
-		return
+		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
 	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, code); err != nil {
 		if m.challengeLocked(w, r, err) {
-			return
+			return nil
 		}
 		if errors.Is(err, twofactor.ErrInvalidCode) {
-			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.challenge", AuthPage{
-				Page: m.page(r, "Two-factor challenge"), AuthenticatorCodeError: "that code is not valid",
-			})
-			return
+			return validation.Errors{"authenticator_code": {"that code is not valid"}}
 		}
 		log.For(r.Context()).Error("verifying the authenticator code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	m.finishSignIn(w, r, u, remember)
+	return nil
 }
 
 func (m *Module) showRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
@@ -682,43 +677,41 @@ func (m *Module) showRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.two-factor.recovery", AuthPage{Page: m.page(r, "Use a recovery code")})
 }
 
-func (m *Module) verifyRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
+// verifyRecoveryChallenge finishes a pending sign-in with a recovery code, and
+// refuses one the way verifyTwoFactorChallenge refuses an authenticator code.
+func (m *Module) verifyRecoveryChallenge(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	u, remember, err := m.readPending(r)
 	if err != nil {
 		m.clearPending(w)
 		redirect(w, r, "/auth/login")
-		return
+		return nil
 	}
 	code := strings.TrimSpace(r.PostFormValue("recovery_code"))
 	if code == "" {
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.recovery", AuthPage{
-			Page: m.page(r, "Use a recovery code"), RecoveryCodeError: "that recovery code is not valid",
-		})
-		return
+		return validation.Errors{"recovery_code": {"that recovery code is not valid"}}
 	}
 	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, code); err != nil {
 		if m.challengeLocked(w, r, err) {
-			return
+			return nil
 		}
 		if errors.Is(err, twofactor.ErrInvalidCode) {
-			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.recovery", AuthPage{
-				Page: m.page(r, "Use a recovery code"), RecoveryCodeError: "that recovery code is not valid",
-			})
-			return
+			return validation.Errors{"recovery_code": {"that recovery code is not valid"}}
 		}
 		log.For(r.Context()).Error("consuming the recovery code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	m.finishSignIn(w, r, u, remember)
+	return nil
 }
 
 // challengeLocked ends the pending sign-in when the account has offered too
 // many codes to the challenge, and reports whether it did.
 //
 // It runs before the wrong-code branch because a lock also matches
-// twofactor.ErrInvalidCode: answered as a wrong code, it would leave the
-// challenge on screen to be tried again, and every try would be refused. The
+// twofactor.ErrInvalidCode: answered as a wrong code, it would send the person
+// back to the challenge to try again, and every try would be refused. The
 // count belongs to the account, so nothing the pending cookie carries can
 // succeed until the window passes -- the cookie is cleared, the person is sent
 // back to sign in with the reason on the screen, and Retry-After says how long
@@ -729,9 +722,8 @@ func (m *Module) challengeLocked(w http.ResponseWriter, r *http.Request, err err
 		return false
 	}
 	m.clearPending(w)
-	m.flash.Write(w, map[string][]string{signInNotice: {lockedMessage(locked.Seconds())}}, nil)
 	w.Header().Set("Retry-After", strconv.Itoa(locked.Seconds()))
-	redirect(w, r, "/auth/login")
+	m.notify(w, r, "/auth/login", lockedMessage(locked.Seconds()), nil)
 	return true
 }
 
@@ -788,32 +780,35 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (m *Module) confirmTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
+// confirmTwoFactorSetup proves the first authenticator code and shows the
+// recovery codes, once.
+//
+// A wrong code is returned to the router like every other refusal, and it
+// sends the person back to the setup screen with the message. The secret is not
+// carried across that redirect -- it would have to travel in a cookie -- so the
+// screen offers to start again, and starting again issues a new one.
+func (m *Module) confirmTwoFactorSetup(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	subject, ok := nativeauth.SubjectFrom(r.Context())
 	if !ok {
 		redirect(w, r, "/auth/login")
-		return
+		return nil
 	}
 	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
 	if code == "" {
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.setup", AuthPage{
-			Page: m.page(r, "Set up two-factor authentication"), AuthenticatorCodeError: "that code is not valid",
-		})
-		return
+		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
 	recoveryCodes, err := m.factors.Confirm(r.Context(), subject, code)
 	if err != nil {
 		if errors.Is(err, twofactor.ErrInvalidCode) {
-			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.setup", AuthPage{
-				Page: m.page(r, "Set up two-factor authentication"), AuthenticatorCodeError: "that code is not valid",
-			})
-			return
+			return validation.Errors{"authenticator_code": {"that code is not valid"}}
 		}
 		log.For(r.Context()).Error("confirming two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	m.showRecoveryCodes(w, r, recoveryCodes)
+	return nil
 }
 
 func (m *Module) disableTwoFactor(w http.ResponseWriter, r *http.Request) {

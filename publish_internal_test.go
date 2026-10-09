@@ -56,16 +56,18 @@ func TestAuthGolden(t *testing.T) {
 		t.Fatalf("GenerateAuth: %v", err)
 	}
 	// The count is here so that adding a file is a decision somebody made rather
-	// than one that arrived: eleven plain Go files, thirteen screens, one
-	// fragment, four message bodies and the one script.
+	// than one that arrived: eleven plain Go files, thirteen screens, four
+	// message bodies and the one script.
 	//
 	// It was thirteen, and the missing nine were the ones that made the kit a
 	// flow: register.kyse.go and verify.kyse.go posted to addresses nobody
 	// registered, and the password reset stopped one step short of writing the
 	// password. It was twenty-eight until the layout's own tag for custom.js
-	// had nothing behind it in a project older than the tag.
-	if len(files) != 30 {
-		t.Fatalf("generated %d files, want 30", len(files))
+	// had nothing behind it in a project older than the tag. It was thirty while
+	// the sign-in form was a fragment of its own, answered alone when a sign-in
+	// was refused; a refusal now goes back to the whole screen.
+	if len(files) != 29 {
+		t.Fatalf("generated %d files, want 29", len(files))
 	}
 
 	for _, f := range files {
@@ -164,18 +166,20 @@ func TestTheFailureMessageDoesNotEnumerateAccounts(t *testing.T) {
 	}
 }
 
-// TestTheFormCarriesAFreshToken: the fragment that comes back after a rejection
-// has to bring a usable CSRF token, or the second attempt fails the check for
-// reasons nobody can see from the browser.
+// TestTheFormCarriesAFreshToken: the screen a rejected sign-in lands on has to
+// bring a usable CSRF token, or the second attempt fails the check for reasons
+// nobody can see from the browser.
 func TestTheFormCarriesAFreshToken(t *testing.T) {
-	// The form, which is a file of its own: it is what comes back on a rejection,
-	// so it is where the token, the swap and the absent password have to be.
-	views := authFile(t, "partials/login_form.kyse.go")
+	// The sign-in screen. A rejection is answered with a redirect back to it,
+	// so the screen drawn afterwards is a whole page with the token of its own
+	// request -- which is why the form must not ask for a piece of itself back:
+	// a swap of the form alone would keep whatever the page around it said.
+	views := authFile(t, "auth/login.kyse.go")
 
 	// The token is read in render.go, which is the one place every screen of
 	// the kit goes through, from the request context where CSRFProtect put it:
-	// issued for this visitor on a GET, and the one it accepted on a POST, so a
-	// redrawn form still validates. It used to be issued here, bound to the
+	// issued for this visitor on a GET, so a screen drawn after a redirect
+	// carries one that validates. It used to be issued here, bound to the
 	// session id alone, and a guest has none -- the issuer refuses an empty
 	// binding, so every screen a guest sees answered 500. And it used to be
 	// issued in each handler, which is what let showLogin drift: it built its
@@ -194,8 +198,9 @@ func TestTheFormCarriesAFreshToken(t *testing.T) {
 	if !strings.Contains(views, "@csrf") {
 		t.Error("the form has no CSRF field")
 	}
-	if !strings.Contains(views, `hx-swap="outerHTML"`) || !strings.Contains(views, `hx-target="this"`) {
-		t.Error("the form does not replace itself: the swapped-in markup would keep the stale token")
+	if strings.Contains(views, "hx-target") || strings.Contains(views, "hx-swap") {
+		t.Error("the form asks for a piece of itself back: a refused sign-in is answered with a redirect, " +
+			"and the screen it lands on is drawn whole")
 	}
 	if strings.Contains(views, "form.Password") {
 		t.Error("the password is echoed back into the form")
@@ -303,8 +308,8 @@ func typeSpec(t *testing.T, file *ast.File, name string) *ast.TypeSpec {
 	return nil
 }
 
-// The thirteen screens land at the paths people look for, the fragment lands
-// under partials/, and the controller lands beside them.
+// The thirteen screens land at the paths people look for, and the controller
+// lands beside them.
 //
 // The command used to write four files into modules/authui/ and declare itself
 // with a manifest. It is not a module any more -- it is the project's own code,
@@ -330,8 +335,6 @@ func TestTheStarterKitLandsInTheProjectTree(t *testing.T) {
 		"resources/views/auth/passwords/confirm.kyse.go",
 		"resources/views/auth/passwords/email.kyse.go",
 		"resources/views/auth/passwords/reset.kyse.go",
-		// The one fragment, under the directory that makes it one.
-		"resources/views/partials/login_form.kyse.go",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("%s was not generated", want)
@@ -1246,171 +1249,46 @@ func withoutRegion(body, opener, closer string) string {
 	}
 }
 
-// TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap is the state half of
-// the gate above, and it covers the one boundary of the four with no compiler
-// behind it.
+// TestTheKitPublishesNoFragmentAndAsksForNone holds the kit to answering every
+// screen whole.
 //
-// Four things in a published page can hold a value, and what tells them apart is
-// when each is next drawn: a component holds nothing and is re-run wherever its
-// caller is, the layout is drawn once per document and no swap redraws it, a
-// screen is the whole document for one request, and a fragment is what is inside
-// one swap target. Three of those seams are typed. A layout renders through
-// view.Layout and a component is handed the page as components.Page, so neither
-// can name a field of a screen and neither compiles if it tries. The fourth --
-// the screen and the piece of it answered alone -- is one type: @include hands
-// the page's own data straight through, so the fragment names the same struct
-// and nothing separates page state from fragment state.
+// A direct visit, a boosted link and a history restore each get the whole
+// document, and so does a rejected form: the action returns validation.Errors,
+// the router sends the person back with a redirect, and the screen that follows
+// is drawn like any other. Nothing on these screens asks for a piece of itself
+// back, so nothing here may answer one -- a view under partials/, a call to
+// Context.Fragment or a handler-side helper that picks between the two would be
+// a second way to answer the same request.
 //
-// What that costs is a defect with no symptom. Module.fragment answers the part
-// when htmx asked for one, and on that branch the screen around it is not
-// rendered at all. So a handler that fills a field only the screen draws sends
-// the value inside a response whose other half the browser never had: the status
-// is right, the markup in the hole is right, and the sentence is gone. Status is
-// the field this would happen to first -- login.kyse.go draws it above the card,
-// outside the form, which is exactly where a swap of the form does not reach.
-//
-// So the check is per call and not per file: for every m.fragment in the
-// published Go, every field of the AuthPage literal it is given has to be one
-// the named part draws. Page is skipped, because it is the chrome and the
-// paragraph below is about it.
-//
-// A validation message is not drawn by its own name and is still drawn: the
-// components ask the page through FieldError, so EmailError reaches the reader
-// wherever an input is called "email". That indirection is followed here rather
-// than worked around, which is what makes this stricter than a search for the
-// field name and not weaker.
-func TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap(t *testing.T) {
-	files := mustGenerateAuth(t)
-
-	views := map[string]string{}
-	for _, f := range files {
-		if path := filepath.ToSlash(f.Path); strings.HasSuffix(path, ".kyse.go") {
-			views[path] = viewBody(f.Content)
-		}
-	}
-	byInput := fieldErrorNames(t, authFile(t, "page.go"))
-
-	var checked int
-	for _, f := range files {
-		path := filepath.ToSlash(f.Path)
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".kyse.go") {
-			continue
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), filepath.Base(path), f.Content, parser.AllErrors)
-		if err != nil {
-			t.Fatalf("%s does not parse: %v", path, err)
-		}
-
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || types.ExprString(call.Fun) != "m.fragment" || len(call.Args) != 6 {
-				return true
-			}
-
-			part, ok := call.Args[4].(*ast.BasicLit)
-			if !ok || part.Kind != token.STRING {
-				t.Errorf("%s answers with a part whose name is built rather than written, so nothing "+
-					"can follow it back to the view it draws", path)
-				return true
-			}
-			name := strings.Trim(part.Value, `"`)
-			source := "resources/views/" + strings.ReplaceAll(name, ".", "/") + ".kyse.go"
-			body, published := views[source]
-			if !published {
-				t.Errorf("%s answers with %q and this kit publishes no %s", path, name, source)
-				return true
-			}
-			checked++
-
-			literal, ok := call.Args[5].(*ast.CompositeLit)
-			if !ok {
-				return true
-			}
-			drawn := fieldsRead(body)
-			for _, elt := range literal.Elts {
-				kv, ok := elt.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				key, ok := kv.Key.(*ast.Ident)
-				// Page is the chrome. It is filled on every path because the
-				// other branch of this same call renders the whole screen, and
-				// on this one the layout is not redrawn either -- so it is
-				// outside the target by design rather than by mistake.
-				if !ok || key.Name == "Page" {
-					continue
-				}
-				if slices.Contains(drawn, key.Name) {
-					continue
-				}
-				if input, mapped := byInput[key.Name]; mapped && strings.Contains(body, `Name: "`+input+`"`) {
-					continue
-				}
-				t.Errorf("%s answers %s with AuthPage.%s filled in, and %s does not draw it.\n"+
-					"htmx replaces the target and keeps the rest of the page, so the screen that would have "+
-					"drawn it is not being rendered: the value is computed, sent and dropped, with a correct "+
-					"status and correct markup in the hole.\n"+
-					"Draw it in %s, or answer the whole screen.", path, name, key.Name, source, source)
-			}
-			return true
-		})
-	}
-
-	if checked == 0 {
-		t.Fatal("no published handler answers with a fragment, so this gate read nothing")
-	}
-}
-
-// TestNothingTheLayoutDrawsIsRedrawnInsideASwap is the other half of the same
-// contract, one level out.
-//
-// The layout runs once per document. A swap replaces markup inside the page and
-// never re-runs it, so every value the chrome shows is the one the server gave
-// when the document was fetched, for as long as the tab stays open. A value
-// drawn there and again inside a swap target is therefore one value with two
-// copies, and only the inner one is ever refreshed -- the page then shows both
-// answers at once, and the stale one is the one in the header.
-//
-// hx-swap-oob is the exception and it stays one: it is the only way an answer
-// reaches outside its own target, and writing it is a decision somebody takes
-// rather than one they arrive at.
-func TestNothingTheLayoutDrawsIsRedrawnInsideASwap(t *testing.T) {
-	var layout string
-	fragments := map[string]string{}
+// The kit did publish one, the sign-in form, answered alone with a 422 when a
+// sign-in was refused, and two gates held it to its swap target: one checked
+// that every field a fragment answer filled was drawn inside the swap, the other
+// that nothing the layout drew was drawn inside it as well. They went with the
+// fragment. A screen that comes to need a piece of itself back brings them back
+// with it, from this file's history.
+func TestTheKitPublishesNoFragmentAndAsksForNone(t *testing.T) {
+	var views, code int
 	for _, f := range mustGenerateAuth(t) {
 		path := filepath.ToSlash(f.Path)
-		if !strings.HasSuffix(path, ".kyse.go") {
-			continue
-		}
-		switch kind, _, _ := viewKind(path); kind {
-		case "layout":
-			layout = viewBody(f.Content)
-		case "fragment":
-			fragments[path] = viewBody(f.Content)
-		}
-	}
-	if layout == "" {
-		t.Fatal("the kit published no layout, so this gate read nothing")
-	}
-	if len(fragments) == 0 {
-		t.Fatal("the kit published no fragment, so this gate read nothing")
-	}
-
-	chrome := fieldsRead(layout)
-	for path, body := range fragments {
-		if strings.Contains(body, "hx-swap-oob") {
-			continue
-		}
-		for _, name := range fieldsRead(body) {
-			if !slices.Contains(chrome, name) {
-				continue
+		switch {
+		case strings.HasSuffix(path, ".kyse.go"):
+			views++
+			if kind, _, _ := viewKind(path); kind == "fragment" {
+				t.Errorf("%s is a fragment: nothing the kit publishes is answered in pieces, and a view that "+
+					"can only be swapped into a page is a view no handler here draws", path)
 			}
-			t.Errorf("%s draws .%s and so does the layout.\n"+
-				"The layout is rendered once, with the document, and no swap re-runs it -- so the copy in the "+
-				"chrome keeps whatever it said then while this one is replaced on every answer, and the page "+
-				"shows two values for one fact.\n"+
-				"Draw it in one of the two, or reach the other with hx-swap-oob.", path, name)
+		case strings.HasSuffix(path, ".go"):
+			code++
+			for _, call := range []string{".Fragment(", "m.fragment("} {
+				if strings.Contains(string(f.Content), call) {
+					t.Errorf("%s calls %s: a screen of this kit is answered whole, a rejected form included, "+
+						"and the router is what answers the rejection", path, call)
+				}
+			}
 		}
+	}
+	if views == 0 || code == 0 {
+		t.Fatalf("the kit published %d views and %d Go files, so this gate read nothing", views, code)
 	}
 }
 
@@ -1632,9 +1510,9 @@ func headElements(layout string) []string {
 				}
 				// The content joins the key when it is a constant, which
 				// catches a setting that changed as well as a tag that went.
-				// htmx-config is the one that matters -- it decides what a 422
-				// means and whether htmx injects a stylesheet the policy
-				// refuses -- and it is a setting, not a design choice, so the
+				// htmx-config is the one that matters -- it decides which
+				// answers htmx swaps and whether it injects a stylesheet the
+				// policy refuses -- and it is a setting, not a design choice, so the
 				// two files have no business differing on it. A content the
 				// page fills in is left out: og:title is the title, and the
 				// two layouts are not obliged to word it alike.

@@ -10,23 +10,18 @@ import "github.com/arandu-io/kyse/components"
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 
-	{{-- What a rejected form means.
-	     htmx swaps a response only when its table of response handling says to,
-	     and the default in the copy this framework embeds ends with
-	     {"code":"[45]..","swap":false} -- so a 422 is fetched, is correct, and is
-	     thrown away. The person sees the form they submitted, unchanged, with no
-	     message on it, and concludes the button does nothing. Every screen this
-	     kit publishes is a form, so without this line none of them can say why
-	     they refused anything.
-	     422 comes before the catch-all because htmx takes the first entry that
-	     matches. See framework/http/context.go.
+	{{-- htmx writes a <style> element for its request indicators unless told
+	     not to, and the policy is style-src 'self' with no unsafe-inline: the
+	     browser refuses it, once per page, in a console nobody has open. The
+	     classes it would have written are in the stylesheet already.
 
-	     includeIndicatorStyles is false because htmx would otherwise inject a
-	     <style> element of its own on the first request, and the policy is
-	     style-src 'self' with no unsafe-inline: the browser refuses it, once per
-	     page, in a console nobody has open. The classes it would have written are
-	     in the stylesheet already. --}}
-	<meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"422","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+	     Its table of response handling is left at the default on purpose. A
+	     rejected form is not answered with a 422 to swap: the router sends it
+	     back with a redirect, which htmx follows as a navigation, so the page
+	     after it is a page and a reload asks for that page rather than posting
+	     the form again. A layout that taught htmx to swap a 422 would be a
+	     second way to answer the same rejection. --}}
+	<meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
 	<title>{{ .PageTitle() }}</title>
 	{{-- Both icons, because a browser picks by what it is given: the .ico is the
 	     one asked for by address and sizes="any" is what stops a modern browser

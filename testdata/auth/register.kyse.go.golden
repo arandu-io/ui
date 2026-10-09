@@ -27,7 +27,7 @@ type RegisterData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "name", Label: "Name",
-					Value: .Name, Page: .,
+					Page: .,
 					Autocomplete: "name", Required: true, Autofocus: true,
 				}) !!}
 

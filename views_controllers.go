@@ -60,9 +60,8 @@ func GenerateAuth(m Module) ([]File, error) {
 	}
 
 	// And the views, which are the point of the command: the screens every
-	// application has, at the paths people look for, plus the one fragment they
-	// are answered with. Inside them it is kyse, Tailwind and HTMX -- typed
-	// markup, utilities and hypermedia.
+	// application has, at the paths people look for. Inside them it is kyse,
+	// Tailwind and HTMX -- typed markup, utilities and hypermedia.
 	views, err := AuthViews(m)
 	if err != nil {
 		return nil, err
@@ -184,36 +183,47 @@ var _ foundation.Module = (*Module)(nil)
 func (m *Module) Name() string { return "authui" }
 
 // Routes registers the twenty-three authentication routes.
+//
+// The eight that take a form somebody can get wrong are registered with Action,
+// and the rest with Get and Post. An action returns validation.Errors and the
+// router answers it: a page goes back where it came from with the messages and
+// what was typed, and a client that asked for JSON gets a 422 problem document
+// with the messages by field. No handler here writes a rejection itself.
+//
+// The router is handed this module's flash, the one its notices are written
+// with, so a rejection and a notice travel in the same signed cookie however the
+// router was built -- the kernel's carries a flash already, and a router a test
+// builds carries none.
 func (m *Module) Routes(r *fhttp.Router) {
-	g := r.Group("/auth")
+	g := r.WithFlash(m.flash).Group("/auth")
 	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
 	signedIn := middleware.RequireAuth(m.sessions)
 	confirmed := middleware.RequireConfirmedPassword(m.sessions)
 
 	g.Get("/login", m.showLogin, guest).Name("auth.login")
-	g.Post("/login", m.doLogin, guest)
+	g.Action(stdhttp.MethodPost, "/login", m.doLogin, guest)
 	g.Post("/logout", m.doLogout).Name("auth.logout")
 
 	g.Get("/password", m.showPasswordRequest).Name("auth.password.request")
 	g.Post("/password/email", m.sendPasswordCode).Name("auth.password.email")
 	g.Get("/password/reset", m.showPasswordReset).Name("auth.password.reset")
-	g.Post("/password/update", m.updatePassword).Name("auth.password.update")
+	g.Action(stdhttp.MethodPost, "/password/update", m.updatePassword).Name("auth.password.update")
 	g.Get("/password/confirm", m.showPasswordConfirm, signedIn).Name("auth.password.confirm")
-	g.Post("/password/confirm", m.confirmPassword, signedIn)
+	g.Action(stdhttp.MethodPost, "/password/confirm", m.confirmPassword, signedIn)
 
 	g.Get("/register", m.showRegister, guest).Name("auth.register")
-	g.Post("/register", m.doRegister, guest)
+	g.Action(stdhttp.MethodPost, "/register", m.doRegister, guest)
 	g.Get("/verify", m.showVerifyNotice).Name("auth.verify.notice")
-	g.Post("/verify/confirm", m.verify).Name("auth.verify.confirm")
+	g.Action(stdhttp.MethodPost, "/verify/confirm", m.verify).Name("auth.verify.confirm")
 	g.Post("/verify/resend", m.resendVerification).Name("auth.verify.resend")
 
 	g.Get("/two-factor/challenge", m.showTwoFactorChallenge, guest).Name("auth.two-factor.challenge")
-	g.Post("/two-factor/challenge", m.verifyTwoFactorChallenge, guest)
+	g.Action(stdhttp.MethodPost, "/two-factor/challenge", m.verifyTwoFactorChallenge, guest)
 	g.Get("/two-factor/recovery", m.showRecoveryChallenge, guest).Name("auth.two-factor.recovery")
-	g.Post("/two-factor/recovery", m.verifyRecoveryChallenge, guest)
+	g.Action(stdhttp.MethodPost, "/two-factor/recovery", m.verifyRecoveryChallenge, guest)
 	g.Get("/two-factor/setup", m.showTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup")
 	g.Post("/two-factor/setup", m.beginTwoFactorSetup, signedIn, confirmed)
-	g.Post("/two-factor/setup/confirm", m.confirmTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup.confirm")
+	g.Action(stdhttp.MethodPost, "/two-factor/setup/confirm", m.confirmTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup.confirm")
 	g.Post("/two-factor/disable", m.disableTwoFactor, signedIn, confirmed).Name("auth.two-factor.disable")
 	g.Post("/two-factor/recovery-codes", m.regenerateRecoveryCodes, signedIn, confirmed).Name("auth.two-factor.recovery-codes")
 
@@ -247,24 +257,30 @@ type retryAfterError interface {
 	Seconds() int
 }
 
-// signInNotice is the key, in the flash a redirect to the sign-in screen
-// leaves, of the sentence that screen draws as its status line.
-const signInNotice = "status"
-
-// showLogin renders the form, with the reason a redirect sent somebody here
-// when one left it in the flash.
+// showLogin renders the form.
+//
+// What an attempt that was turned away left behind -- the messages, the address
+// that was typed, a notice from another screen -- is drawn by Module.screen from
+// the flash. The box is the one field drawn by hand rather than by a component,
+// so it is read here: a box that quietly unticks itself after a refused sign-in
+// is worse than an empty field, because nothing on screen says it happened.
 func (m *Module) showLogin(w http.ResponseWriter, r *http.Request) {
-	page := AuthPage{Page: m.page(r, "Sign in")}
-	if notes, _, ok := m.flash.Take(w, r); ok {
-		page.Status = first(notes[signInNotice])
-	}
-	m.screen(w, r, "auth.login", page)
+	m.screen(w, r, "auth.login", AuthPage{
+		Page:     m.page(r, "Sign in"),
+		Remember: hhttp.StateFrom(r.Context()).Old.Get("remember") != "",
+	})
 }
 
 // doLogin validates the password without creating identity. A final session is
 // written here only when no factor is enabled; otherwise a short pending cookie
 // carries the attempt to TwoFactorController.
-func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
+//
+// A refused attempt is returned, never drawn. The router sends the person back
+// to the form with the message and what was typed, minus the password; a reload
+// of the page that follows asks for the form again rather than posting the
+// password a second time.
+func (m *Module) doLogin(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	password := r.PostFormValue("password")
 	remember := r.PostFormValue("remember") != ""
@@ -276,48 +292,44 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 		if password == "" {
 			errs["password"] = []string{"type your password"}
 		}
-		m.rejected(w, r, email, remember, errs, http.StatusUnprocessableEntity)
-		return
+		return errs
 	}
 
 	tenant := m.tenant(r)
 	u, err := m.users.VerifyCredentials(r.Context(), tenant, email, password, hmiddleware.KeyByIP(r))
 	if err != nil {
 		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
-			m.rejected(w, r, email, remember, validation.Errors{
-				"email": {"invalid email or password"},
-			}, http.StatusUnauthorized)
-			return
+			return validation.Errors{"email": {"invalid email or password"}}
 		}
 		var locked retryAfterError
 		if errors.As(err, &locked) {
 			w.Header().Set("Retry-After", strconv.Itoa(locked.Seconds()))
-			m.rejected(w, r, email, remember, validation.Errors{
+			return validation.Errors{
 				"email": {fmt.Sprintf("too many attempts, try again in %d seconds", locked.Seconds())},
-			}, http.StatusTooManyRequests)
-			return
+			}
 		}
 		log.For(r.Context()).Error("login failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 
 	required, err := m.factors.Required(r.Context(), u.TenantID, u.ID)
 	if err != nil {
 		log.For(r.Context()).Error("checking the second factor", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	if required {
 		if err := m.writePending(w, u, remember); err != nil {
 			log.For(r.Context()).Error("starting the second-factor challenge", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
+			return nil
 		}
 		redirect(w, r, "/auth/two-factor/challenge")
-		return
+		return nil
 	}
 	m.finishSignIn(w, r, u, remember)
+	return nil
 }
 
 // finishSignIn is the only session-creation seam in the published flow. It is
@@ -345,32 +357,9 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/auth/login")
 }
 
+// redirect answers HX-Redirect under htmx and a 303 with a Location otherwise.
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	hhttp.Redirect(w, r, to)
-}
-
-// rejected answers the form again, with the reason on it.
-//
-// Just the form under HTMX, and the whole screen without it -- Module.fragment
-// makes that choice, and the two names it is given are what the address draws
-// and what the one control on it draws. This used to name the screen alone: the
-// form asks for its own markup back with hx-target="this", and what came was the
-// document, so every rejected sign-in drew the header, the navigation and a
-// second toaster inside the card.
-//
-// The token is reissued because the session id may have changed, and the email
-// and the remember-me box are kept because retyping either after a rejection is
-// the fastest way to make a login screen unpleasant -- and a box that quietly
-// unticks itself is worse than an empty field, because nothing on screen says it
-// happened. The password never comes back.
-func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, remember bool, errs validation.Errors, status int) {
-	m.fragment(w, r, status, "auth.login", "partials.login_form", AuthPage{
-		Page:       m.page(r, "Sign in"),
-		Email:      email,
-		Remember:   remember,
-		EmailError: first(errs["email"]),
-		PasswordError: first(errs["password"]),
-	})
 }
 
 // arandu:begin custom

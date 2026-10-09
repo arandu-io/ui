@@ -4,9 +4,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/arandu-io/hesape/hashing"
+	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/onetime"
 	"github.com/arandu-io/hesape/validation"
@@ -95,7 +97,10 @@ func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
+// doRegister creates the account. A refused form is returned to the router,
+// which sends the person back to it with the messages and what was typed.
+func (m *Module) doRegister(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	in := registrationInput{
 		Name:                 strings.TrimSpace(r.PostFormValue("name")),
 		Email:                strings.TrimSpace(r.PostFormValue("email")),
@@ -124,32 +129,30 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
 		errs["password_confirmation"] = []string{"the two passwords do not match"}
 	}
-	if len(errs) != 0 {
-		m.rejectedRegistration(w, r, in, errs)
-		return
+	if errs.Any() {
+		return errs
 	}
 
 	u, err := m.users.Register(r.Context(), m.tenant(r), in.Name, in.Email, in.Password)
 	if err != nil {
 		if errors.Is(err, services.ErrEmailTaken) {
-			m.rejectedRegistration(w, r, in, validation.Errors{
-				"email": {"that address is already registered. Sign in instead."},
-			})
-			return
+			return validation.Errors{"email": {"that address is already registered. Sign in instead."}}
 		}
+		// The application's own rules answer the same way as the ones above:
+		// validation.Errors is returned as it came, and the router draws it.
 		var invalid validation.Errors
 		if errors.As(err, &invalid) {
-			m.rejectedRegistration(w, r, in, invalid)
-			return
+			return err
 		}
 		log.For(r.Context()).Error("registration failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	if err := m.sendVerification(r, u); err != nil {
 		log.For(r.Context()).Error("sending the verification code", "error", err)
 	}
 	redirect(w, r, "/auth/verify")
+	return nil
 }
 
 func (m *Module) showVerifyNotice(w http.ResponseWriter, r *http.Request) {
@@ -161,31 +164,28 @@ func (m *Module) showVerifyNotice(w http.ResponseWriter, r *http.Request) {
 
 // verify is deliberately POST-only. The code is bound to purpose, tenant and
 // user, and MarkVerified repeats the captured address condition at the write.
-func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
+func (m *Module) verify(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	code := strings.TrimSpace(r.PostFormValue("email_code"))
 	if email == "" || code == "" {
-		m.rejectedVerification(w, r, email, "type the code from your email")
-		return
+		return validation.Errors{"email_code": {"type the code from your email"}}
 	}
 	u, err := m.users.Lookup(r.Context(), m.tenant(r), email)
 	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), code) != nil {
-		m.rejectedVerification(w, r, email, "that code is not valid")
-		return
+		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
 	if err != nil {
 		log.For(r.Context()).Error("marking an address verified", "error", err)
-		m.rejectedVerification(w, r, email, "that code is not valid")
-		return
+		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	status := "That address was already confirmed. Sign in."
 	if firstVerification {
 		status = "Your address is confirmed. Welcome."
 	}
-	m.screen(w, r, "auth.login", AuthPage{
-		Page: m.page(r, "Sign in"), Email: u.Email, Status: status,
-	})
+	m.notify(w, r, "/auth/login", status, url.Values{"email": {u.Email}})
+	return nil
 }
 
 // resendVerification does not reveal whether the address exists. The native
@@ -197,10 +197,7 @@ func (m *Module) resendVerification(w http.ResponseWriter, r *http.Request) {
 			log.For(r.Context()).Error("resending the verification code", "error", err)
 		}
 	}
-	m.screen(w, r, "auth.verify", AuthPage{
-		Page: m.page(r, "Confirm your address"), Email: email,
-		Status: verificationSent, Resent: true,
-	})
+	m.notify(w, r, "/auth/verify", verificationSent, url.Values{"email": {email}})
 }
 
 func (m *Module) sendVerification(r *http.Request, u models.User) error {
@@ -215,23 +212,6 @@ func (m *Module) sendVerification(r *http.Request, u models.User) error {
 
 func emailCodeSubject(u models.User) string {
 	return u.TenantID + "\x00" + u.ID + "\x00" + services.NormalizeEmail(u.Email)
-}
-
-func (m *Module) rejectedVerification(w http.ResponseWriter, r *http.Request, email, message string) {
-	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.verify", AuthPage{
-		Page: m.page(r, "Confirm your address"), Email: email, EmailCodeError: message,
-	})
-}
-
-func (m *Module) rejectedRegistration(w http.ResponseWriter, r *http.Request, in registrationInput, errs validation.Errors) {
-	m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.register", AuthPage{
-		Page: m.page(r, "Create an account"), Name: in.Name, Email: in.Email,
-		WithoutPasswordBox:     !registrationAsks.asksForPassword(),
-		WithoutConfirmationBox: !registrationAsks.asksForConfirmation(),
-		NameError:              first(errs["name"]), EmailError: first(errs["email"]),
-		PasswordError:             first(errs["password"]),
-		PasswordConfirmationError: first(errs["password_confirmation"]),
-	})
 }
 
 func first(messages []string) string {

@@ -136,8 +136,10 @@ func readModulePath(root string) (string, error) {
 // v0.34.0 and below compile view.Page through the former framework/view alias;
 // application-owned native pages use hesape/view.Page, so those CLIs reject or
 // panic on the generated page even when the markup itself is valid. The v0.35.0
-// compiler emits the native page contract and compiles all eighteen published
-// views, including the four two-factor screens.
+// compiler emits the native page contract and compiles all seventeen published
+// views, including the four two-factor screens -- measured again when the
+// sign-in form went back into its screen and the setup screen started asking
+// the page for its message by field name.
 //
 // Raise it when a view here starts using something an older released CLI
 // cannot compile, and measure the new number the same way: publish into a copy

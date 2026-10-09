@@ -23,13 +23,6 @@ type VerifyData = authui.AuthPage
 			</header>
 
 			<div class="flex flex-col gap-4 px-6 py-6 text-sm">
-				@if(.Resent)
-					{!! components.Alert(components.AlertProps{
-						Title: "A fresh code is on its way",
-						Message: "Check the address you registered with.",
-					}) !!}
-				@endif
-
 				@if(.Status != "" && !.StatusAsToast)
 					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
 				@endif

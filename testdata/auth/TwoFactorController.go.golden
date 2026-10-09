@@ -13,9 +13,11 @@ import (
 
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/qr"
+	"github.com/arandu-io/hesape/validation"
 
 	models "example.test/project/app/Models"
 )
@@ -101,35 +103,35 @@ func (m *Module) showTwoFactorChallenge(w http.ResponseWriter, r *http.Request) 
 	m.screen(w, r, "auth.two-factor.challenge", AuthPage{Page: m.page(r, "Two-factor challenge")})
 }
 
-func (m *Module) verifyTwoFactorChallenge(w http.ResponseWriter, r *http.Request) {
+// verifyTwoFactorChallenge finishes a pending sign-in with an authenticator
+// code. A wrong code is returned to the router, which sends the person back to
+// the challenge with the message; the pending cookie lives on, so they can try
+// again until the account's budget says otherwise.
+func (m *Module) verifyTwoFactorChallenge(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	u, remember, err := m.readPending(r)
 	if err != nil {
 		m.clearPending(w)
 		redirect(w, r, "/auth/login")
-		return
+		return nil
 	}
 	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
 	if code == "" {
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.challenge", AuthPage{
-			Page: m.page(r, "Two-factor challenge"), AuthenticatorCodeError: "that code is not valid",
-		})
-		return
+		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
 	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, code); err != nil {
 		if m.challengeLocked(w, r, err) {
-			return
+			return nil
 		}
 		if errors.Is(err, twofactor.ErrInvalidCode) {
-			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.challenge", AuthPage{
-				Page: m.page(r, "Two-factor challenge"), AuthenticatorCodeError: "that code is not valid",
-			})
-			return
+			return validation.Errors{"authenticator_code": {"that code is not valid"}}
 		}
 		log.For(r.Context()).Error("verifying the authenticator code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	m.finishSignIn(w, r, u, remember)
+	return nil
 }
 
 func (m *Module) showRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
@@ -141,43 +143,41 @@ func (m *Module) showRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.two-factor.recovery", AuthPage{Page: m.page(r, "Use a recovery code")})
 }
 
-func (m *Module) verifyRecoveryChallenge(w http.ResponseWriter, r *http.Request) {
+// verifyRecoveryChallenge finishes a pending sign-in with a recovery code, and
+// refuses one the way verifyTwoFactorChallenge refuses an authenticator code.
+func (m *Module) verifyRecoveryChallenge(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	u, remember, err := m.readPending(r)
 	if err != nil {
 		m.clearPending(w)
 		redirect(w, r, "/auth/login")
-		return
+		return nil
 	}
 	code := strings.TrimSpace(r.PostFormValue("recovery_code"))
 	if code == "" {
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.recovery", AuthPage{
-			Page: m.page(r, "Use a recovery code"), RecoveryCodeError: "that recovery code is not valid",
-		})
-		return
+		return validation.Errors{"recovery_code": {"that recovery code is not valid"}}
 	}
 	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, code); err != nil {
 		if m.challengeLocked(w, r, err) {
-			return
+			return nil
 		}
 		if errors.Is(err, twofactor.ErrInvalidCode) {
-			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.recovery", AuthPage{
-				Page: m.page(r, "Use a recovery code"), RecoveryCodeError: "that recovery code is not valid",
-			})
-			return
+			return validation.Errors{"recovery_code": {"that recovery code is not valid"}}
 		}
 		log.For(r.Context()).Error("consuming the recovery code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	m.finishSignIn(w, r, u, remember)
+	return nil
 }
 
 // challengeLocked ends the pending sign-in when the account has offered too
 // many codes to the challenge, and reports whether it did.
 //
 // It runs before the wrong-code branch because a lock also matches
-// twofactor.ErrInvalidCode: answered as a wrong code, it would leave the
-// challenge on screen to be tried again, and every try would be refused. The
+// twofactor.ErrInvalidCode: answered as a wrong code, it would send the person
+// back to the challenge to try again, and every try would be refused. The
 // count belongs to the account, so nothing the pending cookie carries can
 // succeed until the window passes -- the cookie is cleared, the person is sent
 // back to sign in with the reason on the screen, and Retry-After says how long
@@ -188,9 +188,8 @@ func (m *Module) challengeLocked(w http.ResponseWriter, r *http.Request, err err
 		return false
 	}
 	m.clearPending(w)
-	m.flash.Write(w, map[string][]string{signInNotice: {lockedMessage(locked.Seconds())}}, nil)
 	w.Header().Set("Retry-After", strconv.Itoa(locked.Seconds()))
-	redirect(w, r, "/auth/login")
+	m.notify(w, r, "/auth/login", lockedMessage(locked.Seconds()), nil)
 	return true
 }
 
@@ -247,32 +246,35 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (m *Module) confirmTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
+// confirmTwoFactorSetup proves the first authenticator code and shows the
+// recovery codes, once.
+//
+// A wrong code is returned to the router like every other refusal, and it
+// sends the person back to the setup screen with the message. The secret is not
+// carried across that redirect -- it would have to travel in a cookie -- so the
+// screen offers to start again, and starting again issues a new one.
+func (m *Module) confirmTwoFactorSetup(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
 	subject, ok := nativeauth.SubjectFrom(r.Context())
 	if !ok {
 		redirect(w, r, "/auth/login")
-		return
+		return nil
 	}
 	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
 	if code == "" {
-		m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.setup", AuthPage{
-			Page: m.page(r, "Set up two-factor authentication"), AuthenticatorCodeError: "that code is not valid",
-		})
-		return
+		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
 	recoveryCodes, err := m.factors.Confirm(r.Context(), subject, code)
 	if err != nil {
 		if errors.Is(err, twofactor.ErrInvalidCode) {
-			m.screenStatus(w, r, http.StatusUnprocessableEntity, "auth.two-factor.setup", AuthPage{
-				Page: m.page(r, "Set up two-factor authentication"), AuthenticatorCodeError: "that code is not valid",
-			})
-			return
+			return validation.Errors{"authenticator_code": {"that code is not valid"}}
 		}
 		log.For(r.Context()).Error("confirming two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+		return nil
 	}
 	m.showRecoveryCodes(w, r, recoveryCodes)
+	return nil
 }
 
 func (m *Module) disableTwoFactor(w http.ResponseWriter, r *http.Request) {

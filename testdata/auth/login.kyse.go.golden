@@ -17,9 +17,9 @@ type LoginData = authui.AuthPage
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
-		{{-- The one-shot message a redirect or another handler left behind: an
-		     address just confirmed, a password just changed. It is above the card
-		     because it is about what already happened, not about what to type. --}}
+		{{-- The one-shot message a redirect left behind: an address just
+		     confirmed, a password just changed. It is above the card because it
+		     is about what already happened, not about what to type. --}}
 		@if(.Status != "")
 			@if(!.StatusAsToast)
 				<div class="mb-6">
@@ -36,12 +36,59 @@ type LoginData = authui.AuthPage
 				<h1 class="text-base font-semibold tracking-tight">Login</h1>
 			</header>
 
-			{{-- The form is a file of its own, and it is the one part of this
-			     screen the server ever answers alone: a rejected sign-in comes
-			     back as the form and nothing else, and htmx puts it where this
-			     one is. @include hands over this page's data unchanged, so the
-			     form reads the same struct whichever of the two drew it. --}}
-			@include('partials.login_form')
+			{{-- A rejected sign-in comes back as this whole screen, through a
+			     redirect: the message is on the field, the address is still in
+			     its box, and the password never comes back. --}}
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}">
+				@csrf
+
+				{!! components.Field(components.FieldProps{
+					Name: "email", Label: "Email", Type: "email",
+					Value: .Email, Page: .,
+					Autocomplete: "username", Required: true, Autofocus: true,
+				}) !!}
+
+				{{-- Confirming, because this box is where a password is typed and not
+				     where one is chosen: the policy panel here would grade an existing
+				     password against the rule for new ones. What stays is the eye, which
+				     is the control a sign-in needs most -- a sign-in that failed is
+				     usually a sign-in that was mistyped. --}}
+				{!! components.Password(components.PasswordProps{
+					ComponentProps: components.ComponentProps{Parts: components.Parts{
+						"group": {Class: "relative flex w-full min-w-0 items-center outline-none"},
+						"input": {Class: "text-foreground placeholder:text-muted-foreground block h-full min-w-0 flex-1 appearance-none rounded-none border-0 bg-transparent shadow-none outline-none ring-0 focus-visible:ring-0 aria-invalid:ring-0"},
+						"reveal": {Class: "order-last me-1 shrink-0"},
+					}},
+					Name: "password", Label: "Password",
+					Page: ., Confirming: true,
+					Autocomplete: "current-password", Required: true,
+				}) !!}
+
+				<label class="flex items-center gap-2 text-sm">
+					{{-- checked is a presence attribute: a browser reads the box as ticked
+					     whether the value is "true", "false" or empty, so what is conditional
+					     is the attribute and not its value. @if writes the whole attribute or
+					     none of it, which is how every other boolean attribute in a kyse view
+					     is drawn. --}}
+					<input
+						class="input"
+						type="checkbox"
+						name="remember"
+						value="1"
+						@if(.Remember)
+							checked
+						@endif
+					>
+					Remember me
+				</label>
+
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" class="btn">Login</button>
+					@if(.HasPasswordReset)
+						<a class="text-muted-foreground text-sm hover:underline" href="{{ .PasswordRequestURL }}">Forgot your password?</a>
+					@endif
+				</div>
+			</form>
 		</section>
 	</div>
 @endsection

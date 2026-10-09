@@ -35,8 +35,8 @@ func TestNativeAuthPublicationBoundary(t *testing.T) {
 	}
 	// The total is two more than the Go and the views together: custom.js is
 	// neither, and it is published because the layout asks for it by name.
-	if goFiles != 11 || views != 18 || len(files) != 30 {
-		t.Fatalf("published Go/views/total = %d/%d/%d, want 11/18/30", goFiles, views, len(files))
+	if goFiles != 11 || views != 17 || len(files) != 29 {
+		t.Fatalf("published Go/views/total = %d/%d/%d, want 11/17/29", goFiles, views, len(files))
 	}
 
 	module := authFile(t, "Auth/LoginController.go")
@@ -67,15 +67,15 @@ func TestNativeAuthRouteContractIsExact(t *testing.T) {
 		t.Fatalf("published %d auth routes, want 23", len(routes))
 	}
 	want := []registration{
-		{"Get", "/two-factor/challenge", "auth.two-factor.challenge"},
-		{"Post", "/two-factor/challenge", ""},
-		{"Get", "/two-factor/recovery", "auth.two-factor.recovery"},
-		{"Post", "/two-factor/recovery", ""},
-		{"Get", "/two-factor/setup", "auth.two-factor.setup"},
-		{"Post", "/two-factor/setup", ""},
-		{"Post", "/two-factor/setup/confirm", "auth.two-factor.setup.confirm"},
-		{"Post", "/two-factor/disable", "auth.two-factor.disable"},
-		{"Post", "/two-factor/recovery-codes", "auth.two-factor.recovery-codes"},
+		{"Get", "/two-factor/challenge", "auth.two-factor.challenge", false},
+		{"Post", "/two-factor/challenge", "", true},
+		{"Get", "/two-factor/recovery", "auth.two-factor.recovery", false},
+		{"Post", "/two-factor/recovery", "", true},
+		{"Get", "/two-factor/setup", "auth.two-factor.setup", false},
+		{"Post", "/two-factor/setup", "", false},
+		{"Post", "/two-factor/setup/confirm", "auth.two-factor.setup.confirm", true},
+		{"Post", "/two-factor/disable", "auth.two-factor.disable", false},
+		{"Post", "/two-factor/recovery-codes", "auth.two-factor.recovery-codes", false},
 	}
 	var got []registration
 	for _, route := range routes {
@@ -138,7 +138,7 @@ func TestNativeCodeInputsHaveExactAutocompleteContracts(t *testing.T) {
 func TestEmailMutationsUsePurposeBoundNativeCodes(t *testing.T) {
 	routes := bodyOf(t, authFile(t, "Auth/LoginController.go"), "Routes")
 	if strings.Contains(routes, `g.Get("/verify/confirm"`) ||
-		!strings.Contains(routes, `g.Post("/verify/confirm"`) {
+		!strings.Contains(routes, `g.Action(stdhttp.MethodPost, "/verify/confirm"`) {
 		t.Error("email verification must mutate only through POST")
 	}
 	registration := authFile(t, "RegisterController.go")
@@ -181,13 +181,13 @@ func TestRegistrationRejectsAnAddressTheApplicationAlreadyOwns(t *testing.T) {
 	body := bodyOf(t, authFile(t, "RegisterController.go"), "doRegister")
 	if !strings.Contains(body, "errors.Is(err, services.ErrEmailTaken)") ||
 		!strings.Contains(body, `"email": {"that address is already registered. Sign in instead."}`) {
-		t.Error("application-owned ErrEmailTaken is not returned as a field-level 422 rejection")
+		t.Error("application-owned ErrEmailTaken is not returned to the router as a field-level rejection")
 	}
 }
 
 func TestPasswordCodeResponseDrawsTheFormThatConsumesIt(t *testing.T) {
 	body := bodyOf(t, authFile(t, "PasswordController.go"), "sendPasswordCode")
-	if !strings.Contains(body, `m.screen(w, r, "auth.passwords.reset"`) {
+	if !strings.Contains(body, `m.notify(w, r, "/auth/password/reset", codeSent,`) {
 		t.Error("a sent reset code leaves the user on a screen with nowhere to type it")
 	}
 	if !strings.Contains(authFile(t, "reset.kyse.go"), ".Status") {

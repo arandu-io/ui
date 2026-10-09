@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// The thirteen screens of the starter kit, and the one fragment they are answered
-// with.
+// The thirteen screens of the starter kit.
 //
 // The screens are the ones every application has, at the paths people look for:
 // the layout, the dashboard, the welcome page, sign in, sign up, email
@@ -66,7 +65,8 @@ import (
 //
 //   - layouts/ is the frame. It yields sections and extends nothing.
 //   - partials/ is a fragment: no layout, so it can be swapped into a page that
-//     is already on screen.
+//     is already on screen. This kit publishes none; the rule holds for the
+//     ones a project adds.
 //   - mail/ is a message body: no layout either, for a different reason -- there
 //     is no navigation and no token in an e-mail.
 //   - everything else is a screen, and extends the layout.
@@ -86,27 +86,21 @@ import (
 //   - The layout holds the chrome, and only what cannot change without a full
 //     load. It is drawn once per document and no swap redraws it, so whatever
 //     it says stays what it said when the document arrived.
-//   - A screen holds the state of the whole document for one request. The part
-//     of it outside a swap target is frozen at the first swap, exactly like the
-//     layout's chrome.
+//   - A screen holds the state of the whole document for one request.
 //   - A fragment holds what is inside its own swap target and nothing else.
 //     What it draws is replaced whole by the next answer.
 //
-// The rule at the boundary follows from the last two: a handler answering with
-// a fragment may fill only what that fragment draws. A field that only the
-// screen around it draws is computed, sent and thrown away, because the screen
-// is not being redrawn -- and nothing fails, which is what makes it worth a
-// test rather than a sentence.
+// This kit publishes no fragment, and that is the rule rather than a gap. A
+// direct visit, a boosted link and a history restore each get the whole screen,
+// and so does a rejected form: it is answered with a redirect back to the
+// screen, which is then drawn like any other. A fragment is something an element
+// asks for by name, with its own hx-target, and nothing on these screens needs a
+// piece of itself back. TestTheKitPublishesNoFragmentAndAsksForNone keeps it so.
 //
-// Two of those three seams have a compiler behind them already. A layout
-// renders through view.Layout, an interface, so naming a screen's field there
-// does not build; a component is handed the page as components.Page, another
-// interface, so it cannot name one either. The third has none: @include passes
-// the page's own data straight through, and the fragment names that same
-// struct, so page state and fragment state are one type and nothing keeps them
-// apart. TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap and
-// TestNothingTheLayoutDrawsIsRedrawnInsideASwap read the published bytes where
-// the compiler cannot.
+// Two of the seams that remain have a compiler behind them. A layout renders
+// through view.Layout, an interface, so naming a screen's field there does not
+// build; a component is handed the page as components.Page, another interface,
+// so it cannot name one either.
 //
 // None of the four is the browser, and the browser has a share: what dies with
 // the tab and the server never needs to hear about. That is ui.js's, which the
@@ -145,12 +139,6 @@ func AuthViews(m Module) ([]File, error) {
 		{filepath.Join(dir, "auth", "two-factor", "recovery.kyse.go"), authTwoFactorRecoveryViewTemplate},
 		{filepath.Join(dir, "auth", "two-factor", "setup.kyse.go"), authTwoFactorSetupViewTemplate},
 		{filepath.Join(dir, "auth", "two-factor", "recovery-codes.kyse.go"), authRecoveryCodesViewTemplate},
-
-		// The one fragment. It is the sign-in form, because the sign-in form is
-		// the one control in the kit that asks to be answered on its own -- see
-		// authLoginFormPartialTemplate for why that makes it a file with no
-		// layout rather than a section of the screen it is drawn on.
-		{filepath.Join(dir, "partials", "login_form.kyse.go"), authLoginFormPartialTemplate},
 
 		// The message bodies. Both parts of both messages: a mail with no
 		// plain-text part is filed as spam more often, and shows nothing at all
@@ -213,19 +201,14 @@ import (
 // error instead of a blank link -- and a form can never carry another session's
 // token under load.
 //
-// # Which side of a swap a field is on
+// # Where a rejected form's messages are
 //
-// The form under resources/views/partials/ renders from this same struct:
-// @include hands the page's data through unchanged, so both the screen and the
-// one part of it that is answered alone read these fields. Nothing in the type
-// separates them, and the two are not refreshed together -- what the form draws
-// is replaced when the form is swapped, and what only the screen around it
-// draws is not redrawn at all.
-//
-// It decides what a handler may fill. Answering the form alone with a field
-// only the screen draws sends the value inside a response whose other half the
-// browser discards: the right status, the right markup in the hole, and a
-// sentence nobody ever reads. Fill what the form draws, or answer the screen.
+// Not here. A handler that refuses a form returns validation.Errors to the
+// router, which sends the person back with the messages and what was typed in
+// the flash, and the screen that follows is drawn whole, like any other page.
+// The flash lands in the embedded view.Page -- Errors and Old -- and the inputs
+// ask for both through the page they are handed, so a message is never a field
+// some handler has to remember to copy.
 type AuthPage struct {
 	view.Page
 
@@ -289,13 +272,17 @@ type AuthPage struct {
 	// Status is the one-shot message a redirect left behind, such as the
 	// confirmation that a reset code was sent. Empty means nothing to say.
 	Status string
-	// Resent says a fresh verification code just went out.
-	Resent bool
 
-	// Name, Email and Remember are what the person typed on the attempt that
-	// was rejected. The password is deliberately absent: it is never sent back.
-	Name     string
-	Email    string
+	// Email is the address a link to the screen carried, for the screens that
+	// are reached from a message. What was typed on an attempt that was
+	// rejected is not here: it is in view.Page.Old, which the inputs start
+	// from, and the messages are in view.Page.Errors, which they ask through
+	// FieldError. The flash fills both, on every screen, so no handler does.
+	Email string
+
+	// Remember is whether the sign-in screen's remember-me box is drawn ticked:
+	// the box is markup rather than a component, so the handler reads it out of
+	// what the rejected attempt left behind.
 	Remember bool
 
 	// Provisioning material is rendered once and deliberately omitted from
@@ -303,16 +290,6 @@ type AuthPage struct {
 	QRCodeSVG        string
 	SecretKey        string
 	RecoveryCodesText string
-
-	// The validation messages, one field at a time. Empty means the field was
-	// accepted -- there is no @error directive to ask a bag on the side.
-	NameError                 string
-	EmailError                string
-	EmailCodeError            string
-	AuthenticatorCodeError    string
-	RecoveryCodeError         string
-	PasswordError             string
-	PasswordConfirmationError string
 }
 
 // Compile-time proof that these screens fit the layout, and that a component
@@ -321,41 +298,6 @@ var (
 	_ view.Layout     = AuthPage{}
 	_ components.Page = AuthPage{}
 )
-
-// FieldError answers the question a kyse component asks about an input.
-//
-// components.FieldProps carries the page and the field name, and asks; it does
-// not carry the message as a third prop, because that meant writing the field
-// name twice in one call and the two could disagree without anything saying so.
-// See the doc comment on components.FieldProps for the whole of that argument.
-//
-// These screens keep the messages in named fields rather than in the map
-// view.Page carries, because a typed field is one the compiler checks: a
-// handler that sets PasswordConfirmatonError does not build, where a map key
-// spelt the same way is simply never read. This method is the seam between the
-// two -- the fields stay the source, and the components see one interface.
-//
-// A name with no field of its own falls through to view.Page, which is where a
-// message put in the map by anything generic would be.
-func (p AuthPage) FieldError(name string) string {
-	switch name {
-	case "name":
-		return p.NameError
-	case "email":
-		return p.EmailError
-	case "email_code":
-		return p.EmailCodeError
-	case "authenticator_code":
-		return p.AuthenticatorCodeError
-	case "recovery_code":
-		return p.RecoveryCodeError
-	case "password":
-		return p.PasswordError
-	case "password_confirmation":
-		return p.PasswordConfirmationError
-	}
-	return p.Page.First(name)
-}
 
 // AsksForPassword reports whether the sign-up form draws a password box.
 //
@@ -418,18 +360,13 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		RecoveryCodesURL string
 
 		Status   string
-		Resent   bool
-		Name     string
 		Email    string
 		Remember bool
 
-		NameError                 string
-		EmailError                string
-		EmailCodeError            string
-		AuthenticatorCodeError    string
-		RecoveryCodeError         string
-		PasswordError             string
-		PasswordConfirmationError string
+		// The messages of a rejected attempt, by field. What was typed is
+		// left out with the rest of the input: it is the person's, and a
+		// dump is read by whoever is debugging.
+		Errors map[string][]string
 	}{
 		Title:         p.Page.Title,
 		AppName:       p.Page.AppName,
@@ -454,18 +391,10 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		RecoveryCodesURL: p.RecoveryCodesURL,
 
 		Status:   p.Status,
-		Resent:   p.Resent,
-		Name:     p.Name,
 		Email:    p.Email,
 		Remember: p.Remember,
 
-		NameError:                 p.NameError,
-		EmailError:                p.EmailError,
-		EmailCodeError:            p.EmailCodeError,
-		AuthenticatorCodeError:    p.AuthenticatorCodeError,
-		RecoveryCodeError:         p.RecoveryCodeError,
-		PasswordError:             p.PasswordError,
-		PasswordConfirmationError: p.PasswordConfirmationError,
+		Errors: p.Page.Errors,
 	})
 }
 
@@ -536,23 +465,18 @@ import "github.com/arandu-io/kyse/components"
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 
-	{{-- What a rejected form means.
-	     htmx swaps a response only when its table of response handling says to,
-	     and the default in the copy this framework embeds ends with
-	     {"code":"[45]..","swap":false} -- so a 422 is fetched, is correct, and is
-	     thrown away. The person sees the form they submitted, unchanged, with no
-	     message on it, and concludes the button does nothing. Every screen this
-	     kit publishes is a form, so without this line none of them can say why
-	     they refused anything.
-	     422 comes before the catch-all because htmx takes the first entry that
-	     matches. See framework/http/context.go.
+	{{-- htmx writes a <style> element for its request indicators unless told
+	     not to, and the policy is style-src 'self' with no unsafe-inline: the
+	     browser refuses it, once per page, in a console nobody has open. The
+	     classes it would have written are in the stylesheet already.
 
-	     includeIndicatorStyles is false because htmx would otherwise inject a
-	     <style> element of its own on the first request, and the policy is
-	     style-src 'self' with no unsafe-inline: the browser refuses it, once per
-	     page, in a console nobody has open. The classes it would have written are
-	     in the stylesheet already. --}}
-	<meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"422","swap":true},{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+	     Its table of response handling is left at the default on purpose. A
+	     rejected form is not answered with a 422 to swap: the router sends it
+	     back with a redirect, which htmx follows as a navigation, so the page
+	     after it is a page and a reload asks for that page rather than posting
+	     the form again. A layout that taught htmx to swap a 422 would be a
+	     second way to answer the same rejection. --}}
+	<meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
 	<title>{{ .PageTitle() }}</title>
 	{{-- Both icons, because a browser picks by what it is given: the .ico is the
 	     one asked for by address and sizes="any" is what stops a modern browser
@@ -844,15 +768,17 @@ type WelcomeData = authui.AuthPage
 
 // authLoginViewTemplate is the sign-in screen.
 //
-// It draws Status, and that block is not decoration. Two handlers render this
-// screen to say something good happened -- the address was confirmed, the
-// password was changed -- and with no block for it the string was computed,
-// passed and thrown away: somebody who had just finished a password reset was
-// shown an ordinary sign-in form with nothing on it to say the reset worked.
+// It draws Status, and that block is not decoration. Three flows end here to say
+// something good happened -- the address was confirmed, the password was
+// changed -- or to say why a sign-in was turned away, and with no block for it
+// the sentence was computed, passed and thrown away: somebody who had just
+// finished a password reset was shown an ordinary sign-in form with nothing on
+// it to say the reset worked.
 //
-// The form itself is not here. It is a partial, because it is the one control
-// the kit publishes that is answered on its own -- see
-// authLoginFormPartialTemplate.
+// The form is a plain form. A rejected sign-in is answered with a redirect back
+// to this screen, and the screen is drawn whole with the message on the field,
+// so nothing here asks for a piece of itself back -- the body's hx-boost is the
+// only htmx the form needs.
 const authLoginViewTemplate = `//go:build kyse
 
 package auth
@@ -872,9 +798,9 @@ type LoginData = authui.AuthPage
 
 @section('content')
 	<div class="mx-auto w-full max-w-md">
-		{{-- The one-shot message a redirect or another handler left behind: an
-		     address just confirmed, a password just changed. It is above the card
-		     because it is about what already happened, not about what to type. --}}
+		{{-- The one-shot message a redirect left behind: an address just
+		     confirmed, a password just changed. It is above the card because it
+		     is about what already happened, not about what to type. --}}
 		@if(.Status != "")
 			@if(!.StatusAsToast)
 				<div class="mb-6">
@@ -891,163 +817,62 @@ type LoginData = authui.AuthPage
 				<h1 class="text-base font-semibold tracking-tight">Login</h1>
 			</header>
 
-			{{-- The form is a file of its own, and it is the one part of this
-			     screen the server ever answers alone: a rejected sign-in comes
-			     back as the form and nothing else, and htmx puts it where this
-			     one is. @include hands over this page's data unchanged, so the
-			     form reads the same struct whichever of the two drew it. --}}
-			@include('partials.login_form')
+			{{-- A rejected sign-in comes back as this whole screen, through a
+			     redirect: the message is on the field, the address is still in
+			     its box, and the password never comes back. --}}
+			<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}">
+				@csrf
+
+				{!! components.Field(components.FieldProps{
+					Name: "email", Label: "Email", Type: "email",
+					Value: .Email, Page: .,
+					Autocomplete: "username", Required: true, Autofocus: true,
+				}) !!}
+
+				{{-- Confirming, because this box is where a password is typed and not
+				     where one is chosen: the policy panel here would grade an existing
+				     password against the rule for new ones. What stays is the eye, which
+				     is the control a sign-in needs most -- a sign-in that failed is
+				     usually a sign-in that was mistyped. --}}
+				{!! components.Password(components.PasswordProps{
+					ComponentProps: components.ComponentProps{Parts: components.Parts{
+						"group": {Class: "relative flex w-full min-w-0 items-center outline-none"},
+						"input": {Class: "text-foreground placeholder:text-muted-foreground block h-full min-w-0 flex-1 appearance-none rounded-none border-0 bg-transparent shadow-none outline-none ring-0 focus-visible:ring-0 aria-invalid:ring-0"},
+						"reveal": {Class: "order-last me-1 shrink-0"},
+					}},
+					Name: "password", Label: "Password",
+					Page: ., Confirming: true,
+					Autocomplete: "current-password", Required: true,
+				}) !!}
+
+				<label class="flex items-center gap-2 text-sm">
+					{{-- checked is a presence attribute: a browser reads the box as ticked
+					     whether the value is "true", "false" or empty, so what is conditional
+					     is the attribute and not its value. @if writes the whole attribute or
+					     none of it, which is how every other boolean attribute in a kyse view
+					     is drawn. --}}
+					<input
+						class="input"
+						type="checkbox"
+						name="remember"
+						value="1"
+						@if(.Remember)
+							checked
+						@endif
+					>
+					Remember me
+				</label>
+
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" class="btn">Login</button>
+					@if(.HasPasswordReset)
+						<a class="text-muted-foreground text-sm hover:underline" href="{{ .PasswordRequestURL }}">Forgot your password?</a>
+					@endif
+				</div>
+			</form>
 		</section>
 	</div>
 @endsection
-`
-
-// authLoginFormPartialTemplate is the sign-in form, and the one fragment the kit
-// publishes.
-//
-// It is a file of its own because of the two attributes on the form:
-// hx-target="this" and hx-swap="outerHTML" say that a rejected sign-in replaces
-// the form and nothing else. What the server answers has to be the shape of that
-// hole. A view that extends the layout is a whole document, and htmx handed one
-// for a form-shaped hole puts the header, the navigation and a second toaster
-// inside the card -- with a green build, a correct status and a page that looks
-// like it rendered twice.
-//
-// So the rule is mechanical rather than remembered: a view under partials/ has
-// no layout, every other screen has one, and
-// TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne reads the bytes of every
-// published view to keep the two apart. It is the same shape the portal already
-// uses for the marks it draws over and over.
-//
-// The screen draws it with @include, which hands over the page's own data
-// unchanged, and the handler answers it directly with Module.fragment. AuthPage
-// either way, so the form reads the same fields whichever one rendered it.
-//
-// That last sentence is also the hole. One struct for both sides means nothing
-// in the type says which fields survive a swap of this file and which are drawn
-// by the screen around it and therefore are not redrawn at all. A narrower
-// struct here would not close it either: @include passes the page's own data
-// through untouched, so the generated function would assert a type it was never
-// given and fail at render rather than at build.
-// TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap is what checks it
-// instead, by reading which fields each handler fills against which fields this
-// file draws.
-const authLoginFormPartialTemplate = `//go:build kyse
-
-// Package partials holds the parts of a screen the server answers on their own.
-//
-// A file here draws exactly its own markup and no layout around it, which is
-// what lets it be swapped into the middle of a page that is already on screen.
-// A file that draws a whole document belongs beside the screens instead.
-//
-// # Where state lives
-//
-// On the server, and the answer to a request is what says so. A handler reads
-// the form, decides, and writes markup that is already correct -- so there is no
-// second copy of the truth in the browser to keep in step, and nothing to
-// reconcile when the two disagree.
-//
-// An hx- attribute holds no state. It says where to ask (hx-post), what to
-// replace (hx-target) and how (hx-swap), and that is a routing decision about
-// the DOM: nothing reads a value back out of one to decide anything.
-//
-// The browser owns what dies with the tab and the server never needs to hear
-// about -- a disclosure that is open, a field that has focus. There is no client
-// framework here to hold it: the policy is script-src 'self' with no
-// unsafe-eval, so anything that compiles a directive from a string throws before
-// it runs. What needs that shape is written with <details>, :focus-within or a
-// checkbox; what does not fit is an endpoint.
-//
-// A form value is not client state. The address still in the box after a
-// rejected sign-in came back from the server in the answer below.
-//
-// # What a file here may hold
-//
-// What is inside its own swap target, and nothing outside it. hx-target="this"
-// with hx-swap="outerHTML" makes the target this form, so an answer replaces
-// everything the file draws and reaches nothing else: the header, the tray and
-// whatever the screen draws around the @include all keep what they already had.
-//
-// So a handler answering this file alone may fill only what this file draws. A
-// field the screen draws and this one does not is computed, sent and dropped --
-// the response carried it, the browser kept the part it asked for, and nothing
-// failed. A value that has to be seen is drawn here, or the whole screen is
-// what answers.
-package partials
-
-import (
-	"github.com/arandu-io/kyse/components"
-
-	authui "<% .ModulePath %>/app/Http/Controllers/Auth"
-)
-
-@go
-// LoginFormData is what the sign-in form draws.
-//
-// It is the sign-in screen's own struct: @include hands the page's data
-// straight through, and the handler that answers this form alone fills the same
-// one.
-type LoginFormData = authui.AuthPage
-@endgo
-
-{{-- One element, and deliberately: hx-swap="outerHTML" replaces the target with
-     everything this file draws, so a second top-level element here would land
-     beside the form rather than inside it.
-
-     method="post" and action are the path with scripts off. htmx never reaches
-     them, and without them a browser that is not running it has nothing to
-     submit. --}}
-<form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}"
-	hx-post="{{ .LoginURL }}" hx-target="this" hx-swap="outerHTML">
-	@csrf
-
-	{!! components.Field(components.FieldProps{
-		Name: "email", Label: "Email", Type: "email",
-		Value: .Email, Page: .,
-		Autocomplete: "username", Required: true, Autofocus: true,
-	}) !!}
-
-	{{-- Confirming, because this box is where a password is typed and not
-	     where one is chosen: the policy panel here would grade an existing
-	     password against the rule for new ones. What stays is the eye, which
-	     is the control a sign-in needs most -- a sign-in that failed is
-	     usually a sign-in that was mistyped. --}}
-	{!! components.Password(components.PasswordProps{
-		ComponentProps: components.ComponentProps{Parts: components.Parts{
-			"group": {Class: "relative flex w-full min-w-0 items-center outline-none"},
-			"input": {Class: "text-foreground placeholder:text-muted-foreground block h-full min-w-0 flex-1 appearance-none rounded-none border-0 bg-transparent shadow-none outline-none ring-0 focus-visible:ring-0 aria-invalid:ring-0"},
-			"reveal": {Class: "order-last me-1 shrink-0"},
-		}},
-		Name: "password", Label: "Password",
-		Page: ., Confirming: true,
-		Autocomplete: "current-password", Required: true,
-	}) !!}
-
-	<label class="flex items-center gap-2 text-sm">
-		{{-- checked is a presence attribute: a browser reads the box as ticked
-		     whether the value is "true", "false" or empty, so what is conditional
-		     is the attribute and not its value. @if writes the whole attribute or
-		     none of it, which is how every other boolean attribute in a kyse view
-		     is drawn. --}}
-		<input
-			class="input"
-			type="checkbox"
-			name="remember"
-			value="1"
-			@if(.Remember)
-				checked
-			@endif
-		>
-		Remember me
-	</label>
-
-	<div class="flex items-center justify-between gap-3">
-		<button type="submit" class="btn">Login</button>
-		@if(.HasPasswordReset)
-			<a class="text-muted-foreground text-sm hover:underline" href="{{ .PasswordRequestURL }}">Forgot your password?</a>
-		@endif
-	</div>
-</form>
 `
 
 // authRegisterViewTemplate is the sign-up screen.
@@ -1080,7 +905,7 @@ type RegisterData = authui.AuthPage
 
 				{!! components.Field(components.FieldProps{
 					Name: "name", Label: "Name",
-					Value: .Name, Page: .,
+					Page: .,
 					Autocomplete: "name", Required: true, Autofocus: true,
 				}) !!}
 
@@ -1137,11 +962,12 @@ type RegisterData = authui.AuthPage
 
 // authVerifyViewTemplate is the "check your email" screen.
 //
-// It draws EmailError as well as Resent, because the same view answers a click
-// on a link that did not work. The verify handler writes that field on three
-// paths -- forged, expired, and an account the link no longer names -- and with
-// no block to draw it, somebody clicking a dead link was shown the cheerful
-// "check your inbox" page and no reason at all.
+// It draws Status as well as the message on the code, because the same screen
+// is where a fresh code is announced and where a code that did not work is sent
+// back to. The verify handler refuses on three paths -- a code that is wrong,
+// expired, or bound to an account the address no longer names -- and with no
+// block to draw the message, somebody whose code had expired was shown the
+// cheerful "check your inbox" page and no reason at all.
 const authVerifyViewTemplate = `//go:build kyse
 
 package auth
@@ -1167,13 +993,6 @@ type VerifyData = authui.AuthPage
 			</header>
 
 			<div class="flex flex-col gap-4 px-6 py-6 text-sm">
-				@if(.Resent)
-					{!! components.Alert(components.AlertProps{
-						Title: "A fresh code is on its way",
-						Message: "Check the address you registered with.",
-					}) !!}
-				@endif
-
 				@if(.Status != "" && !.StatusAsToast)
 					{!! components.Alert(components.AlertProps{Title: .Status}) !!}
 				@endif
@@ -1430,8 +1249,8 @@ type SetupData = authui.AuthPage
 				<h1 class="text-base font-semibold tracking-tight">Set up two-factor authentication</h1>
 			</header>
 			<div class="flex flex-col gap-4 px-6 py-6">
-				@if(.AuthenticatorCodeError != "")
-					{!! components.Alert(components.AlertProps{Title: .AuthenticatorCodeError, Variant: "destructive"}) !!}
+				@if(.FieldError("authenticator_code") != "")
+					{!! components.Alert(components.AlertProps{Title: .FieldError("authenticator_code"), Variant: "destructive"}) !!}
 				@endif
 				@if(.SecretKey == "")
 					<p class="text-muted-foreground text-sm">Start setup to create a new authenticator secret.</p>

@@ -26,19 +26,14 @@ import (
 // error instead of a blank link -- and a form can never carry another session's
 // token under load.
 //
-// # Which side of a swap a field is on
+// # Where a rejected form's messages are
 //
-// The form under resources/views/partials/ renders from this same struct:
-// @include hands the page's data through unchanged, so both the screen and the
-// one part of it that is answered alone read these fields. Nothing in the type
-// separates them, and the two are not refreshed together -- what the form draws
-// is replaced when the form is swapped, and what only the screen around it
-// draws is not redrawn at all.
-//
-// It decides what a handler may fill. Answering the form alone with a field
-// only the screen draws sends the value inside a response whose other half the
-// browser discards: the right status, the right markup in the hole, and a
-// sentence nobody ever reads. Fill what the form draws, or answer the screen.
+// Not here. A handler that refuses a form returns validation.Errors to the
+// router, which sends the person back with the messages and what was typed in
+// the flash, and the screen that follows is drawn whole, like any other page.
+// The flash lands in the embedded view.Page -- Errors and Old -- and the inputs
+// ask for both through the page they are handed, so a message is never a field
+// some handler has to remember to copy.
 type AuthPage struct {
 	view.Page
 
@@ -102,13 +97,17 @@ type AuthPage struct {
 	// Status is the one-shot message a redirect left behind, such as the
 	// confirmation that a reset code was sent. Empty means nothing to say.
 	Status string
-	// Resent says a fresh verification code just went out.
-	Resent bool
 
-	// Name, Email and Remember are what the person typed on the attempt that
-	// was rejected. The password is deliberately absent: it is never sent back.
-	Name     string
-	Email    string
+	// Email is the address a link to the screen carried, for the screens that
+	// are reached from a message. What was typed on an attempt that was
+	// rejected is not here: it is in view.Page.Old, which the inputs start
+	// from, and the messages are in view.Page.Errors, which they ask through
+	// FieldError. The flash fills both, on every screen, so no handler does.
+	Email string
+
+	// Remember is whether the sign-in screen's remember-me box is drawn ticked:
+	// the box is markup rather than a component, so the handler reads it out of
+	// what the rejected attempt left behind.
 	Remember bool
 
 	// Provisioning material is rendered once and deliberately omitted from
@@ -116,16 +115,6 @@ type AuthPage struct {
 	QRCodeSVG         string
 	SecretKey         string
 	RecoveryCodesText string
-
-	// The validation messages, one field at a time. Empty means the field was
-	// accepted -- there is no @error directive to ask a bag on the side.
-	NameError                 string
-	EmailError                string
-	EmailCodeError            string
-	AuthenticatorCodeError    string
-	RecoveryCodeError         string
-	PasswordError             string
-	PasswordConfirmationError string
 }
 
 // Compile-time proof that these screens fit the layout, and that a component
@@ -134,41 +123,6 @@ var (
 	_ view.Layout     = AuthPage{}
 	_ components.Page = AuthPage{}
 )
-
-// FieldError answers the question a kyse component asks about an input.
-//
-// components.FieldProps carries the page and the field name, and asks; it does
-// not carry the message as a third prop, because that meant writing the field
-// name twice in one call and the two could disagree without anything saying so.
-// See the doc comment on components.FieldProps for the whole of that argument.
-//
-// These screens keep the messages in named fields rather than in the map
-// view.Page carries, because a typed field is one the compiler checks: a
-// handler that sets PasswordConfirmatonError does not build, where a map key
-// spelt the same way is simply never read. This method is the seam between the
-// two -- the fields stay the source, and the components see one interface.
-//
-// A name with no field of its own falls through to view.Page, which is where a
-// message put in the map by anything generic would be.
-func (p AuthPage) FieldError(name string) string {
-	switch name {
-	case "name":
-		return p.NameError
-	case "email":
-		return p.EmailError
-	case "email_code":
-		return p.EmailCodeError
-	case "authenticator_code":
-		return p.AuthenticatorCodeError
-	case "recovery_code":
-		return p.RecoveryCodeError
-	case "password":
-		return p.PasswordError
-	case "password_confirmation":
-		return p.PasswordConfirmationError
-	}
-	return p.Page.First(name)
-}
 
 // AsksForPassword reports whether the sign-up form draws a password box.
 //
@@ -231,18 +185,13 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		RecoveryCodesURL         string
 
 		Status   string
-		Resent   bool
-		Name     string
 		Email    string
 		Remember bool
 
-		NameError                 string
-		EmailError                string
-		EmailCodeError            string
-		AuthenticatorCodeError    string
-		RecoveryCodeError         string
-		PasswordError             string
-		PasswordConfirmationError string
+		// The messages of a rejected attempt, by field. What was typed is
+		// left out with the rest of the input: it is the person's, and a
+		// dump is read by whoever is debugging.
+		Errors map[string][]string
 	}{
 		Title:         p.Page.Title,
 		AppName:       p.Page.AppName,
@@ -267,18 +216,10 @@ func (p AuthPage) MarshalJSON() ([]byte, error) {
 		RecoveryCodesURL:         p.RecoveryCodesURL,
 
 		Status:   p.Status,
-		Resent:   p.Resent,
-		Name:     p.Name,
 		Email:    p.Email,
 		Remember: p.Remember,
 
-		NameError:                 p.NameError,
-		EmailError:                p.EmailError,
-		EmailCodeError:            p.EmailCodeError,
-		AuthenticatorCodeError:    p.AuthenticatorCodeError,
-		RecoveryCodeError:         p.RecoveryCodeError,
-		PasswordError:             p.PasswordError,
-		PasswordConfirmationError: p.PasswordConfirmationError,
+		Errors: p.Page.Errors,
 	})
 }
 

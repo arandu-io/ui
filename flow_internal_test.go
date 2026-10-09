@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -464,7 +465,7 @@ func TestTheConfirmationScreenHasARouteAHandlerAndAnAddressToPostTo(t *testing.T
 	routes := bodyOf(t, authFile(t, "Auth/LoginController.go"), "Routes")
 	for _, want := range []string{
 		`g.Get("/password/confirm", m.showPasswordConfirm`,
-		`g.Post("/password/confirm", m.confirmPassword`,
+		`g.Action(stdhttp.MethodPost, "/password/confirm", m.confirmPassword`,
 	} {
 		if !strings.Contains(routes, want) {
 			t.Errorf("no route for %s", want)
@@ -505,7 +506,10 @@ func TestTheRememberBoxIsReadAndSurvivesARejection(t *testing.T) {
 	if !strings.Contains(handlers, "session.Remember(remember)") {
 		t.Error("the answer is read and not passed to the session, so the session still lives for the plain ttl")
 	}
-	if !strings.Contains(bodyOf(t, handlers, "rejected"), "Remember:") {
+	// A rejection is answered by the router, which keeps what was typed in the
+	// flash; the box is markup rather than a component, so the screen reads it
+	// back from there itself.
+	if !strings.Contains(bodyOf(t, handlers, "showLogin"), `Remember: hhttp.StateFrom(r.Context()).Old.Get("remember") != ""`) {
 		t.Error("a rejected sign-in loses the box, and nothing on screen says it was unticked")
 	}
 }
@@ -644,192 +648,138 @@ func TestBothMessagesAreBuiltTheSameWay(t *testing.T) {
 	}
 }
 
-// TestARejectedFormIsNeverAnswered200.
+// TestARejectedFormIsReturnedToTheRouter.
 //
-// screenStatus exists because HTMX swaps the fragment of a 422 and of a 200
-// alike: answering 200 to a forged link leaves the browser, the log and every
-// dashboard agreeing that it worked, and nothing looks wrong until somebody asks
-// why the verification rate is 100%. m.screen is 200 by definition, so a screen
-// carrying a validation message must not be drawn through it.
-func TestARejectedFormIsNeverAnswered200(t *testing.T) {
-	for _, name := range []string{"PasswordController.go", "RegisterController.go", "LoginController_handlers.go"} {
-		source := authFile(t, name)
-		file, err := parser.ParseFile(token.NewFileSet(), name, source, parser.AllErrors)
-		if err != nil {
-			t.Fatalf("%s does not parse: %v", name, err)
+// A handler that refuses a form returns validation.Errors, and the router
+// answers: a page is sent back where it came from with the messages and what
+// was typed, a client that asked for JSON gets a 422 problem document. The kit
+// used to draw the refusal itself, with a 422 and the form, and htmx throws a
+// 422 away unless the layout teaches it otherwise -- which is the second way of
+// answering one rejection, and a reload of that answer posted the form again.
+//
+// So no published Go writes a refusal status, and the screens are drawn at one
+// status only. TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy holds the
+// other half: the routes that take a form are registered as actions, which is
+// what gives a returned error somewhere to go.
+func TestARejectedFormIsReturnedToTheRouter(t *testing.T) {
+	var read int
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".kyse.go") {
+			continue
 		}
+		read++
+		for _, status := range []string{
+			"http.StatusUnprocessableEntity", "http.StatusUnauthorized", "http.StatusTooManyRequests",
+			"m.screenStatus(", "m.rejected",
+		} {
+			if strings.Contains(string(f.Content), status) {
+				t.Errorf("%s draws a refusal itself (%s): return validation.Errors and let the router send "+
+					"the person back to the form", path, status)
+			}
+		}
+	}
+	if read == 0 {
+		t.Fatal("the kit published no Go, so this gate read nothing")
+	}
 
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) == 0 {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "screen" {
-				return true
-			}
-			lit, ok := call.Args[len(call.Args)-1].(*ast.CompositeLit)
-			if !ok {
-				return true
-			}
-			for _, elt := range lit.Elts {
-				kv, ok := elt.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				key, ok := kv.Key.(*ast.Ident)
-				if !ok || !strings.HasSuffix(key.Name, "Error") {
-					continue
-				}
-				t.Errorf("%s draws a screen carrying %s through m.screen, which is 200: a refusal answered 200 is "+
-					"a refusal nothing downstream can count", name, key.Name)
-			}
-			return true
-		})
+	render := bodyOf(t, authFile(t, "render.go"), "screen")
+	if !strings.Contains(render, "http.StatusOK, name, data)") {
+		t.Error("Module.screen no longer renders at 200: a screen this kit draws is never a refusal")
 	}
 }
 
-// TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn is the general form of
-// TestEveryAddressAScreenReadsIsFilledInSomewhere, for the sentences rather than
-// the addresses.
+// TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn.
 //
 // A handler computed "Your password has been changed. Sign in with it.", passed
 // it to a view with no block to draw it, and the string was thrown away. Nothing
 // failed: the screen rendered, the password really had changed, and the person
 // was shown an ordinary sign-in form with no reason to believe any of it had
-// worked. The same hole put somebody who clicked a dead verification link on the
-// cheerful "check your inbox" page.
+// worked. The same hole put somebody who typed a dead code on the cheerful
+// "check your inbox" page.
+//
+// Two kinds of sentence reach a screen, and each is followed end to end. A
+// notice travels as Status, through Module.notify, and some screen has to draw
+// .Status. A refusal travels as validation.Errors keyed by the name of an
+// input, and the components ask the page for it by that name -- so every key a
+// published handler rejects with has to be the name of an input some screen
+// draws, or the message is carried back and dropped.
 func TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn(t *testing.T) {
-	files := mustGenerateAuth(t)
-
-	fields := messageFields(t, authFile(t, "page.go"))
-	if len(fields) == 0 {
-		t.Fatal("AuthPage declares no message field; either it changed shape or this test is looking in the wrong place")
-	}
-
-	var goSource, markup strings.Builder
-	for _, f := range files {
-		if strings.HasSuffix(filepath.ToSlash(f.Path), ".kyse.go") {
-			markup.Write(f.Content)
+	var markup strings.Builder
+	keys := map[string]string{}
+	var notified bool
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		if strings.HasSuffix(path, ".kyse.go") {
+			markup.WriteString(viewBody(f.Content))
 			continue
 		}
-		goSource.Write(f.Content)
+		if !strings.HasSuffix(path, ".go") {
+			continue
+		}
+		notified = notified || strings.Contains(string(f.Content), "m.notify(")
+		for _, key := range rejectedFields(t, path, f.Content) {
+			keys[key] = path
+		}
 	}
 
-	// A field reaches the screen one of two ways. Status is read straight from
-	// the markup, as `.Status`. A validation message is not: the components ask
-	// the page through FieldError, so the field is drawn when FieldError maps a
-	// form field name onto it AND some screen has an input by that name.
-	//
-	// That indirection is why this check is stronger than the one it replaces
-	// rather than weaker. Before, `.NameError` appearing anywhere in the markup
-	// counted as drawn. Now the name has to line up end to end: handler fills
-	// the field, FieldError names it, a screen has an input called that.
-	names := fieldErrorNames(t, authFile(t, "page.go"))
+	if !notified {
+		t.Error("no handler leaves a notice with Module.notify, so this half of the gate read nothing")
+	}
+	if !slices.Contains(fieldsRead(markup.String()), "Status") {
+		t.Error("a handler leaves a notice and no screen draws .Status: the sentence is computed, passed and " +
+			"thrown away, and the person is told nothing")
+	}
 
-	for _, name := range fields {
-		filled := strings.Contains(goSource.String(), name+":")
-
-		read := strings.Contains(markup.String(), "."+name)
-		if !read {
-			if formField, mapped := names[name]; mapped {
-				read = strings.Contains(markup.String(), `Name: "`+formField+`"`) ||
-					strings.Contains(markup.String(), `Name:  "`+formField+`"`)
-			}
+	if len(keys) == 0 {
+		t.Fatal("no published handler rejects a field, so this half of the gate read nothing")
+	}
+	for key, path := range keys {
+		if strings.Contains(markup.String(), `Name: "`+key+`"`) ||
+			strings.Contains(markup.String(), `FieldError("`+key+`")`) {
+			continue
 		}
-
-		switch {
-		case filled && !read:
-			t.Errorf("a handler fills AuthPage.%s and no screen draws it: the sentence is computed, passed and "+
-				"thrown away, and the person is told nothing", name)
-		case read && !filled:
-			t.Errorf("a screen draws AuthPage.%s and no handler fills it: delete it, or the next person will "+
-				"assume something writes it", name)
-		}
+		t.Errorf("%s rejects the field %q and no screen has an input by that name: the message goes back "+
+			"in the flash and nothing draws it", path, key)
 	}
 }
 
-// fieldErrorNames reads AuthPage.FieldError and returns, for each message field
-// it answers with, the form field name that reaches it.
-//
-// It parses rather than greps because the mapping is the load-bearing half of
-// the indirection: a case that returns the wrong field is a message shown under
-// the wrong input, and nothing else would catch it.
-func fieldErrorNames(t *testing.T, page string) map[string]string {
+// rejectedFields returns the keys a Go file rejects a form with: the string
+// keys of every validation.Errors literal, and every errs["key"] it assigns.
+func rejectedFields(t *testing.T, path string, content []byte) []string {
 	t.Helper()
 
-	file, err := parser.ParseFile(token.NewFileSet(), "page.go", page, parser.AllErrors)
+	file, err := parser.ParseFile(token.NewFileSet(), filepath.Base(path), content, parser.AllErrors)
 	if err != nil {
-		t.Fatalf("page.go does not parse: %v", err)
+		t.Fatalf("%s does not parse: %v", path, err)
 	}
-
-	out := map[string]string{}
-	ast.Inspect(file, func(n ast.Node) bool {
-		decl, ok := n.(*ast.FuncDecl)
-		if !ok || decl.Name.Name != "FieldError" || decl.Recv == nil {
-			return true
-		}
-		ast.Inspect(decl.Body, func(n ast.Node) bool {
-			clause, ok := n.(*ast.CaseClause)
-			if !ok || len(clause.List) != 1 || len(clause.Body) != 1 {
-				return true
-			}
-			lit, ok := clause.List[0].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				return true
-			}
-			ret, ok := clause.Body[0].(*ast.ReturnStmt)
-			if !ok || len(ret.Results) != 1 {
-				return true
-			}
-			sel, ok := ret.Results[0].(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			formField, err := strconv.Unquote(lit.Value)
-			if err != nil {
-				return true
-			}
-			out[sel.Sel.Name] = formField
-			return true
-		})
-		return false
-	})
-
-	if len(out) == 0 {
-		t.Fatal("AuthPage.FieldError maps no field: either it changed shape or this test is looking in the wrong place")
-	}
-	return out
-}
-
-// messageFields returns the names of the AuthPage fields that hold a sentence
-// for the reader.
-func messageFields(t *testing.T, page string) []string {
-	t.Helper()
-
-	file, err := parser.ParseFile(token.NewFileSet(), "page.go", page, parser.AllErrors)
-	if err != nil {
-		t.Fatalf("page.go does not parse: %v", err)
-	}
-
 	var out []string
+	add := func(expr ast.Expr) {
+		if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			if key, err := strconv.Unquote(lit.Value); err == nil {
+				out = append(out, key)
+			}
+		}
+	}
 	ast.Inspect(file, func(n ast.Node) bool {
-		spec, ok := n.(*ast.TypeSpec)
-		if !ok || spec.Name.Name != "AuthPage" {
-			return true
-		}
-		structType, ok := spec.Type.(*ast.StructType)
-		if !ok {
-			return false
-		}
-		for _, f := range structType.Fields.List {
-			for _, name := range f.Names {
-				if name.Name == "Status" || strings.HasSuffix(name.Name, "Error") {
-					out = append(out, name.Name)
+		switch node := n.(type) {
+		case *ast.CompositeLit:
+			if types.ExprString(node.Type) != "validation.Errors" {
+				return true
+			}
+			for _, elt := range node.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					add(kv.Key)
+				}
+			}
+		case *ast.AssignStmt:
+			for _, lhs := range node.Lhs {
+				if index, ok := lhs.(*ast.IndexExpr); ok && types.ExprString(index.X) == "errs" {
+					add(index.Index)
 				}
 			}
 		}
-		return false
+		return true
 	})
 	return out
 }
@@ -1100,9 +1050,18 @@ func TestNeitherTokenSurvivesBeingSerialized(t *testing.T) {
 }
 
 // registration is one route the published Routes method mounts: how it is
-// reached, and the name a URL can be built from. An empty name is a screen no
-// template can link to without writing the address out.
-type registration struct{ method, path, name string }
+// reached, the name a URL can be built from, and whether its handler is a
+// controller action. An empty name is a screen no template can link to without
+// writing the address out.
+//
+// action is the half that says who answers a rejection. A handler registered
+// with Action returns validation.Errors and the router sends the person back to
+// the form; one registered with Get or Post has nobody to return it to, so it
+// would have to draw the refusal itself.
+type registration struct {
+	method, path, name string
+	action             bool
+}
 
 // publishedRoutes reads the registrations out of the Routes method the kit
 // publishes, in the order they are written.
@@ -1131,6 +1090,12 @@ func publishedRoutes(t *testing.T) []registration {
 	}
 
 	verbs := map[string]bool{"Get": true, "Post": true, "Put": true, "Patch": true, "Delete": true}
+	// The method an Action is registered for, spelled the way net/http spells
+	// it and read back into the verb the table uses.
+	methods := map[string]string{
+		"MethodGet": "Get", "MethodPost": "Post", "MethodPut": "Put",
+		"MethodPatch": "Patch", "MethodDelete": "Delete",
+	}
 
 	var out []registration
 	for _, stmt := range routes.Body.List {
@@ -1156,14 +1121,29 @@ func publishedRoutes(t *testing.T) []registration {
 		}
 
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || !verbs[sel.Sel.Name] {
+		if !ok {
 			continue
 		}
-		out = append(out, registration{
-			method: sel.Sel.Name,
-			path:   stringLiteral(t, call.Args[0]),
-			name:   name,
-		})
+		switch {
+		case verbs[sel.Sel.Name]:
+			out = append(out, registration{
+				method: sel.Sel.Name,
+				path:   stringLiteral(t, call.Args[0]),
+				name:   name,
+			})
+		case sel.Sel.Name == "Action":
+			constant, ok := call.Args[0].(*ast.SelectorExpr)
+			if !ok || methods[constant.Sel.Name] == "" {
+				t.Fatalf("an Action is registered for %s, which is not a net/http method constant",
+					types.ExprString(call.Args[0]))
+			}
+			out = append(out, registration{
+				method: methods[constant.Sel.Name],
+				path:   stringLiteral(t, call.Args[1]),
+				name:   name,
+				action: true,
+			})
+		}
 	}
 	return out
 }
@@ -1202,34 +1182,39 @@ func stringLiteral(t *testing.T, expr ast.Expr) string {
 //
 // The table is exact, order included, so that a route added to the kit is a row
 // somebody wrote here rather than a screen that quietly arrives unnamed.
+//
+// The last column is exact too. The eight that take a form somebody can get
+// wrong are controller actions, so a refusal is returned to the router and
+// answered by it; a route that moved back to Post would have to draw its own
+// refusal, which is the second way of answering one that the kit gave up.
 func TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy(t *testing.T) {
 	want := []registration{
-		{"Get", "/login", "auth.login"},
-		{"Post", "/login", ""},
-		{"Post", "/logout", "auth.logout"},
+		{"Get", "/login", "auth.login", false},
+		{"Post", "/login", "", true},
+		{"Post", "/logout", "auth.logout", false},
 
-		{"Get", "/password", "auth.password.request"},
-		{"Post", "/password/email", "auth.password.email"},
-		{"Get", "/password/reset", "auth.password.reset"},
-		{"Post", "/password/update", "auth.password.update"},
-		{"Get", "/password/confirm", "auth.password.confirm"},
-		{"Post", "/password/confirm", ""},
+		{"Get", "/password", "auth.password.request", false},
+		{"Post", "/password/email", "auth.password.email", false},
+		{"Get", "/password/reset", "auth.password.reset", false},
+		{"Post", "/password/update", "auth.password.update", true},
+		{"Get", "/password/confirm", "auth.password.confirm", false},
+		{"Post", "/password/confirm", "", true},
 
-		{"Get", "/register", "auth.register"},
-		{"Post", "/register", ""},
-		{"Get", "/verify", "auth.verify.notice"},
-		{"Post", "/verify/confirm", "auth.verify.confirm"},
-		{"Post", "/verify/resend", "auth.verify.resend"},
+		{"Get", "/register", "auth.register", false},
+		{"Post", "/register", "", true},
+		{"Get", "/verify", "auth.verify.notice", false},
+		{"Post", "/verify/confirm", "auth.verify.confirm", true},
+		{"Post", "/verify/resend", "auth.verify.resend", false},
 
-		{"Get", "/two-factor/challenge", "auth.two-factor.challenge"},
-		{"Post", "/two-factor/challenge", ""},
-		{"Get", "/two-factor/recovery", "auth.two-factor.recovery"},
-		{"Post", "/two-factor/recovery", ""},
-		{"Get", "/two-factor/setup", "auth.two-factor.setup"},
-		{"Post", "/two-factor/setup", ""},
-		{"Post", "/two-factor/setup/confirm", "auth.two-factor.setup.confirm"},
-		{"Post", "/two-factor/disable", "auth.two-factor.disable"},
-		{"Post", "/two-factor/recovery-codes", "auth.two-factor.recovery-codes"},
+		{"Get", "/two-factor/challenge", "auth.two-factor.challenge", false},
+		{"Post", "/two-factor/challenge", "", true},
+		{"Get", "/two-factor/recovery", "auth.two-factor.recovery", false},
+		{"Post", "/two-factor/recovery", "", true},
+		{"Get", "/two-factor/setup", "auth.two-factor.setup", false},
+		{"Post", "/two-factor/setup", "", false},
+		{"Post", "/two-factor/setup/confirm", "auth.two-factor.setup.confirm", true},
+		{"Post", "/two-factor/disable", "auth.two-factor.disable", false},
+		{"Post", "/two-factor/recovery-codes", "auth.two-factor.recovery-codes", false},
 	}
 
 	got := publishedRoutes(t)
@@ -1242,7 +1227,14 @@ func TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy(t *testing.T) {
 			continue
 		}
 		if route.method == want[i].method && route.path == want[i].path {
-			t.Errorf("%s %s is named %q and must be named %q", route.method, route.path, route.name, want[i].name)
+			if route.name != want[i].name {
+				t.Errorf("%s %s is named %q and must be named %q", route.method, route.path, route.name, want[i].name)
+			}
+			if route.action != want[i].action {
+				t.Errorf("%s %s is registered with action=%t and must be action=%t: a handler that refuses a "+
+					"form returns validation.Errors to the router, and only Action gives it a router to return them to",
+					route.method, route.path, route.action, want[i].action)
+			}
 			continue
 		}
 		t.Errorf("route %d is %s %s and this test expects %s %s", i, route.method, route.path,
@@ -1427,19 +1419,19 @@ func writeInto(t *testing.T, path string, content []byte) {
 //
 // The application's service answers that with an error carrying Seconds() that
 // also matches twofactor.ErrInvalidCode, so a handler that only knew about wrong
-// codes would answer 422 and leave the challenge on screen, to be refused again
-// on every try with the pending cookie still live. Both challenge screens must
+// codes would send the person back to the challenge, to be refused again on
+// every try with the pending cookie still live. Both challenge screens must
 // instead end the pending sign-in, say how long the account waits, and send the
-// person to sign in, where the reason is drawn. A plain wrong code must still be
-// the 422 it was.
+// person to sign in, where the reason is drawn. A plain wrong code must still go
+// back to the challenge it was typed on, with the pending sign-in intact.
 func TestALockedChallengeSendsThePersonBackToSignIn(t *testing.T) {
 	out := runAgainstPublishedKit(t, lockedChallengeProbe)
 
 	for _, want := range []string{
 		"login status=303",
-		"challenge: wrong status=422 pending-cleared=false",
+		"challenge: wrong status=303 location=/auth/two-factor/challenge pending-cleared=false",
 		"challenge: locked status=303 location=/auth/login retry-after=900 pending-cleared=true",
-		"recovery: wrong status=422 pending-cleared=false",
+		"recovery: wrong status=303 location=/auth/two-factor/recovery pending-cleared=false",
 		"recovery: locked status=303 location=/auth/login retry-after=900 pending-cleared=true",
 		"sign-in screen: Too many codes. Sign in again in 15 minutes.",
 	} {
@@ -1452,6 +1444,10 @@ func TestALockedChallengeSendsThePersonBackToSignIn(t *testing.T) {
 // lockedChallengeProbe drives the published module through its own router: a
 // password sign-in that starts a challenge, then each challenge screen offered a
 // wrong code and a code the account may no longer offer.
+//
+// The router is wrapped in middleware.Flash, the piece the kernel installs above
+// every application, because that is what puts a redirect's flash on the page
+// that follows it.
 const lockedChallengeProbe = `package main
 
 import (
@@ -1466,6 +1462,7 @@ import (
 	"time"
 
 	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
 	"github.com/arandu-io/framework/security"
 	twofactor "github.com/arandu-io/hesape/2fa"
 	"github.com/arandu-io/hesape/session"
@@ -1518,19 +1515,23 @@ func main() {
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	f := &factors{}
-	module := authui.New(users{}, f, nil, sessions, security.NewCSRF(appKey, time.Hour), nil,
+	module := authui.New(users{}, f, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
 		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
 
 	post := func(path string, form url.Values, cookies []*http.Cookie) *http.Response {
 		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		// The page the form was on, as a browser sends it: it is where a
+		// refused form is sent back to.
+		r.Header.Set("Referer", path)
 		for _, c := range cookies {
 			r.AddCookie(c)
 		}
 		w := httptest.NewRecorder()
-		router.ServeHTTP(w, r)
+		app.ServeHTTP(w, r)
 		return w.Result()
 	}
 	cleared := func(res *http.Response) bool {
@@ -1553,7 +1554,8 @@ func main() {
 	} {
 		f.err = fmt.Errorf("wrapped: %w", twofactor.ErrInvalidCode)
 		res := post(screen.path, url.Values{screen.field: {"123456"}}, pending)
-		fmt.Printf("%s: wrong status=%d pending-cleared=%t\n", screen.name, res.StatusCode, cleared(res))
+		fmt.Printf("%s: wrong status=%d location=%s pending-cleared=%t\n", screen.name,
+			res.StatusCode, res.Header.Get("Location"), cleared(res))
 
 		f.err = fmt.Errorf("wrapped: %w", locked{})
 		res = post(screen.path, url.Values{screen.field: {"123456"}}, pending)
@@ -1573,7 +1575,7 @@ func main() {
 		}
 	}
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, r)
+	app.ServeHTTP(w, r)
 	fmt.Printf("sign-in screen: %s\n", w.Body.String())
 }
 `
@@ -1692,14 +1694,16 @@ func main() {
 // a token bound to nothing, so a screen that issued its own token from the
 // session id answered 500 to every guest. The screen draws the token the
 // middleware put on the request context instead; posting it back with the guest
-// cookie has to pass the check, and the rejected form has to come back carrying
-// a token that still validates.
+// cookie has to pass the check, and the screen the refusal sends the person back
+// to has to carry a token that passes it again.
 func TestAGuestScreenCarriesTheTokenCSRFProtectIssued(t *testing.T) {
 	out := runAgainstPublishedKit(t, guestTokenProbe)
 
 	for _, want := range []string{
 		"get: status=200 token=true guest-cookie=true",
-		"post: status=401 same-token=true",
+		"post: status=303 location=/auth/login",
+		"back: status=200 token=true message=invalid email or password",
+		"again: status=303 location=/auth/login",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
@@ -1707,8 +1711,9 @@ func TestAGuestScreenCarriesTheTokenCSRFProtectIssued(t *testing.T) {
 	}
 }
 
-// guestTokenProbe loads the sign-in screen as a guest, then submits it with a
-// password the fake account service refuses.
+// guestTokenProbe loads the sign-in screen as a guest, submits it with a
+// password the fake account service refuses, follows the redirect back, and
+// submits the form it lands on.
 const guestTokenProbe = `package main
 
 import (
@@ -1739,39 +1744,204 @@ func (users) VerifyCredentials(context.Context, string, string, string, string) 
 }
 
 func main() {
-	for _, name := range []string{"auth.login", "partials.login_form"} {
-		view.Register(name, func(w io.Writer, data any) error {
-			_, err := io.WriteString(w, data.(authui.AuthPage).Token)
-			return err
-		})
-	}
+	view.Register("auth.login", func(w io.Writer, data any) error {
+		page := data.(authui.AuthPage)
+		_, err := io.WriteString(w, page.Token+"|"+page.FieldError("email"))
+		return err
+	})
 
 	appKey := []byte("0123456789abcdef0123456789abcdef")
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
-	csrf := security.NewCSRF(appKey, time.Hour)
+	csrf := session.NewCSRF(appKey, time.Hour)
 	module := authui.New(users{}, nil, nil, sessions, csrf, nil,
 		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
-	app := middleware.CSRFProtect(csrf, sessions.IDFromRequest)(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(
+		middleware.CSRFProtect(csrf, sessions.IDFromRequest)(router))
 
-	r := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
-	r.Header.Set("Accept", "text/html")
-	w := httptest.NewRecorder()
-	app.ServeHTTP(w, r)
-	token := w.Body.String()
-	cookies := w.Result().Cookies()
-	fmt.Printf("get: status=%d token=%t guest-cookie=%t\n", w.Code, token != "", len(cookies) > 0)
-
-	form := url.Values{"_token": {token}, "email": {"a@example.test"}, "password": {"wrong"}}
-	r = httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	for _, c := range cookies {
-		r.AddCookie(c)
+	jar := map[string]*http.Cookie{}
+	keep := func(res *http.Response) {
+		for _, c := range res.Cookies() {
+			if c.MaxAge < 0 {
+				delete(jar, c.Name)
+				continue
+			}
+			jar[c.Name] = c
+		}
 	}
-	w = httptest.NewRecorder()
-	app.ServeHTTP(w, r)
-	fmt.Printf("post: status=%d same-token=%t\n", w.Code, w.Body.String() == token)
+	get := func() (int, string, string) {
+		r := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
+		r.Header.Set("Accept", "text/html")
+		for _, c := range jar {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		keep(w.Result())
+		token, message, _ := strings.Cut(w.Body.String(), "|")
+		return w.Code, token, message
+	}
+	post := func(token string) *http.Response {
+		form := url.Values{"_token": {token}, "email": {"a@example.test"}, "password": {"wrong"}}
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", "/auth/login")
+		for _, c := range jar {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		keep(w.Result())
+		return w.Result()
+	}
+
+	code, token, _ := get()
+	fmt.Printf("get: status=%d token=%t guest-cookie=%t\n", code, token != "", len(jar) > 0)
+
+	res := post(token)
+	fmt.Printf("post: status=%d location=%s\n", res.StatusCode, res.Header.Get("Location"))
+
+	code, token, message := get()
+	fmt.Printf("back: status=%d token=%t message=%s\n", code, token != "", message)
+
+	res = post(token)
+	fmt.Printf("again: status=%d location=%s\n", res.StatusCode, res.Header.Get("Location"))
+}
+`
+
+// TestARejectedSignInGoesBackToTheFormInEveryTransport runs a refused sign-in
+// through the published module the three ways it arrives.
+//
+// A browser posting the form gets a 303 back to the form, marked no-store, with
+// the message and the address in the flash and the password nowhere -- and the
+// screen it lands on draws them. htmx gets the same redirect as HX-Redirect with
+// no body, which it follows as a navigation. A client that asked for JSON gets a
+// 422 problem document with the message by field, because it has no form to go
+// back to.
+//
+// A sent reset code is the other half: a screen drawn after a form succeeded is
+// reached by a redirect too, so the form on it has an address a refusal can be
+// sent back to, and a reload asks for the screen rather than sending another
+// code.
+func TestARejectedSignInGoesBackToTheFormInEveryTransport(t *testing.T) {
+	out := runAgainstPublishedKit(t, transportProbe)
+
+	for _, want := range []string{
+		"page: status=303 location=/auth/login cache=no-store, private",
+		"page then: message=invalid email or password email=a@example.test password=",
+		"htmx: status=204 hx-redirect=/auth/login body=0",
+		"json: status=422 type=application/problem+json message=true",
+		"send: status=303 location=/auth/password/reset",
+		"reset then: status=If that address is registered, a code is on its way. email=a@example.test",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// transportProbe posts one refused sign-in as a page, as htmx and as JSON, and
+// asks for a reset code.
+const transportProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+type users struct{ authui.Users }
+
+func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
+	return models.User{}, nativeauth.ErrInvalidCredentials
+}
+
+// Lookup finds nobody, so nothing is mailed and the answer is the one an
+// address nobody registered gets.
+func (users) Lookup(context.Context, string, string) (models.User, error) {
+	return models.User{}, errors.New("no such account")
+}
+
+func main() {
+	view.Register("auth.login", func(w io.Writer, data any) error {
+		page := data.(authui.AuthPage)
+		_, err := fmt.Fprintf(w, "message=%s email=%s password=%s",
+			page.FieldError("email"), page.OldOr("email", ""), page.OldOr("password", ""))
+		return err
+	})
+	view.Register("auth.passwords.reset", func(w io.Writer, data any) error {
+		page := data.(authui.AuthPage)
+		_, err := fmt.Fprintf(w, "status=%s email=%s", page.Status, page.OldOr("email", ""))
+		return err
+	})
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	module := authui.New(users{}, nil, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
+		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
+
+	post := func(path string, form url.Values, header map[string]string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", path)
+		for k, v := range header {
+			r.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w
+	}
+	follow := func(w *httptest.ResponseRecorder) string {
+		r := httptest.NewRequest(http.MethodGet, w.Header().Get("Location"), nil)
+		r.Header.Set("Accept", "text/html")
+		for _, c := range w.Result().Cookies() {
+			if c.MaxAge >= 0 {
+				r.AddCookie(c)
+			}
+		}
+		next := httptest.NewRecorder()
+		app.ServeHTTP(next, r)
+		return next.Body.String()
+	}
+	refused := url.Values{"email": {"a@example.test"}, "password": {"wrong-password"}}
+
+	page := post("/auth/login", refused, map[string]string{"Accept": "text/html"})
+	fmt.Printf("page: status=%d location=%s cache=%s\n", page.Code, page.Header().Get("Location"),
+		page.Header().Get("Cache-Control"))
+	fmt.Printf("page then: %s\n", follow(page))
+
+	htmx := post("/auth/login", refused, map[string]string{"HX-Request": "true"})
+	fmt.Printf("htmx: status=%d hx-redirect=%s body=%d\n", htmx.Code, htmx.Header().Get("HX-Redirect"),
+		htmx.Body.Len())
+
+	json := post("/auth/login", refused, map[string]string{"Accept": "application/json"})
+	fmt.Printf("json: status=%d type=%s message=%t\n", json.Code, json.Header().Get("Content-Type"),
+		strings.Contains(json.Body.String(), "invalid email or password"))
+
+	send := post("/auth/password/email", url.Values{"email": {"a@example.test"}}, nil)
+	fmt.Printf("send: status=%d location=%s\n", send.Code, send.Header().Get("Location"))
+	fmt.Printf("reset then: %s\n", follow(send))
 }
 `

@@ -20,8 +20,8 @@ type SetupData = authui.AuthPage
 				<h1 class="text-base font-semibold tracking-tight">Set up two-factor authentication</h1>
 			</header>
 			<div class="flex flex-col gap-4 px-6 py-6">
-				@if(.AuthenticatorCodeError != "")
-					{!! components.Alert(components.AlertProps{Title: .AuthenticatorCodeError, Variant: "destructive"}) !!}
+				@if(.FieldError("authenticator_code") != "")
+					{!! components.Alert(components.AlertProps{Title: .FieldError("authenticator_code"), Variant: "destructive"}) !!}
 				@endif
 				@if(.SecretKey == "")
 					<p class="text-muted-foreground text-sm">Start setup to create a new authenticator secret.</p>

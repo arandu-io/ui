@@ -97,36 +97,47 @@ var _ foundation.Module = (*Module)(nil)
 func (m *Module) Name() string { return "authui" }
 
 // Routes registers the twenty-three authentication routes.
+//
+// The eight that take a form somebody can get wrong are registered with Action,
+// and the rest with Get and Post. An action returns validation.Errors and the
+// router answers it: a page goes back where it came from with the messages and
+// what was typed, and a client that asked for JSON gets a 422 problem document
+// with the messages by field. No handler here writes a rejection itself.
+//
+// The router is handed this module's flash, the one its notices are written
+// with, so a rejection and a notice travel in the same signed cookie however the
+// router was built -- the kernel's carries a flash already, and a router a test
+// builds carries none.
 func (m *Module) Routes(r *fhttp.Router) {
-	g := r.Group("/auth")
+	g := r.WithFlash(m.flash).Group("/auth")
 	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
 	signedIn := middleware.RequireAuth(m.sessions)
 	confirmed := middleware.RequireConfirmedPassword(m.sessions)
 
 	g.Get("/login", m.showLogin, guest).Name("auth.login")
-	g.Post("/login", m.doLogin, guest)
+	g.Action(stdhttp.MethodPost, "/login", m.doLogin, guest)
 	g.Post("/logout", m.doLogout).Name("auth.logout")
 
 	g.Get("/password", m.showPasswordRequest).Name("auth.password.request")
 	g.Post("/password/email", m.sendPasswordCode).Name("auth.password.email")
 	g.Get("/password/reset", m.showPasswordReset).Name("auth.password.reset")
-	g.Post("/password/update", m.updatePassword).Name("auth.password.update")
+	g.Action(stdhttp.MethodPost, "/password/update", m.updatePassword).Name("auth.password.update")
 	g.Get("/password/confirm", m.showPasswordConfirm, signedIn).Name("auth.password.confirm")
-	g.Post("/password/confirm", m.confirmPassword, signedIn)
+	g.Action(stdhttp.MethodPost, "/password/confirm", m.confirmPassword, signedIn)
 
 	g.Get("/register", m.showRegister, guest).Name("auth.register")
-	g.Post("/register", m.doRegister, guest)
+	g.Action(stdhttp.MethodPost, "/register", m.doRegister, guest)
 	g.Get("/verify", m.showVerifyNotice).Name("auth.verify.notice")
-	g.Post("/verify/confirm", m.verify).Name("auth.verify.confirm")
+	g.Action(stdhttp.MethodPost, "/verify/confirm", m.verify).Name("auth.verify.confirm")
 	g.Post("/verify/resend", m.resendVerification).Name("auth.verify.resend")
 
 	g.Get("/two-factor/challenge", m.showTwoFactorChallenge, guest).Name("auth.two-factor.challenge")
-	g.Post("/two-factor/challenge", m.verifyTwoFactorChallenge, guest)
+	g.Action(stdhttp.MethodPost, "/two-factor/challenge", m.verifyTwoFactorChallenge, guest)
 	g.Get("/two-factor/recovery", m.showRecoveryChallenge, guest).Name("auth.two-factor.recovery")
-	g.Post("/two-factor/recovery", m.verifyRecoveryChallenge, guest)
+	g.Action(stdhttp.MethodPost, "/two-factor/recovery", m.verifyRecoveryChallenge, guest)
 	g.Get("/two-factor/setup", m.showTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup")
 	g.Post("/two-factor/setup", m.beginTwoFactorSetup, signedIn, confirmed)
-	g.Post("/two-factor/setup/confirm", m.confirmTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup.confirm")
+	g.Action(stdhttp.MethodPost, "/two-factor/setup/confirm", m.confirmTwoFactorSetup, signedIn, confirmed).Name("auth.two-factor.setup.confirm")
 	g.Post("/two-factor/disable", m.disableTwoFactor, signedIn, confirmed).Name("auth.two-factor.disable")
 	g.Post("/two-factor/recovery-codes", m.regenerateRecoveryCodes, signedIn, confirmed).Name("auth.two-factor.recovery-codes")
 
