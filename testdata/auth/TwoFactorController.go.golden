@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arandu-io/framework/observability"
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/qr"
 
@@ -125,7 +125,7 @@ func (m *Module) verifyTwoFactorChallenge(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
-		observability.Log(r.Context()).Error("verifying the authenticator code", "error", err)
+		log.For(r.Context()).Error("verifying the authenticator code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -165,7 +165,7 @@ func (m *Module) verifyRecoveryChallenge(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
-		observability.Log(r.Context()).Error("consuming the recovery code", "error", err)
+		log.For(r.Context()).Error("consuming the recovery code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -222,7 +222,7 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	provisioning, err := m.factors.Begin(r.Context(), subject, m.appName)
 	if err != nil {
-		observability.Log(r.Context()).Error("starting two-factor setup", "error", err)
+		log.For(r.Context()).Error("starting two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -268,7 +268,7 @@ func (m *Module) confirmTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		observability.Log(r.Context()).Error("confirming two-factor setup", "error", err)
+		log.For(r.Context()).Error("confirming two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -282,7 +282,7 @@ func (m *Module) disableTwoFactor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := m.factors.Disable(r.Context(), subject); err != nil {
-		observability.Log(r.Context()).Error("disabling two-factor authentication", "error", err)
+		log.For(r.Context()).Error("disabling two-factor authentication", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -297,7 +297,7 @@ func (m *Module) regenerateRecoveryCodes(w http.ResponseWriter, r *http.Request)
 	}
 	codes, err := m.factors.RegenerateRecoveryCodes(r.Context(), subject)
 	if err != nil {
-		observability.Log(r.Context()).Error("regenerating recovery codes", "error", err)
+		log.For(r.Context()).Error("regenerating recovery codes", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

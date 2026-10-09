@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/arandu-io/framework/observability"
-	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/framework/validation"
+	"github.com/arandu-io/hesape/hashing"
+	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/onetime"
+	"github.com/arandu-io/hesape/validation"
 
 	appmail "{{ .ModulePath }}/app/Mail"
 	models "{{ .ModulePath }}/app/Models"
@@ -123,7 +123,7 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 	if in.Email == "" {
 		errs["email"] = []string{"type your email address"}
 	}
-	if registrationAsks.asksForPassword() && len([]rune(in.Password)) < security.MinPasswordLen {
+	if registrationAsks.asksForPassword() && len([]rune(in.Password)) < hashing.MinPasswordLen {
 		errs["password"] = []string{"the password is too short"}
 	}
 	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
@@ -147,12 +147,12 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 			m.rejectedRegistration(w, r, in, invalid)
 			return
 		}
-		observability.Log(r.Context()).Error("registration failed", "error", err)
+		log.For(r.Context()).Error("registration failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if err := m.sendVerification(r, u); err != nil {
-		observability.Log(r.Context()).Error("sending the verification code", "error", err)
+		log.For(r.Context()).Error("sending the verification code", "error", err)
 	}
 	redirect(w, r, "/auth/verify")
 }
@@ -180,7 +180,7 @@ func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
 	}
 	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
 	if err != nil {
-		observability.Log(r.Context()).Error("marking an address verified", "error", err)
+		log.For(r.Context()).Error("marking an address verified", "error", err)
 		m.rejectedVerification(w, r, email, "that code is not valid")
 		return
 	}
@@ -199,7 +199,7 @@ func (m *Module) resendVerification(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	if u, err := m.users.Lookup(r.Context(), m.tenant(r), email); err == nil && !u.Verified() {
 		if err := m.sendVerification(r, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
-			observability.Log(r.Context()).Error("resending the verification code", "error", err)
+			log.For(r.Context()).Error("resending the verification code", "error", err)
 		}
 	}
 	m.screen(w, r, "auth.verify", AuthPage{
@@ -266,9 +266,9 @@ import (
 	"net/http"
 
 	"github.com/arandu-io/framework/mail"
-	"github.com/arandu-io/framework/observability"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	hhttp "github.com/arandu-io/hesape/http"
+	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/view"
 
 	models "{{ .ModulePath }}/app/Models"
@@ -367,7 +367,7 @@ func (m *Module) screenStatus(w http.ResponseWriter, r *http.Request, status int
 	data.TwoFactorDisableURL = "/auth/two-factor/disable"
 	data.RecoveryCodesURL = "/auth/two-factor/recovery-codes"
 	if err := view.NewRenderer().Render(r.Context(), w, status, name, data); err != nil {
-		observability.Log(r.Context()).Error("rendering "+name, "error", err)
+		log.For(r.Context()).Error("rendering "+name, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
 }
@@ -389,10 +389,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/arandu-io/framework/http/middleware"
-	"github.com/arandu-io/framework/observability"
-	"github.com/arandu-io/framework/security"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/hashing"
+	"github.com/arandu-io/hesape/log"
+	hmiddleware "github.com/arandu-io/hesape/routing/middleware"
 
 	appmail "{{ .ModulePath }}/app/Mail"
 	models "{{ .ModulePath }}/app/Models"
@@ -412,7 +412,7 @@ func (m *Module) sendPasswordCode(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	if u, err := m.users.Lookup(r.Context(), m.tenant(r), email); err == nil {
 		if err := m.sendPasswordReset(r, u); err != nil {
-			observability.Log(r.Context()).Error("sending the password reset code", "error", err)
+			log.For(r.Context()).Error("sending the password reset code", "error", err)
 		}
 	}
 	m.screen(w, r, "auth.passwords.reset", AuthPage{
@@ -454,8 +454,8 @@ func (m *Module) updatePassword(w http.ResponseWriter, r *http.Request) {
 		m.rejectedReset(w, r, email, "", "", "the two passwords do not match")
 		return
 	}
-	if len([]rune(password)) < security.MinPasswordLen {
-		m.rejectedReset(w, r, email, "", fmt.Sprintf("must be at least %d characters", security.MinPasswordLen), "")
+	if len([]rune(password)) < hashing.MinPasswordLen {
+		m.rejectedReset(w, r, email, "", fmt.Sprintf("must be at least %d characters", hashing.MinPasswordLen), "")
 		return
 	}
 	u, err := m.users.Lookup(r.Context(), m.tenant(r), email)
@@ -467,12 +467,12 @@ func (m *Module) updatePassword(w http.ResponseWriter, r *http.Request) {
 	capturedPasswordFingerprint := u.PasswordFingerprint()
 	u, err = m.users.ResetPassword(r.Context(), u.TenantID, u.ID, capturedEmail, capturedPasswordFingerprint, password)
 	if err != nil {
-		observability.Log(r.Context()).Error("writing the new password", "error", err)
+		log.For(r.Context()).Error("writing the new password", "error", err)
 		m.rejectedReset(w, r, email, "that code is not valid", "", "")
 		return
 	}
 	if err := m.sessions.DestroyOthers(r.Context(), subjectOf(u), ""); err != nil {
-		observability.Log(r.Context()).Error("signing the account's other sessions out", "error", err)
+		log.For(r.Context()).Error("signing the account's other sessions out", "error", err)
 	}
 	m.screen(w, r, "auth.login", AuthPage{
 		Page: m.page(r, "Sign in"), Email: u.Email,
@@ -505,7 +505,7 @@ func (m *Module) confirmPassword(w http.ResponseWriter, r *http.Request) {
 		m.rejectedConfirmation(w, r, http.StatusUnprocessableEntity, "type your password to go on")
 		return
 	}
-	if err := m.users.ConfirmPassword(r.Context(), subject, password, middleware.KeyByIP(r)); err != nil {
+	if err := m.users.ConfirmPassword(r.Context(), subject, password, hmiddleware.KeyByIP(r)); err != nil {
 		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
 			m.rejectedConfirmation(w, r, http.StatusUnauthorized, "that is not the password for this account")
 			return
@@ -517,12 +517,12 @@ func (m *Module) confirmPassword(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("too many attempts, try again in %d seconds", locked.Seconds()))
 			return
 		}
-		observability.Log(r.Context()).Error("confirming a password", "error", err)
+		log.For(r.Context()).Error("confirming a password", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if err := m.sessions.Confirm(r.Context(), w, r); err != nil {
-		observability.Log(r.Context()).Error("recording the password confirmation", "error", err)
+		log.For(r.Context()).Error("recording the password confirmation", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -552,9 +552,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arandu-io/framework/observability"
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/qr"
 
@@ -666,7 +666,7 @@ func (m *Module) verifyTwoFactorChallenge(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
-		observability.Log(r.Context()).Error("verifying the authenticator code", "error", err)
+		log.For(r.Context()).Error("verifying the authenticator code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -706,7 +706,7 @@ func (m *Module) verifyRecoveryChallenge(w http.ResponseWriter, r *http.Request)
 			})
 			return
 		}
-		observability.Log(r.Context()).Error("consuming the recovery code", "error", err)
+		log.For(r.Context()).Error("consuming the recovery code", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -763,7 +763,7 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	provisioning, err := m.factors.Begin(r.Context(), subject, m.appName)
 	if err != nil {
-		observability.Log(r.Context()).Error("starting two-factor setup", "error", err)
+		log.For(r.Context()).Error("starting two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -809,7 +809,7 @@ func (m *Module) confirmTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		observability.Log(r.Context()).Error("confirming two-factor setup", "error", err)
+		log.For(r.Context()).Error("confirming two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -823,7 +823,7 @@ func (m *Module) disableTwoFactor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := m.factors.Disable(r.Context(), subject); err != nil {
-		observability.Log(r.Context()).Error("disabling two-factor authentication", "error", err)
+		log.For(r.Context()).Error("disabling two-factor authentication", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -838,7 +838,7 @@ func (m *Module) regenerateRecoveryCodes(w http.ResponseWriter, r *http.Request)
 	}
 	codes, err := m.factors.RegenerateRecoveryCodes(r.Context(), subject)
 	if err != nil {
-		observability.Log(r.Context()).Error("regenerating recovery codes", "error", err)
+		log.For(r.Context()).Error("regenerating recovery codes", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

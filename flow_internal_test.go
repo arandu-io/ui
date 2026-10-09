@@ -106,7 +106,7 @@ func TestTheSignUpFormAsksForAPasswordTwiceUnlessTheProjectSaysOtherwise(t *test
 
 	doRegister := bodyOf(t, controller, "doRegister")
 	for _, rule := range []string{
-		"len([]rune(in.Password)) < security.MinPasswordLen",
+		"len([]rune(in.Password)) < hashing.MinPasswordLen",
 		"in.Password != in.PasswordConfirmation",
 	} {
 		if !strings.Contains(doRegister, rule) {
@@ -136,7 +136,7 @@ func TestTheSignUpFormAndItsHandlerAskForTheSameThing(t *testing.T) {
 	}{
 		{
 			"password", "@if(.AsksForPassword())", "registrationAsks.asksForPassword()",
-			"len([]rune(in.Password)) < security.MinPasswordLen",
+			"len([]rune(in.Password)) < hashing.MinPasswordLen",
 		},
 		{
 			"password_confirmation", "@if(.AsksForPasswordConfirmation())",
@@ -238,7 +238,7 @@ func TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison(t *testing.T) {
 		{"PasswordController.go", "confirmPassword", `password == ""`, "m.users.ConfirmPassword("},
 		{
 			"PasswordController.go", "updatePassword",
-			"len([]rune(password)) < security.MinPasswordLen", "m.users.ResetPassword(",
+			"len([]rune(password)) < hashing.MinPasswordLen", "m.users.ResetPassword(",
 		},
 	} {
 		body := bodyOf(t, authFile(t, c.file), c.handler)
@@ -367,7 +367,7 @@ func TestTheResetIsThrottledByTheCounterSigningInAlreadyUses(t *testing.T) {
 func TestNothingIsConsumedUntilThePasswordIsAcceptable(t *testing.T) {
 	body := bodyOf(t, authFile(t, "PasswordController.go"), "updatePassword")
 
-	length := strings.Index(body, "security.MinPasswordLen")
+	length := strings.Index(body, "hashing.MinPasswordLen")
 	match := strings.Index(body, "password != confirmation")
 	consume := strings.Index(body, "m.codes.Consume(")
 	write := strings.Index(body, "m.users.ResetPassword(")
@@ -502,7 +502,7 @@ func TestTheRememberBoxIsReadAndSurvivesARejection(t *testing.T) {
 	if !strings.Contains(handlers, `r.PostFormValue("remember")`) {
 		t.Fatal("nothing reads the remember-me box, so ticking it does nothing at all")
 	}
-	if !strings.Contains(handlers, "security.Remember(remember)") {
+	if !strings.Contains(handlers, "session.Remember(remember)") {
 		t.Error("the answer is read and not passed to the session, so the session still lives for the plain ttl")
 	}
 	if !strings.Contains(bodyOf(t, handlers, "rejected"), "Remember:") {

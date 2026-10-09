@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/arandu-io/framework/observability"
-	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/framework/validation"
+	"github.com/arandu-io/hesape/hashing"
+	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/onetime"
+	"github.com/arandu-io/hesape/validation"
 
 	appmail "example.test/project/app/Mail"
 	models "example.test/project/app/Models"
@@ -118,7 +118,7 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 	if in.Email == "" {
 		errs["email"] = []string{"type your email address"}
 	}
-	if registrationAsks.asksForPassword() && len([]rune(in.Password)) < security.MinPasswordLen {
+	if registrationAsks.asksForPassword() && len([]rune(in.Password)) < hashing.MinPasswordLen {
 		errs["password"] = []string{"the password is too short"}
 	}
 	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
@@ -142,12 +142,12 @@ func (m *Module) doRegister(w http.ResponseWriter, r *http.Request) {
 			m.rejectedRegistration(w, r, in, invalid)
 			return
 		}
-		observability.Log(r.Context()).Error("registration failed", "error", err)
+		log.For(r.Context()).Error("registration failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if err := m.sendVerification(r, u); err != nil {
-		observability.Log(r.Context()).Error("sending the verification code", "error", err)
+		log.For(r.Context()).Error("sending the verification code", "error", err)
 	}
 	redirect(w, r, "/auth/verify")
 }
@@ -175,7 +175,7 @@ func (m *Module) verify(w http.ResponseWriter, r *http.Request) {
 	}
 	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
 	if err != nil {
-		observability.Log(r.Context()).Error("marking an address verified", "error", err)
+		log.For(r.Context()).Error("marking an address verified", "error", err)
 		m.rejectedVerification(w, r, email, "that code is not valid")
 		return
 	}
@@ -194,7 +194,7 @@ func (m *Module) resendVerification(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	if u, err := m.users.Lookup(r.Context(), m.tenant(r), email); err == nil && !u.Verified() {
 		if err := m.sendVerification(r, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
-			observability.Log(r.Context()).Error("resending the verification code", "error", err)
+			log.For(r.Context()).Error("resending the verification code", "error", err)
 		}
 	}
 	m.screen(w, r, "auth.verify", AuthPage{

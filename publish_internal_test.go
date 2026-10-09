@@ -263,8 +263,8 @@ func TestTheKitPublishesOnlyTheApplicationOwnedRouteModule(t *testing.T) {
 			t.Errorf("the application-owned module publishes forbidden legacy boundary %q", forbidden)
 		}
 	}
-	if strings.Count(source, "kernel.Module = (*Module)(nil)") != 1 {
-		t.Error("the generated module must implement exactly the route-only kernel.Module contract")
+	if strings.Count(source, "foundation.Module = (*Module)(nil)") != 1 {
+		t.Error("the generated module must implement exactly the route-only foundation.Module contract")
 	}
 }
 

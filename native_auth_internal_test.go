@@ -40,8 +40,8 @@ func TestNativeAuthPublicationBoundary(t *testing.T) {
 	}
 
 	module := authFile(t, "Auth/LoginController.go")
-	if strings.Count(module, "kernel.Module = (*Module)(nil)") != 1 {
-		t.Error("generated Module does not prove its single route-only kernel.Module contract")
+	if strings.Count(module, "foundation.Module = (*Module)(nil)") != 1 {
+		t.Error("generated Module does not prove its single route-only foundation.Module contract")
 	}
 	for _, nativeSigner := range []string{
 		`"github.com/arandu-io/hesape/encryption"`,

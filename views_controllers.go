@@ -93,15 +93,16 @@ import (
 	"context"
 	stdhttp "net/http"
 
+	"github.com/arandu-io/framework/foundation"
 	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
-	"github.com/arandu-io/framework/kernel"
 	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/security"
+	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/encryption"
 	"github.com/arandu-io/hesape/onetime"
-	twofactor "github.com/arandu-io/hesape/2fa"
+	"github.com/arandu-io/hesape/session"
 
 	models "{{ .ModulePath }}/app/Models"
 )
@@ -151,10 +152,10 @@ type Module struct {
 	factors  Factors
 	codes    onetime.CodeStore
 	sessions *security.SessionStore
-	csrf     *security.CSRF
+	csrf     *session.CSRF
 	mailer   *mail.Mailer
 	signer   *encryption.Signer
-	flash    *security.Flash
+	flash    *session.Flash
 	appName  string
 	tenant   TenantResolver
 	secure   bool
@@ -165,19 +166,19 @@ type Module struct {
 // csrf is kept for the call bootstrap/app.go already makes, and no screen
 // issues a token with it: each draws the one CSRFProtect put on the request
 // context.
-func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *security.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
 	}
 	return &Module{
 		users: users, factors: factors, codes: codes, sessions: sessions,
 		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
-		flash: security.NewFlash(appKey, secure),
+		flash: session.NewFlash(appKey, secure),
 		appName: appName, tenant: tenant, secure: secure,
 	}
 }
 
-var _ kernel.Module = (*Module)(nil)
+var _ foundation.Module = (*Module)(nil)
 
 // Name is the module identifier.
 func (m *Module) Name() string { return "authui" }
@@ -231,12 +232,12 @@ import (
 	"strconv"
 	"strings"
 
-	fhttp "github.com/arandu-io/framework/http"
-	"github.com/arandu-io/framework/http/middleware"
-	"github.com/arandu-io/framework/observability"
-	"github.com/arandu-io/framework/security"
-	"github.com/arandu-io/framework/validation"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	hhttp "github.com/arandu-io/hesape/http"
+	"github.com/arandu-io/hesape/log"
+	hmiddleware "github.com/arandu-io/hesape/routing/middleware"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/validation"
 
 	models "{{ .ModulePath }}/app/Models"
 )
@@ -280,7 +281,7 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant := m.tenant(r)
-	u, err := m.users.VerifyCredentials(r.Context(), tenant, email, password, middleware.KeyByIP(r))
+	u, err := m.users.VerifyCredentials(r.Context(), tenant, email, password, hmiddleware.KeyByIP(r))
 	if err != nil {
 		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
 			m.rejected(w, r, email, remember, validation.Errors{
@@ -296,20 +297,20 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 			}, http.StatusTooManyRequests)
 			return
 		}
-		observability.Log(r.Context()).Error("login failed", "error", err)
+		log.For(r.Context()).Error("login failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	required, err := m.factors.Required(r.Context(), u.TenantID, u.ID)
 	if err != nil {
-		observability.Log(r.Context()).Error("checking the second factor", "error", err)
+		log.For(r.Context()).Error("checking the second factor", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	if required {
 		if err := m.writePending(w, u, remember); err != nil {
-			observability.Log(r.Context()).Error("starting the second-factor challenge", "error", err)
+			log.For(r.Context()).Error("starting the second-factor challenge", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -323,8 +324,8 @@ func (m *Module) doLogin(w http.ResponseWriter, r *http.Request) {
 // called after password-only success or after a factor succeeds, never between.
 func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u models.User, remember bool) {
 	old := m.sessions.IDFromRequest(r)
-	if _, err := m.sessions.Rotate(r.Context(), w, old, subjectOf(u), security.Remember(remember)); err != nil {
-		observability.Log(r.Context()).Error("starting session", "error", err)
+	if _, err := m.sessions.Rotate(r.Context(), w, old, subjectOf(u), session.Remember(remember)); err != nil {
+		log.For(r.Context()).Error("starting session", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -339,13 +340,13 @@ func subjectOf(u models.User) nativeauth.Subject {
 // doLogout destroys the session on the server, not only in the browser.
 func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 	if err := m.sessions.Destroy(r.Context(), w, m.sessions.IDFromRequest(r)); err != nil {
-		observability.Log(r.Context()).Error("destroying session", "error", err)
+		log.For(r.Context()).Error("destroying session", "error", err)
 	}
 	redirect(w, r, "/auth/login")
 }
 
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
-	fhttp.Redirect(w, r, to)
+	hhttp.Redirect(w, r, to)
 }
 
 // rejected answers the form again, with the reason on it.
@@ -403,7 +404,7 @@ func (m *Module) rejected(w http.ResponseWriter, r *http.Request, email string, 
 const authHomeControllerTemplate = `package controllers
 
 import (
-	"github.com/arandu-io/framework/http"
+	fhttp "github.com/arandu-io/framework/http"
 	hhttp "github.com/arandu-io/hesape/http"
 
 	authui "{{ .ModulePath }}/app/Http/Controllers/Auth"
@@ -446,7 +447,7 @@ func NewHomeController(appName string, people authui.UserNames, tenant string) *
 
 // Compile-time proof that this controller answers GET / the way Resource and the
 // route table expect. It costs nothing and catches a renamed method.
-var _ http.Indexer = (*HomeController)(nil)
+var _ fhttp.Indexer = (*HomeController)(nil)
 
 // Index renders the landing page.
 //
@@ -458,7 +459,7 @@ var _ http.Indexer = (*HomeController)(nil)
 // The route has to mount this behind middleware.LoadSubject, as the skeleton's
 // routes/web.go does. Without it nothing puts a subject on the request, and
 // every visitor is drawn the guest half.
-func (c *HomeController) Index(ctx *http.Context) error {
+func (c *HomeController) Index(ctx *hhttp.Context) error {
 	// Who is signed in, put on the request by the route's LoadSubject from the
 	// session cookie and never from the request body. No subject is the
 	// anonymous case -- no cookie, a forged one, or a session that expired --

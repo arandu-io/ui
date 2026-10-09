@@ -6,15 +6,16 @@ import (
 	"context"
 	stdhttp "net/http"
 
+	"github.com/arandu-io/framework/foundation"
 	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
-	"github.com/arandu-io/framework/kernel"
 	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/security"
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/encryption"
 	"github.com/arandu-io/hesape/onetime"
+	"github.com/arandu-io/hesape/session"
 
 	models "example.test/project/app/Models"
 )
@@ -64,10 +65,10 @@ type Module struct {
 	factors  Factors
 	codes    onetime.CodeStore
 	sessions *security.SessionStore
-	csrf     *security.CSRF
+	csrf     *session.CSRF
 	mailer   *mail.Mailer
 	signer   *encryption.Signer
-	flash    *security.Flash
+	flash    *session.Flash
 	appName  string
 	tenant   TenantResolver
 	secure   bool
@@ -78,19 +79,19 @@ type Module struct {
 // csrf is kept for the call bootstrap/app.go already makes, and no screen
 // issues a token with it: each draws the one CSRFProtect put on the request
 // context.
-func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *security.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
 	}
 	return &Module{
 		users: users, factors: factors, codes: codes, sessions: sessions,
 		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
-		flash:   security.NewFlash(appKey, secure),
+		flash:   session.NewFlash(appKey, secure),
 		appName: appName, tenant: tenant, secure: secure,
 	}
 }
 
-var _ kernel.Module = (*Module)(nil)
+var _ foundation.Module = (*Module)(nil)
 
 // Name is the module identifier.
 func (m *Module) Name() string { return "authui" }

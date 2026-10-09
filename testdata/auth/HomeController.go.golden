@@ -1,7 +1,7 @@
 package controllers
 
 import (
-	"github.com/arandu-io/framework/http"
+	fhttp "github.com/arandu-io/framework/http"
 	hhttp "github.com/arandu-io/hesape/http"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
@@ -44,7 +44,7 @@ func NewHomeController(appName string, people authui.UserNames, tenant string) *
 
 // Compile-time proof that this controller answers GET / the way Resource and the
 // route table expect. It costs nothing and catches a renamed method.
-var _ http.Indexer = (*HomeController)(nil)
+var _ fhttp.Indexer = (*HomeController)(nil)
 
 // Index renders the landing page.
 //
@@ -56,7 +56,7 @@ var _ http.Indexer = (*HomeController)(nil)
 // The route has to mount this behind middleware.LoadSubject, as the skeleton's
 // routes/web.go does. Without it nothing puts a subject on the request, and
 // every visitor is drawn the guest half.
-func (c *HomeController) Index(ctx *http.Context) error {
+func (c *HomeController) Index(ctx *hhttp.Context) error {
 	// Who is signed in, put on the request by the route's LoadSubject from the
 	// session cookie and never from the request body. No subject is the
 	// anonymous case -- no cookie, a forged one, or a session that expired --

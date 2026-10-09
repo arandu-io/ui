@@ -7,9 +7,9 @@ import (
 	"net/http"
 
 	"github.com/arandu-io/framework/mail"
-	"github.com/arandu-io/framework/observability"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	hhttp "github.com/arandu-io/hesape/http"
+	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/view"
 
 	models "example.test/project/app/Models"
@@ -108,7 +108,7 @@ func (m *Module) screenStatus(w http.ResponseWriter, r *http.Request, status int
 	data.TwoFactorDisableURL = "/auth/two-factor/disable"
 	data.RecoveryCodesURL = "/auth/two-factor/recovery-codes"
 	if err := view.NewRenderer().Render(r.Context(), w, status, name, data); err != nil {
-		observability.Log(r.Context()).Error("rendering "+name, "error", err)
+		log.For(r.Context()).Error("rendering "+name, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
 }
