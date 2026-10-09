@@ -29,6 +29,11 @@ the layout asks for and the Go file that registers it. Twenty-nine files in
 all, and they are yours from the moment they land: edit them, delete them,
 rewrite them.
 
+Every form is converted with `ctx.Bind` into a request struct declared beside
+its handler, and no handler reads a field by hand. A new password is checked
+against one policy, `passwordPolicy`, and the password box on the sign-up and
+reset screens draws its checklist from that same policy.
+
 Every screen is answered whole, and so is a rejected form. A handler that
 refuses one returns `validation.Errors` and the router sends the person back to
 the form with a redirect, the messages and what was typed in the flash; htmx
@@ -43,7 +48,11 @@ files and the two mailables — and refreshes twenty-two files: the seventeen
 views plus `page.go`, `render.go`, `HomeController` and the two under
 `resources/js/`, which they do not compile or render without. A project whose
 handlers still answer a rejected form with a 422 is refused, with nothing
-written, until it takes the flow along with `auth --force`.
+written, until it takes the flow along with `auth --force`; one whose setup
+screen still calls `TrustedQRCode` is refused until `auth --views --force`
+replaces it. `--force` also removes what an earlier release published and this
+one does not — the sign-in partial under `resources/views/partials/` — when it
+is still byte for byte the kit's, and names what it removed.
 
 **A security fix in a controller does not arrive with `--views`.** It leaves the
 five authentication controller files and the two mailables exactly as they are,

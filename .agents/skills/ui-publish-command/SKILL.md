@@ -1,6 +1,6 @@
 ---
 name: ui-publish-command
-description: The command that writes the Arandu starter kit into a project, and what a republish refreshes versus leaves alone. Use when the request is to "add a file to the kit", "publish another view", "change what --force does", "why was my file not overwritten", "my edit was lost", "the custom block did not survive", "add a flag", "change the wiring instructions", or when a pull request touches publish.go, main.go or GenerateAuth. Covers the 29 files it writes, the 5 replaced with no flag, the 22 that --views refreshes, the two things it refuses to publish into, how merge carries a custom block over in two comment syntaxes, and why nothing is added to the caller's go.mod.
+description: The command that writes the Arandu starter kit into a project, and what a republish refreshes versus leaves alone. Use when the request is to "add a file to the kit", "publish another view", "change what --force does", "why was my file not overwritten", "my edit was lost", "the custom block did not survive", "add a flag", "change the wiring instructions", or when a pull request touches publish.go, main.go or GenerateAuth. Covers the 29 files it writes, the 5 replaced with no flag, the 22 that --views refreshes, the three things it refuses to publish into, the file --force removes because the kit no longer publishes it, how merge carries a custom block over in two comment syntaxes, and why nothing is added to the caller's go.mod.
 license: MIT
 ---
 
@@ -46,7 +46,7 @@ under `testdata/auth/`.
 
 ## The three states a file can be in
 
-`write` in `publish.go:367` reads the file on disk — it does not stat it — and
+`write` in `publish.go:510` reads the file on disk — it does not stat it — and
 that read is what decides:
 
 | state | when | reported as |
@@ -59,7 +59,7 @@ Publishing twice into the same project, with no flag, writes 5 and keeps 24.
 That is not a convenience. In kyse a page renders **with the type of its
 layout**, so the layout and everything that extends it are one unit; publishing
 a new layout beside the old pages leaves a project that builds and fails to
-render. `replaced` in `publish.go:359` spells the five out rather than inferring
+render. `replaced` in `publish.go:502` spells the five out rather than inferring
 them, so a sixth cannot join quietly:
 
 ```
@@ -87,9 +87,9 @@ naming two symbols it had never heard of. It is safe to include precisely
 because it is **not** in `replaced`: an existing one is kept and reported as
 kept, so adding it changed what a project *without* one gets and nothing else.
 
-`screensOnly` in `views.go:1385` is the filter, and
+`screensOnly` in `views.go:1410` is the filter, and
 `TestViewsOnlyPublishesTheScreensAndTheLayoutUnit` at
-`publish_write_internal_test.go:278` holds it to the list.
+`publish_write_internal_test.go:280` holds it to the list.
 
 ## The custom block
 
@@ -146,7 +146,7 @@ views. One line in a file the person reads beats a generator that edits
 Two things about that text are checked by the suite rather than by review,
 because both have shipped wrong:
 
-- `wiring` is a `const` in `main.go:239` rather than a literal inside the
+- `wiring` is a `const` in `main.go:250` rather than a literal inside the
   `Printf`, so a test can read it.
   `TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes` at
   `publish_internal_test.go:647` parses both the printed call and the published
@@ -171,12 +171,12 @@ because both have shipped wrong:
    one new golden file per new published file.
 4. If it mounts a route, the route and its name go in the table of
    `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-   `flow_internal_test.go:1190`, which is exact and ordered on purpose.
+   `flow_internal_test.go:1225`, which is exact and ordered on purpose.
 5. Run the gates.
 
 ## What it refuses to publish into
 
-Two questions are asked after `--dry-run` and before the first byte is written,
+Three questions are asked after `--dry-run` and before the first byte is written,
 so a refusal never leaves a half-published tree:
 
 - **The floor.** `checkAruFloor` reads the `[arandu] aru` line of the project's
@@ -189,10 +189,38 @@ so a refusal never leaves a half-published tree:
   own refusals with a 422; beside the layout and `page.go` that every run
   replaces, a refused sign-in under htmx would be thrown away and the project
   would stop building. The message names the files and `auth --force`.
+- **The page.** `checkKeptFilesNameOnlyWhatPageDeclares` reads every published
+  file this run keeps and refuses when one still names something in
+  `gonePageNames` — today `TrustedQRCode`, which the setup screen of v0.20.0
+  and earlier calls to draw the QR code as trusted markup. `page.go` is
+  replaced on every run and no longer declares it, so the project would stop
+  building. The message names the files and `auth --views --force`.
 
-`TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens` and
-`TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals` in
+`TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens`,
+`TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals` and
+`TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt` in
 `publish_write_internal_test.go` drive the command itself and look at the disk.
+
+## What --force removes
+
+A file the kit used to publish and no longer does is in `retired` in
+`publish.go`, with the SHA-256 of every version a release wrote, taken with the
+project's module path written as `example.test/project` — the hash of that
+release's golden file. After the files are written, `retire` looks for each:
+
+| on disk | without `--force` | with `--force` |
+| --- | --- | --- |
+| byte for byte a version the kit wrote | `stale   <path> (no longer published; auth --force removes it)` | removed, with the directory it leaves empty and the blank import that goes with it named |
+| anything else — edited, or never the kit's | `left    <path> (…)` | the same: left |
+
+`--dry-run --force` says `remove  <path>` and removes nothing. Today the list is
+`resources/views/partials/login_form.kyse.go`, published from v0.8.0 to v0.19.0
+in three versions. A file that leaves the kit gets an entry here, its digests
+from the golden files at the tags that published it, and one fixture per
+version under `testdata/retired/`:
+`TestEveryRetiredDigestIsAVersionThisKitPublished` refuses a digest no fixture
+hashes to, and `TestForceRemovesOnlyWhatThisKitPublishedAndNoLongerDoes` drives
+every row of the table.
 
 ## The arguments it accepts, and the one it refuses
 
@@ -209,7 +237,7 @@ exist. The verb is what varies.
 
 ## Where it runs
 
-`projectRoot` at `publish.go:91` walks up from the working directory looking for
+`projectRoot` at `publish.go:94` walks up from the working directory looking for
 `go.mod`, `main.go` and `arandu.toml` **together** — any one alone is a Go
 module, a program, or a directory somebody copied a config into. Run from a
 subdirectory it still writes into the project root, not the current directory.
@@ -223,7 +251,7 @@ the require directives and fails on anything but `github.com/arandu-io/hesape`,
 which is there for `publish.Merge` and nothing else.
 
 That one is the exception that proves where the line is. `render` in
-`publish.go:45` is still a copy of the CLI's renderer rather than an import —
+`publish.go:48` is still a copy of the CLI's renderer rather than an import —
 importing that would put the CLI back in the way — and the golden files still
 compare the published output byte for byte, so what drifts in the copy is caught
 where it matters. The merge is different: a copy of it does not drift into a

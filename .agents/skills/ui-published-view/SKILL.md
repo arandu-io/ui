@@ -55,7 +55,7 @@ them separately.
 A view constant is rendered twice. First by this program, then by kyse in
 somebody's project:
 
-- **`<% %>` is this generator.** `render` in `publish.go:45` switches the
+- **`<% %>` is this generator.** `render` in `publish.go:48` switches the
   delimiters for any name ending `.kyse.go`, so the only thing it interpolates
   is `<% .ModulePath %>` in the import block.
 - **`{{ }}` is kyse**, in the project, and it survives into the published file
@@ -72,11 +72,15 @@ clause — the package is the directory's, because the generated Go sits beside
 the source and one directory is one Go package. `auth/login.kyse.go` is
 `package auth`; a file under `resources/views/` itself is `package views`.
 
-**2. Read what the screen is allowed to read.** `AuthPage` in `views.go:212` is
+**2. Read what the screen is allowed to read.** `AuthPage` in `views.go:213` is
 the struct, published to `app/Http/Controllers/Auth/page.go`. It embeds
 `view.Page` for the chrome — title, description, token, navigation — and adds
-the status line, the address a link carried, the remember-me box, route URLs
-and two-factor provisioning material. It has no field per message: a rejected
+the status line, the address a link carried, the remember-me box, route URLs,
+the password policy and two-factor provisioning material. A password box where
+a password is chosen passes `Policy: .PasswordPolicy`, the policy its handler
+fills from `passwordPolicy` and checks the form against, so the checklist
+under the box is the rule that refuses it; a `Confirming` box draws no
+checklist and passes none. It has no field per message: a rejected
 form comes back through the router, the flash lands in `view.Page.Errors` and
 `view.Page.Old`, and a component asks the page by field name —
 `components.Field(components.FieldProps{Name: "email", Page: .})` draws the
@@ -87,9 +91,9 @@ If a screen needs something new, add the field to `authPageTemplate` **and fill
 it in from a handler in the same change.** A URL field read by a template and
 assigned by nobody renders `action=""`, which posts to the current URL and looks
 like it worked. `TestEveryAddressAScreenReadsIsFilledInSomewhere` in
-`flow_internal_test.go:525` fails on either half — read and never filled, filled
+`flow_internal_test.go:559` fails on either half — read and never filled, filled
 and never read — and `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` at
-`flow_internal_test.go:707` does the same for the messages: every field a
+`flow_internal_test.go:741` does the same for the messages: every field a
 handler rejects with needs an input of that `Name` on some screen, and a notice
 needs a screen that draws `.Status`.
 
@@ -169,6 +173,15 @@ because it escaped everything it interpolated. Never convert a string to
 copies, and a converted `Status` is stored cross-site scripting the first time
 one comes from a person.
 
+Every `{!! !!}` in a published view is a component's, and that includes the
+two-factor QR code, which is not raw output at all. The setup screen draws it
+as `<img src="data:image/svg+xml;base64,{{ .QRCodeImage() }}">`: the screen
+spells out the scheme, because the view escape refuses an address whose scheme
+comes from a value, and `AuthPage.QRCodeImage` answers the base64 body. The SVG
+is drawn as an image and never run, and nothing in `page.go` names
+`html/template` or `template.HTML`.
+`TestTheQRCodeIsAnImageAndNoPublishedGoImportsHTMLTemplate` holds all three.
+
 **No Bootstrap class, and no invented one.** The styling is Tailwind utilities
 plus the semantic classes the stylesheet ships — `card`, `btn`, `input`,
 `field`. A class the stylesheet has never heard of renders as nothing at all,
@@ -232,7 +245,7 @@ received a layout that panicked on every request, and the layout is in
 `.BrandName`, filled from the application's own configuration. The verification
 mail once carried the literal word, so every project running this command signed
 its first message to its own users with a name that was not theirs.
-`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:599`
+`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:633`
 searches every published file for it.
 
 ## Message bodies
@@ -250,6 +263,6 @@ custom block in kyse comment syntax:
 
 That block is the wording a project decided to send its own users, and a
 republish carries it over. `TestBothMessagesAreBuiltTheSameWay` at
-`flow_internal_test.go:633` fails if a mail view loses it. Both parts of both
+`flow_internal_test.go:667` fails if a mail view loses it. Both parts of both
 messages ship — a mail with no plain-text part is filed as spam more often and
 shows nothing in a client that cannot render HTML.

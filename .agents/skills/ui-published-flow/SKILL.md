@@ -28,16 +28,16 @@ files carry a block: 5 use Go comments and 4 message bodies use kyse comments.
 
 In the order they are registered, which is the order the test knows. The paths
 are relative to the group, and resolve under `/auth`. The last column marks the
-eight registered with `Action`: their handlers take a form somebody can get
-wrong, so they are `func(*hhttp.Context) error` and return the refusal to the
-router.
+ten registered with `Action`: their handlers read a form, so they are
+`func(*hhttp.Context) error`, convert the form with `ctx.Bind`, and return a
+refusal to the router.
 
 ```
  1  Get   /login              auth.login
  2  Post  /login              —                                 Action
  3  Post  /logout             auth.logout
  4  Get   /password           auth.password.request
- 5  Post  /password/email     auth.password.email
+ 5  Post  /password/email     auth.password.email               Action
  6  Get   /password/reset     auth.password.reset
  7  Post  /password/update    auth.password.update              Action
  8  Get   /password/confirm   auth.password.confirm
@@ -46,7 +46,7 @@ router.
 11  Post  /register           —                                 Action
 12  Get   /verify             auth.verify.notice
 13  Post  /verify/confirm     auth.verify.confirm               Action
-14  Post  /verify/resend      auth.verify.resend
+14  Post  /verify/resend      auth.verify.resend                Action
 15  Get   /two-factor/challenge              auth.two-factor.challenge
 16  Post  /two-factor/challenge              —                  Action
 17  Get   /two-factor/recovery               auth.two-factor.recovery
@@ -64,7 +64,7 @@ form posts, and a second name for one address is a choice nobody can make
 correctly.
 
 `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-`flow_internal_test.go:1190` holds this table **exactly, order included, the
+`flow_internal_test.go:1225` holds this table **exactly, order included, the
 last column too**. A route added to the kit is therefore a row somebody wrote
 there, rather than a screen that quietly arrives unnamed — and a route that
 moved from `Action` back to `Post` is a handler that would have to draw its own
@@ -72,7 +72,7 @@ refusal.
 
 The application-owned module preserves the established authentication names:
 `auth.login` resolves to `/auth/login` and `auth.logout` to `/auth/logout`.
-`TestTheNamesSurviveTheSubstitution` at `flow_internal_test.go:1258`
+`TestTheNamesSurviveTheSubstitution` at `flow_internal_test.go:1293`
 compiles the published Go into a module of its own and asks. It also checks the
 two the guards redirect to — `auth.login` against `middleware.SignInPath`,
 `auth.password.confirm` against `middleware.PasswordConfirmPath` — because a
@@ -89,13 +89,13 @@ comments.
 fill it in here, in the same change.** A URL field read by a template and
 assigned by nobody renders `action=""`, which posts to the current URL and looks
 like it worked. `TestEveryAddressAScreenReadsIsFilledInSomewhere` at
-`flow_internal_test.go:525` fails on either half.
+`flow_internal_test.go:559` fails on either half.
 
 **3. If you added a route, add its row to the table** of
 `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-`flow_internal_test.go:1190`, and make sure something draws the screen it serves.
+`flow_internal_test.go:1225`, and make sure something draws the screen it serves.
 `TestEveryScreenThisKitPublishesIsDrawnBySomething` at
-`flow_internal_test.go:864` parses every published Go file and requires each
+`flow_internal_test.go:898` parses every published Go file and requires each
 view to be named by one. The landing page shipped once with the Login and
 Register buttons on it, reachable by nothing, while the dashboard was drawn for
 guests and signed-in people alike.
@@ -114,7 +114,7 @@ go test . -update && git diff testdata
 string. Two different things read it, and only one of them is a compiler.
 
 It **parses** in `TestTheGeneratedGoParses` at `publish_internal_test.go:96` and
-in `render` at `publish.go:45`, which runs `format.Source` over every non-view
+in `render` at `publish.go:48`, which runs `format.Source` over every non-view
 file and fails generation with *this is a bug in this generator*. Parsing is not
 enough and never was: a file that calls a method nobody declares parses
 perfectly. `render.go` shipped calling `auth.Service.Names` after the method had
@@ -132,6 +132,31 @@ published templates carry import blocks of their own.
 
 ## What the published handlers must keep doing
 
+**A form is bound, never read by hand.** A handler that reads a form declares
+a request struct beside it — `loginRequest`, `registrationRequest`,
+`passwordUpdateRequest` and the rest — with a `form:"…"` tag per field and a
+`LogValue` that says which fields arrived and nothing they carried, and fills
+it with `ctx.Bind(&in)`, returning the error as it came. A key the struct does
+not declare reaches no field, an unticked box is `false`, and every value
+arrives trimmed — the password too. No handler calls `PostFormValue`,
+`FormValue`, `ParseForm` or `Validate()`; the checks a form needs are written
+in the handler, where they were. `aru doctor` reports the first shape as
+`input-read-by-hand` and the second as `validate-called-by-controller`, and
+`TestNoPublishedHandlerReadsItsFormByHand` refuses both, and an `Action` whose
+handler does not bind.
+
+**A new password is held to one policy.** `passwordPolicy` in
+`RegisterController.go` is the rule — from `hashing.MinPasswordLen` to
+`hashing.MaxPasswordLen` — and both ends read it: `showRegister` and
+`showPasswordReset` hand it to the screen as `AuthPage.PasswordPolicy`, which
+the password box draws its checklist from, and `doRegister` and
+`updatePassword` check against it through `checkNewPassword`. Left nil, the box
+draws `validation.PasswordDefault`, a minimum of eight, and the handler refused
+twelve: the checklist ticked every line and the form was turned away.
+`checkNewPassword` refuses the empty password before it asks the policy,
+because the policy's length rule passes a value that is absent.
+`TestTheChecklistAndTheHandlerAreOnePasswordPolicy` holds the four ends.
+
 **A rejected form is returned, never drawn.** A handler that refuses a form
 returns `validation.Errors` — `return validation.Errors{"email": {"…"}}`, or the
 `errs` it built when `errs.Any()` — and the router answers it: a 303 back to the
@@ -145,9 +170,10 @@ the flash on the page — messages in `view.Page.Errors`, typed input in
 message is the `Name` of an input on the screen the form is on; a key with no
 input is carried back and dropped.
 
-Only an `Action` has a router to return to, so a handler that can refuse is
-registered with `g.Action(stdhttp.MethodPost, …)` and reads its request off the
-context (`w, r := ctx.Response, ctx.Request`). `Routes` hands the router the
+Only an `Action` has a router to return to and a context to bind from, so a
+handler that reads a form is registered with `g.Action(stdhttp.MethodPost, …)`
+and takes the response and request off the context (`w, r := ctx.Response,
+ctx.Request`). `Routes` hands the router the
 module's own flash, so a rejection and a notice travel in one cookie format on
 any router, including one a test builds. A status a refusal carries goes on the
 header before returning — the sign-in lock sets `Retry-After` and returns the
@@ -180,8 +206,8 @@ page. `TestTheRedirectSurvivesWithoutJavaScript` at
 consume through the application's `onetime.CodeStore`; the purpose and subject
 keep a code from crossing flows or accounts, and consumption is single-use and
 atomic. `TestTheResetUsesOnlyPurposeBoundNativeCodes` at
-`flow_internal_test.go:307` and `TestNothingIsConsumedUntilThePasswordIsAcceptable`
-at `flow_internal_test.go:368` keep the password flow on that boundary.
+`flow_internal_test.go:337` and `TestNothingIsConsumedUntilThePasswordIsAcceptable`
+at `flow_internal_test.go:398` keep the password flow on that boundary.
 
 **What the sign-up form asks for is a setting, not a shape.** `registrationAsks`
 in `RegisterController.go` is one of `PasswordTwice` (the zero value, and what
@@ -240,14 +266,16 @@ against a fake service returning a lock and a wrong code.
 code is on its way.* — whether it is or not, and nothing is mailed to an address
 nobody looked up.
 `TestTheResetSaysTheSameThingWhetherTheAddressIsRegisteredOrNot` at
-`flow_internal_test.go:396` and `TestNothingIsMailedToAnAddressNobodyLookedUp` at
-`flow_internal_test.go:327`.
+`flow_internal_test.go:426` and `TestNothingIsMailedToAnAddressNobodyLookedUp` at
+`flow_internal_test.go:357`.
 
 **Provisioning material and CSRF do not survive serialization.** `AuthPage`
-carries the session's CSRF token plus the authenticator secret, QR markup and
-recovery codes. A type that serializes itself whole is one debug dump away from
+carries the session's CSRF token plus the authenticator secret, the QR code and
+recovery codes. The QR code is an image: the setup screen spells out the
+`data:image/svg+xml;base64,` scheme and `AuthPage.QRCodeImage` answers the
+body, so no published Go names `html/template` or `template.HTML`. A type that serializes itself whole is one debug dump away from
 publishing them, so `MarshalJSON` and `LogValue` are written by hand.
-`TestNeitherTokenSurvivesBeingSerialized` at `flow_internal_test.go:1005`.
+`TestNeitherTokenSurvivesBeingSerialized` at `flow_internal_test.go:1039`.
 
 **The tenant does not come from the request body**, and the kit does not
 migrate. `TestTheTenantDoesNotComeFromTheRequestBody` at
@@ -273,7 +301,7 @@ Two checks stand there, and both must pass before a signature changes:
   module, so a green run on a machine with only this repository proves nothing
   about it. Check the sibling out before changing a signature.
 
-When one does change, the `wiring` constant in `main.go:239` changes with it, in
+When one does change, the `wiring` constant in `main.go:250` changes with it, in
 the same commit.
 
 ## Two things the published code says about itself that are worth knowing
