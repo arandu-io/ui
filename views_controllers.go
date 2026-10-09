@@ -273,8 +273,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/hashing"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	hmiddleware "github.com/arandu-io/hesape/routing/middleware"
@@ -351,6 +354,9 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 
 	tenant := m.tenant(r)
 	u, err := m.users.VerifyCredentials(r.Context(), tenant, in.Email, in.Password, hmiddleware.KeyByIP(r))
+	if trimmed := strings.TrimSpace(in.Password); trimmed != in.Password && trimmed != "" && wrongPassword(err) {
+		u, err = m.verifyTrimmedPassword(r, tenant, in.Email, in.Password, trimmed)
+	}
 	if err != nil {
 		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
 			return validation.Errors{"email": {"invalid email or password"}}
@@ -385,6 +391,82 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 	m.finishSignIn(w, r, u, in.Remember)
 	return nil
 }
+
+// wrongPassword reports whether err is the plain refusal of a password, and not
+// a lock that happens to match it as well.
+func wrongPassword(err error) bool {
+	var locked retryAfterError
+	return errors.Is(err, nativeauth.ErrInvalidCredentials) && !errors.As(err, &locked)
+}
+
+// verifyTrimmedPassword is the transition for a password stored trimmed.
+//
+// ctx.Bind used to trim every value, the password included, so a password
+// chosen with spaces at its ends through this kit's v0.21.0 handlers, on hesape
+// v0.50.1 or earlier, was hashed without them. Bind now leaves a password as
+// typed, and the person who types the spaces they chose is refused. doLogin
+// calls this only then: the typed password was refused, it is not a lock, and
+// it differs from its trimmed form. On success the password is stored as typed,
+// through Users.ResetPassword bound to the hash just compared, so the next
+// sign-in needs no second form; the service records that write as the password
+// change it is, and when it fails nobody is signed in. A refusal is the usual
+// ErrInvalidCredentials, which doLogin answers with the usual message.
+//
+// It is one attempt. The user service counted it when it refused the typed
+// form, and nothing here counts again; nor does it run when the service is
+// holding the account back, so the second form is never a way around the
+// counter. A success leaves that one failure counted until the window passes
+// or the next sign-in clears it.
+//
+// It takes as long whether an account answered or not. The trimmed form is
+// always compared against a hash -- the account's, or a decoy when no account
+// with a password answers to the address -- inside a timebox as long as the one
+// the user service keeps.
+//
+// Delete it, with its call in doLogin, once no account still holds a password
+// set while Bind trimmed: every password registered or reset through kit
+// v0.21.0 on hesape v0.50.1 or earlier. Each sign-in through it rewrites one,
+// so their number only shrinks; an application that never ran that pair has
+// none and can delete it today.
+func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, typed, trimmed string) (models.User, error) {
+	var found models.User
+	_, err := nativeauth.NewTimebox().Call(func(box nativeauth.Timebox) (any, error) {
+		u, lookupErr := m.users.Lookup(r.Context(), tenant, email)
+		stored := u.Password
+		if lookupErr != nil || stored == "" {
+			stored = trimmedDecoy()
+		}
+		if hashing.Check(trimmed, stored) != nil || lookupErr != nil || u.Password == "" {
+			return nil, nativeauth.ErrInvalidCredentials
+		}
+		found = u
+		box.ReturnEarly()
+		return nil, nil
+	}, trimmedTimebox)
+	if err != nil {
+		return models.User{}, err
+	}
+
+	u, err := m.users.ResetPassword(r.Context(), found.TenantID, found.ID, found.Email, found.PasswordFingerprint(), typed)
+	if err != nil {
+		return models.User{}, fmt.Errorf("storing the password as typed: %w", err)
+	}
+	log.For(r.Context()).Info("login credentials verified in their trimmed form, password stored as typed",
+		"user_id", u.ID, "tenant", u.TenantID)
+	return u, nil
+}
+
+// trimmedTimebox is the least time, in microseconds, verifyTrimmedPassword
+// takes to refuse: the floor the user service's verifier keeps.
+const trimmedTimebox = 200000
+
+// trimmedDecoy is the hash the trimmed form is compared against when no
+// account with a password answers, so that comparison costs what a real one
+// does. It is made once, on the first transition sign-in that needs it.
+var trimmedDecoy = sync.OnceValue(func() string {
+	hash, _ := hashing.Make("no account answers to this address")
+	return hash
+})
 
 // finishSignIn is the only session-creation seam in the published flow. It is
 // called after password-only success or after a factor succeeds, never between.

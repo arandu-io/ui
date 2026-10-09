@@ -237,6 +237,7 @@ func TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison(t *testing.T) {
 		file, handler, guard, compares string
 	}{
 		{"LoginController_handlers.go", "doLogin", `in.Password == ""`, "m.users.VerifyCredentials("},
+		{"LoginController_handlers.go", "doLogin", `trimmed != ""`, "m.verifyTrimmedPassword("},
 		{"PasswordController.go", "confirmPassword", `in.Password == ""`, "m.users.ConfirmPassword("},
 		{
 			"PasswordController.go", "updatePassword",
@@ -2122,6 +2123,251 @@ func main() {
 	own := post(fallback, "/auth/password/email", reset)
 	fmt.Printf("fallback notice: status=%d secure=%s\n", own.Code, secure(own))
 	fmt.Printf("fallback then: %s\n", follow(fallback, own))
+}
+`
+
+// TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped.
+//
+// ctx.Bind trimmed the password until hesape v0.50.2, so the kit's v0.21.0
+// handlers stored a password chosen with spaces at its ends without them. Bind
+// now leaves it as typed, and the person typing what they chose would be
+// refused. The published sign-in tries the trimmed form once, stores the
+// password as typed through the user service on success, and refuses the rest
+// exactly as it refuses any wrong password.
+//
+// The probe runs the published module against hesape v0.50.2 with a user
+// service that hashes for real and counts what the real one counts: each call
+// to VerifyCredentials is one attempt against the throttle.
+//
+//   - typed with the spaces: signed in, the password rewritten as typed, one
+//     attempt, and the next sign-in passes the service on the first form;
+//   - typed with the spaces, the second factor on: the pending cookie carries
+//     the new hash, so the challenge screen opens;
+//   - wrong, unknown and an account with no password: the usual message, one
+//     attempt, nothing written, and never under the timebox;
+//   - no spaces, only spaces, or the account held back: no second form at all.
+//
+// The lock in the probe matches ErrInvalidCredentials as well, the shape
+// twofactor's lock has, because that is the one a second form could mistake
+// for a wrong password. doLogin answers it with the wrong-password message,
+// as it did before the transition; what this holds is that it is never retried.
+func TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped(t *testing.T) {
+	out := runAgainstPublishedKit(t, trimmedPasswordProbe)
+
+	for _, want := range []string{
+		"spaces: status=303 location=/ attempts=1 lookups=1 resets=1 stored-as-typed=true",
+		"again: status=303 location=/ attempts=1 lookups=0 resets=0",
+		"second factor: status=303 location=/auth/two-factor/challenge attempts=1 resets=1 challenge=200",
+		"wrong: status=303 location=/auth/login attempts=1 lookups=1 resets=0 message=invalid email or password timeboxed=true",
+		"unknown: status=303 location=/auth/login attempts=1 lookups=1 resets=0 message=invalid email or password timeboxed=true",
+		"no password: status=303 location=/auth/login attempts=1 lookups=1 resets=0 message=invalid email or password timeboxed=true",
+		"no spaces: status=303 location=/auth/login attempts=1 lookups=0 resets=0 message=invalid email or password",
+		"only spaces: status=303 location=/auth/login attempts=1 lookups=0 resets=0 message=invalid email or password",
+		"locked: status=303 location=/auth/login attempts=1 lookups=0 resets=0 message=invalid email or password",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+
+	// The timebox above hides how long the refusal took, so it cannot show
+	// that a hash was compared when no account answered. The source can: the
+	// decoy stands in for a missing hash, and the comparison is the first
+	// operand of the refusal, so nothing short-circuits it.
+	body := bodyOf(t, authFile(t, "LoginController_handlers.go"), "verifyTrimmedPassword")
+	for _, want := range []string{
+		"stored = trimmedDecoy()",
+		"if hashing.Check(trimmed, stored) != nil || lookupErr != nil",
+		"nativeauth.NewTimebox().Call(",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("verifyTrimmedPassword no longer says %q: a refusal for an address nobody owns could "+
+				"skip the comparison and answer faster than one for an account that exists", want)
+		}
+	}
+}
+
+// trimmedPasswordProbe signs in through the published module, with a user
+// service that keeps real hashes.
+const trimmedPasswordProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/hashing"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+const (
+	typed   = "  correct horse battery staple  "
+	trimmed = "correct horse battery staple"
+)
+
+type locked struct{}
+
+func (locked) Error() string { return "too many attempts" }
+func (locked) Seconds() int { return 60 }
+func (locked) Unwrap() error { return nativeauth.ErrInvalidCredentials }
+
+type users struct {
+	authui.Users
+	accounts                  map[string]models.User
+	attempts, lookups, resets int
+	held                      string
+}
+
+func (u *users) VerifyCredentials(_ context.Context, _, email, password, _ string) (models.User, error) {
+	u.attempts++
+	if email == u.held {
+		return models.User{}, locked{}
+	}
+	account, ok := u.accounts[email]
+	if !ok || account.Password == "" || hashing.Check(password, account.Password) != nil {
+		return models.User{}, nativeauth.ErrInvalidCredentials
+	}
+	return account, nil
+}
+
+func (u *users) Lookup(_ context.Context, _, email string) (models.User, error) {
+	u.lookups++
+	account, ok := u.accounts[email]
+	if !ok {
+		return models.User{}, errors.New("no such account")
+	}
+	return account, nil
+}
+
+func (u *users) FindForAuthentication(_ context.Context, _, id string) (models.User, error) {
+	for _, account := range u.accounts {
+		if account.ID == id {
+			return account, nil
+		}
+	}
+	return models.User{}, errors.New("no such account")
+}
+
+func (u *users) ResetPassword(_ context.Context, _, id, email, fingerprint, password string) (models.User, error) {
+	u.resets++
+	account := u.accounts[email]
+	if account.ID != id || account.PasswordFingerprint() != fingerprint {
+		return models.User{}, errors.New("the password changed")
+	}
+	hash, err := hashing.Make(password)
+	if err != nil {
+		return models.User{}, err
+	}
+	account.Password = hash
+	u.accounts[email] = account
+	return account, nil
+}
+
+type factors struct{ authui.Factors }
+
+func (factors) Required(_ context.Context, _, id string) (bool, error) { return id == "user-c", nil }
+
+func main() {
+	view.Register("auth.login", func(w io.Writer, data any) error {
+		_, err := io.WriteString(w, data.(authui.AuthPage).FieldError("email"))
+		return err
+	})
+	view.Register("auth.two-factor.challenge", func(w io.Writer, data any) error {
+		_, err := io.WriteString(w, "challenge")
+		return err
+	})
+
+	hash, err := hashing.Make(trimmed)
+	if err != nil {
+		panic(err)
+	}
+	service := &users{accounts: map[string]models.User{
+		"a@example.test": {ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: hash},
+		"c@example.test": {ID: "user-c", TenantID: "tenant-a", Email: "c@example.test", Password: hash},
+		"n@example.test": {ID: "user-n", TenantID: "tenant-a", Email: "n@example.test"},
+	}, held: "h@example.test"}
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	flash := session.NewFlash(appKey, false)
+	router := fhttp.NewRouter().WithFlash(flash)
+	authui.New(service, factors{}, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
+		appKey, "Probe", authui.FixedTenant("tenant-a"), false).Routes(router)
+	app := middleware.Flash(flash)(router)
+
+	send := func(r *http.Request, cookies []*http.Cookie) *httptest.ResponseRecorder {
+		r.Header.Set("Accept", "text/html")
+		for _, c := range cookies {
+			if c.MaxAge >= 0 {
+				r.AddCookie(c)
+			}
+		}
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w
+	}
+	signIn := func(email, password string) (*httptest.ResponseRecorder, time.Duration) {
+		form := url.Values{"email": {email}, "password": {password}}
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", "/auth/login")
+		start := time.Now()
+		w := send(r, nil)
+		return w, time.Since(start)
+	}
+	counted := func() string {
+		line := fmt.Sprintf("attempts=%d lookups=%d resets=%d", service.attempts, service.lookups, service.resets)
+		service.attempts, service.lookups, service.resets = 0, 0, 0
+		return line
+	}
+	refused := func(name, email, password string, timed bool) {
+		w, took := signIn(email, password)
+		line := fmt.Sprintf("%s: status=%d location=%s %s", name, w.Code, w.Header().Get("Location"), counted())
+		if to := w.Header().Get("Location"); to != "" {
+			page := send(httptest.NewRequest(http.MethodGet, to, nil), w.Result().Cookies())
+			line += " message=" + page.Body.String()
+		} else {
+			line += " message=(no redirect to follow)"
+		}
+		if timed {
+			line += fmt.Sprintf(" timeboxed=%t", took >= 200*time.Millisecond)
+		}
+		fmt.Println(line)
+	}
+
+	w, _ := signIn("a@example.test", typed)
+	fmt.Printf("spaces: status=%d location=%s %s stored-as-typed=%t\n", w.Code, w.Header().Get("Location"),
+		counted(), hashing.Check(typed, service.accounts["a@example.test"].Password) == nil)
+	w, _ = signIn("a@example.test", typed)
+	fmt.Printf("again: status=%d location=%s %s\n", w.Code, w.Header().Get("Location"), counted())
+
+	w, _ = signIn("c@example.test", typed)
+	challenge := send(httptest.NewRequest(http.MethodGet, "/auth/two-factor/challenge", nil), w.Result().Cookies())
+	line := counted()
+	fmt.Printf("second factor: status=%d location=%s %s challenge=%d\n", w.Code, w.Header().Get("Location"),
+		strings.Replace(line, " lookups=1", "", 1), challenge.Code)
+
+	refused("wrong", "c@example.test", "  wrong horse battery staple  ", true)
+	refused("unknown", "b@example.test", typed, true)
+	refused("no password", "n@example.test", typed, true)
+	refused("no spaces", "c@example.test", "wrong horse battery staple", false)
+	refused("only spaces", "c@example.test", "              ", false)
+	refused("locked", "h@example.test", typed, false)
 }
 `
 
