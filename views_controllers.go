@@ -184,11 +184,13 @@ func (m *Module) Name() string { return "authui" }
 
 // Routes registers the twenty-three authentication routes.
 //
-// The eight that take a form somebody can get wrong are registered with Action,
-// and the rest with Get and Post. An action returns validation.Errors and the
-// router answers it: a page goes back where it came from with the messages and
-// what was typed, and a client that asked for JSON gets a 422 problem document
-// with the messages by field. No handler here writes a rejection itself.
+// The ten that read a form are registered with Action, and the rest with Get
+// and Post. An action converts its form with ctx.Bind into a request struct
+// declared beside it, and reads no field by hand. When it refuses the form it
+// returns validation.Errors and the router answers it: a page goes back where it
+// came from with the messages and what was typed, and a client that asked for
+// JSON gets a 422 problem document with the messages by field. No handler here
+// writes a rejection itself.
 //
 // The router is handed this module's flash, the one its notices are written
 // with, so a rejection and a notice travel in the same signed cookie however the
@@ -205,7 +207,7 @@ func (m *Module) Routes(r *fhttp.Router) {
 	g.Post("/logout", m.doLogout).Name("auth.logout")
 
 	g.Get("/password", m.showPasswordRequest).Name("auth.password.request")
-	g.Post("/password/email", m.sendPasswordCode).Name("auth.password.email")
+	g.Action(stdhttp.MethodPost, "/password/email", m.sendPasswordCode).Name("auth.password.email")
 	g.Get("/password/reset", m.showPasswordReset).Name("auth.password.reset")
 	g.Action(stdhttp.MethodPost, "/password/update", m.updatePassword).Name("auth.password.update")
 	g.Get("/password/confirm", m.showPasswordConfirm, signedIn).Name("auth.password.confirm")
@@ -215,7 +217,7 @@ func (m *Module) Routes(r *fhttp.Router) {
 	g.Action(stdhttp.MethodPost, "/register", m.doRegister, guest)
 	g.Get("/verify", m.showVerifyNotice).Name("auth.verify.notice")
 	g.Action(stdhttp.MethodPost, "/verify/confirm", m.verify).Name("auth.verify.confirm")
-	g.Post("/verify/resend", m.resendVerification).Name("auth.verify.resend")
+	g.Action(stdhttp.MethodPost, "/verify/resend", m.resendVerification).Name("auth.verify.resend")
 
 	g.Get("/two-factor/challenge", m.showTwoFactorChallenge, guest).Name("auth.two-factor.challenge")
 	g.Action(stdhttp.MethodPost, "/two-factor/challenge", m.verifyTwoFactorChallenge, guest)
@@ -238,9 +240,9 @@ const authHandlersTemplate = `package authui
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
 	hhttp "github.com/arandu-io/hesape/http"
@@ -255,6 +257,27 @@ import (
 type retryAfterError interface {
 	error
 	Seconds() int
+}
+
+// loginRequest is what the sign-in form sends.
+//
+// ctx.Bind fills it through the form tags and nothing else: a key the form does
+// not declare reaches no field, every value arrives trimmed, and an unticked
+// box is false.
+type loginRequest struct {
+	Email    string ` + "`form:\"email\"`" + `
+	Password string ` + "`form:\"password\"`" + `
+	Remember bool   ` + "`form:\"remember\"`" + `
+}
+
+// LogValue says which fields arrived and nothing they carried: the address is
+// account data and the password is the credential.
+func (in loginRequest) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("email_supplied", in.Email != ""),
+		slog.Bool("password_supplied", in.Password != ""),
+		slog.Bool("remember", in.Remember),
+	)
 }
 
 // showLogin renders the form.
@@ -281,22 +304,23 @@ func (m *Module) showLogin(w http.ResponseWriter, r *http.Request) {
 // password a second time.
 func (m *Module) doLogin(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
-	email := strings.TrimSpace(r.PostFormValue("email"))
-	password := r.PostFormValue("password")
-	remember := r.PostFormValue("remember") != ""
-	if email == "" || password == "" {
+	var in loginRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if in.Email == "" || in.Password == "" {
 		errs := validation.Errors{}
-		if email == "" {
+		if in.Email == "" {
 			errs["email"] = []string{"type your email address"}
 		}
-		if password == "" {
+		if in.Password == "" {
 			errs["password"] = []string{"type your password"}
 		}
 		return errs
 	}
 
 	tenant := m.tenant(r)
-	u, err := m.users.VerifyCredentials(r.Context(), tenant, email, password, hmiddleware.KeyByIP(r))
+	u, err := m.users.VerifyCredentials(r.Context(), tenant, in.Email, in.Password, hmiddleware.KeyByIP(r))
 	if err != nil {
 		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
 			return validation.Errors{"email": {"invalid email or password"}}
@@ -320,7 +344,7 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 		return nil
 	}
 	if required {
-		if err := m.writePending(w, u, remember); err != nil {
+		if err := m.writePending(w, u, in.Remember); err != nil {
 			log.For(r.Context()).Error("starting the second-factor challenge", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return nil
@@ -328,7 +352,7 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 		redirect(w, r, "/auth/two-factor/challenge")
 		return nil
 	}
-	m.finishSignIn(w, r, u, remember)
+	m.finishSignIn(w, r, u, in.Remember)
 	return nil
 }
 

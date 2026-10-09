@@ -76,22 +76,53 @@ func (c RegistrationCredential) asksForConfirmation() bool { return c == Passwor
 // that is absent rather than one that is the hash of nothing.
 const registrationAsks = PasswordTwice
 
-type registrationInput struct {
-	Name                 string
-	Email                string
-	Password             string
-	PasswordConfirmation string
+// registrationRequest is what the sign-up form sends.
+//
+// ctx.Bind fills it through the form tags and nothing else: a key the form does
+// not declare reaches no field, so a request that carries roles or a tenant sets
+// neither. Every value arrives trimmed.
+type registrationRequest struct {
+	Name                 string ` + "`form:\"name\"`" + `
+	Email                string ` + "`form:\"email\"`" + `
+	Password             string ` + "`form:\"password\"`" + `
+	PasswordConfirmation string ` + "`form:\"password_confirmation\"`" + `
 }
 
 // LogValue exposes only whether each field was supplied. Registration input
 // contains credentials and account PII, so none of its values belong in logs.
-func (in registrationInput) LogValue() slog.Value {
+func (in registrationRequest) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.Bool("name_supplied", in.Name != ""),
 		slog.Bool("email_supplied", in.Email != ""),
 		slog.Bool("password_supplied", in.Password != ""),
 		slog.Bool("password_confirmation_supplied", in.PasswordConfirmation != ""),
 	)
+}
+
+// verifyRequest is what the confirmation form sends: the address and the code
+// mailed to it.
+type verifyRequest struct {
+	Email string ` + "`form:\"email\"`" + `
+	Code  string ` + "`form:\"email_code\"`" + `
+}
+
+// LogValue keeps the address and the code out of a log line: the code is a
+// credential until it is spent.
+func (in verifyRequest) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("email_supplied", in.Email != ""),
+		slog.Bool("code_supplied", in.Code != ""),
+	)
+}
+
+// resendRequest is what the form asking for another code sends.
+type resendRequest struct {
+	Email string ` + "`form:\"email\"`" + `
+}
+
+// LogValue keeps the address out of a log line.
+func (in resendRequest) LogValue() slog.Value {
+	return slog.GroupValue(slog.Bool("email_supplied", in.Email != ""))
 }
 
 func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
@@ -106,11 +137,9 @@ func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
 // which sends the person back to it with the messages and what was typed.
 func (m *Module) doRegister(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
-	in := registrationInput{
-		Name: strings.TrimSpace(r.PostFormValue("name")),
-		Email: strings.TrimSpace(r.PostFormValue("email")),
-		Password: r.PostFormValue("password"),
-		PasswordConfirmation: r.PostFormValue("password_confirmation"),
+	var in registrationRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
 	}
 	// A form that drew no password box did not collect one, so a password in
 	// the body arrived from somewhere else. Dropped rather than passed on:
@@ -171,13 +200,15 @@ func (m *Module) showVerifyNotice(w http.ResponseWriter, r *http.Request) {
 // user, and MarkVerified repeats the captured address condition at the write.
 func (m *Module) verify(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
-	email := strings.TrimSpace(r.PostFormValue("email"))
-	code := strings.TrimSpace(r.PostFormValue("email_code"))
-	if email == "" || code == "" {
+	var in verifyRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if in.Email == "" || in.Code == "" {
 		return validation.Errors{"email_code": {"type the code from your email"}}
 	}
-	u, err := m.users.Lookup(r.Context(), m.tenant(r), email)
-	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), code) != nil {
+	u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email)
+	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), in.Code) != nil {
 		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
@@ -195,14 +226,19 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 
 // resendVerification does not reveal whether the address exists. The native
 // CodeStore applies expiry, cooldown, attempt limits and atomic consumption.
-func (m *Module) resendVerification(w http.ResponseWriter, r *http.Request) {
-	email := strings.TrimSpace(r.PostFormValue("email"))
-	if u, err := m.users.Lookup(r.Context(), m.tenant(r), email); err == nil && !u.Verified() {
+func (m *Module) resendVerification(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
+	var in resendRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil && !u.Verified() {
 		if err := m.sendVerification(r, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
 			log.For(r.Context()).Error("resending the verification code", "error", err)
 		}
 	}
-	m.notify(w, r, "/auth/verify", verificationSent, url.Values{"email": {email}})
+	m.notify(w, r, "/auth/verify", verificationSent, url.Values{"email": {in.Email}})
+	return nil
 }
 
 func (m *Module) sendVerification(r *http.Request, u models.User) error {
@@ -394,6 +430,7 @@ const authPasswordControllerTemplate = `package authui
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -416,18 +453,62 @@ const (
 	codeSent = "If that address is registered, a code is on its way."
 )
 
+// passwordEmailRequest is what the form asking for a reset code sends.
+type passwordEmailRequest struct {
+	Email string ` + "`form:\"email\"`" + `
+}
+
+// LogValue keeps the address out of a log line.
+func (in passwordEmailRequest) LogValue() slog.Value {
+	return slog.GroupValue(slog.Bool("email_supplied", in.Email != ""))
+}
+
+// passwordUpdateRequest is what the reset form sends: the address, the code
+// mailed to it, and the new password twice.
+type passwordUpdateRequest struct {
+	Email                string ` + "`form:\"email\"`" + `
+	Code                 string ` + "`form:\"email_code\"`" + `
+	Password             string ` + "`form:\"password\"`" + `
+	PasswordConfirmation string ` + "`form:\"password_confirmation\"`" + `
+}
+
+// LogValue says which fields arrived and nothing they carried.
+func (in passwordUpdateRequest) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("email_supplied", in.Email != ""),
+		slog.Bool("code_supplied", in.Code != ""),
+		slog.Bool("password_supplied", in.Password != ""),
+		slog.Bool("password_confirmation_supplied", in.PasswordConfirmation != ""),
+	)
+}
+
+// passwordConfirmRequest is what the form asking for the password again sends.
+type passwordConfirmRequest struct {
+	Password string ` + "`form:\"password\"`" + `
+}
+
+// LogValue says whether the password arrived and nothing else.
+func (in passwordConfirmRequest) LogValue() slog.Value {
+	return slog.GroupValue(slog.Bool("password_supplied", in.Password != ""))
+}
+
 func (m *Module) showPasswordRequest(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.passwords.email", AuthPage{Page: m.page(r, "Reset your password")})
 }
 
-func (m *Module) sendPasswordCode(w http.ResponseWriter, r *http.Request) {
-	email := strings.TrimSpace(r.PostFormValue("email"))
-	if u, err := m.users.Lookup(r.Context(), m.tenant(r), email); err == nil {
+func (m *Module) sendPasswordCode(ctx *hhttp.Context) error {
+	w, r := ctx.Response, ctx.Request
+	var in passwordEmailRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil {
 		if err := m.sendPasswordReset(r, u); err != nil {
 			log.For(r.Context()).Error("sending the password reset code", "error", err)
 		}
 	}
-	m.notify(w, r, "/auth/password/reset", codeSent, url.Values{"email": {email}})
+	m.notify(w, r, "/auth/password/reset", codeSent, url.Values{"email": {in.Email}})
+	return nil
 }
 
 func (m *Module) sendPasswordReset(r *http.Request, u models.User) error {
@@ -456,26 +537,26 @@ func (m *Module) showPasswordReset(w http.ResponseWriter, r *http.Request) {
 // the password is acceptable, so a rejection never spends it.
 func (m *Module) updatePassword(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
-	email := strings.TrimSpace(r.PostFormValue("email"))
-	code := strings.TrimSpace(r.PostFormValue("email_code"))
-	password := r.PostFormValue("password")
-	confirmation := r.PostFormValue("password_confirmation")
-	if code == "" {
+	var in passwordUpdateRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if in.Code == "" {
 		return validation.Errors{"email_code": {"type the code from your email"}}
 	}
-	if password != confirmation {
+	if in.Password != in.PasswordConfirmation {
 		return validation.Errors{"password_confirmation": {"the two passwords do not match"}}
 	}
-	if len([]rune(password)) < hashing.MinPasswordLen {
+	if len([]rune(in.Password)) < hashing.MinPasswordLen {
 		return validation.Errors{"password": {fmt.Sprintf("must be at least %d characters", hashing.MinPasswordLen)}}
 	}
-	u, err := m.users.Lookup(r.Context(), m.tenant(r), email)
-	if err != nil || m.codes.Consume(r.Context(), resetPurpose, resetCodeSubject(u), code) != nil {
+	u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email)
+	if err != nil || m.codes.Consume(r.Context(), resetPurpose, resetCodeSubject(u), in.Code) != nil {
 		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
 	capturedEmail := u.Email
 	capturedPasswordFingerprint := u.PasswordFingerprint()
-	u, err = m.users.ResetPassword(r.Context(), u.TenantID, u.ID, capturedEmail, capturedPasswordFingerprint, password)
+	u, err = m.users.ResetPassword(r.Context(), u.TenantID, u.ID, capturedEmail, capturedPasswordFingerprint, in.Password)
 	if err != nil {
 		log.For(r.Context()).Error("writing the new password", "error", err)
 		return validation.Errors{"email_code": {"that code is not valid"}}
@@ -500,11 +581,14 @@ func (m *Module) confirmPassword(ctx *hhttp.Context) error {
 		redirect(w, r, "/auth/login")
 		return nil
 	}
-	password := r.PostFormValue("password")
-	if password == "" {
+	var in passwordConfirmRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if in.Password == "" {
 		return validation.Errors{"password": {"type your password to go on"}}
 	}
-	if err := m.users.ConfirmPassword(r.Context(), subject, password, hmiddleware.KeyByIP(r)); err != nil {
+	if err := m.users.ConfirmPassword(r.Context(), subject, in.Password, hmiddleware.KeyByIP(r)); err != nil {
 		if errors.Is(err, nativeauth.ErrInvalidCredentials) {
 			return validation.Errors{"password": {"that is not the password for this account"}}
 		}
@@ -580,6 +664,30 @@ func (p pendingSignIn) LogValue() slog.Value {
 	)
 }
 
+// authenticatorCodeRequest is what the challenge and the setup confirmation
+// send: the six digits the authenticator app shows.
+type authenticatorCodeRequest struct {
+	Code string ` + "`form:\"authenticator_code\"`" + `
+}
+
+// LogValue says whether a code arrived and never which: a code is a credential
+// for the thirty seconds it is good for.
+func (in authenticatorCodeRequest) LogValue() slog.Value {
+	return slog.GroupValue(slog.Bool("code_supplied", in.Code != ""))
+}
+
+// recoveryCodeRequest is what the recovery challenge sends: one of the codes
+// shown once when two-factor authentication was set up.
+type recoveryCodeRequest struct {
+	Code string ` + "`form:\"recovery_code\"`" + `
+}
+
+// LogValue says whether a code arrived and never which: a recovery code signs
+// somebody in on its own.
+func (in recoveryCodeRequest) LogValue() slog.Value {
+	return slog.GroupValue(slog.Bool("code_supplied", in.Code != ""))
+}
+
 func (m *Module) writePending(w http.ResponseWriter, u models.User, remember bool) error {
 	payload, err := json.Marshal(pendingSignIn{
 		Tenant: u.TenantID, UserID: u.ID,
@@ -649,11 +757,14 @@ func (m *Module) verifyTwoFactorChallenge(ctx *hhttp.Context) error {
 		redirect(w, r, "/auth/login")
 		return nil
 	}
-	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
-	if code == "" {
+	var in authenticatorCodeRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if in.Code == "" {
 		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
-	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, code); err != nil {
+	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, in.Code); err != nil {
 		if m.challengeLocked(w, r, err) {
 			return nil
 		}
@@ -687,11 +798,14 @@ func (m *Module) verifyRecoveryChallenge(ctx *hhttp.Context) error {
 		redirect(w, r, "/auth/login")
 		return nil
 	}
-	code := strings.TrimSpace(r.PostFormValue("recovery_code"))
-	if code == "" {
+	var in recoveryCodeRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if in.Code == "" {
 		return validation.Errors{"recovery_code": {"that recovery code is not valid"}}
 	}
-	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, code); err != nil {
+	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, in.Code); err != nil {
 		if m.challengeLocked(w, r, err) {
 			return nil
 		}
@@ -794,11 +908,14 @@ func (m *Module) confirmTwoFactorSetup(ctx *hhttp.Context) error {
 		redirect(w, r, "/auth/login")
 		return nil
 	}
-	code := strings.TrimSpace(r.PostFormValue("authenticator_code"))
-	if code == "" {
+	var in authenticatorCodeRequest
+	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if in.Code == "" {
 		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
-	recoveryCodes, err := m.factors.Confirm(r.Context(), subject, code)
+	recoveryCodes, err := m.factors.Confirm(r.Context(), subject, in.Code)
 	if err != nil {
 		if errors.Is(err, twofactor.ErrInvalidCode) {
 			return validation.Errors{"authenticator_code": {"that code is not valid"}}

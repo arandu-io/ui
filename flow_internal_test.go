@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -163,7 +164,7 @@ func TestTheSignUpFormAndItsHandlerAskForTheSameThing(t *testing.T) {
 				"drawn, not a block beside it", c.input, c.drawnWhen)
 		}
 
-		if !strings.Contains(doRegister, c.validatedWhen+" && "+c.rule) {
+		if !guardedBy(doRegister, c.validatedWhen, c.rule) {
 			t.Errorf("the registration handler applies %q without asking %s first: a rule on an input the "+
 				"form does not draw rejects every submission, pointing at a field nobody can see",
 				c.rule, c.validatedWhen)
@@ -235,11 +236,11 @@ func TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison(t *testing.T) {
 	for _, c := range []struct {
 		file, handler, guard, compares string
 	}{
-		{"LoginController_handlers.go", "doLogin", `password == ""`, "m.users.VerifyCredentials("},
-		{"PasswordController.go", "confirmPassword", `password == ""`, "m.users.ConfirmPassword("},
+		{"LoginController_handlers.go", "doLogin", `in.Password == ""`, "m.users.VerifyCredentials("},
+		{"PasswordController.go", "confirmPassword", `in.Password == ""`, "m.users.ConfirmPassword("},
 		{
 			"PasswordController.go", "updatePassword",
-			"len([]rune(password)) < hashing.MinPasswordLen", "m.users.ResetPassword(",
+			"len([]rune(in.Password)) < hashing.MinPasswordLen", "m.users.ResetPassword(",
 		},
 	} {
 		body := bodyOf(t, authFile(t, c.file), c.handler)
@@ -271,6 +272,20 @@ func TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison(t *testing.T) {
 	case cleared > registered:
 		t.Error("the registration handler drops the undrawn password only after registering with it")
 	}
+}
+
+// guardedBy reports whether rule, in a handler's body, runs only when cond
+// holds: written as `if cond && rule` or as the first statement of `if cond {`.
+func guardedBy(body, cond, rule string) bool {
+	if strings.Contains(body, cond+" && "+rule) {
+		return true
+	}
+	at := strings.Index(body, "if "+cond+" {")
+	if at < 0 {
+		return false
+	}
+	rest := strings.TrimLeft(body[at+len("if "+cond+" {"):], " \t\n")
+	return strings.HasPrefix(rest, rule)
 }
 
 // TestThePendingSignInRedactsLogsWithoutChangingItsSignedProtocol separates
@@ -368,8 +383,8 @@ func TestTheResetIsThrottledByTheCounterSigningInAlreadyUses(t *testing.T) {
 func TestNothingIsConsumedUntilThePasswordIsAcceptable(t *testing.T) {
 	body := bodyOf(t, authFile(t, "PasswordController.go"), "updatePassword")
 
-	length := strings.Index(body, "hashing.MinPasswordLen")
-	match := strings.Index(body, "password != confirmation")
+	length := strings.Index(body, "len([]rune(in.Password)) < hashing.MinPasswordLen")
+	match := strings.Index(body, "in.Password != in.PasswordConfirmation")
 	consume := strings.Index(body, "m.codes.Consume(")
 	write := strings.Index(body, "m.users.ResetPassword(")
 
@@ -449,7 +464,8 @@ func TestTheResetFormCarriesTheAddressItWasSentTo(t *testing.T) {
 	if !strings.Contains(bodyOf(t, source, "showPasswordReset"), `r.URL.Query().Get("email")`) {
 		t.Error("the reset form does not accept the address as non-secret convenience data")
 	}
-	if !strings.Contains(bodyOf(t, source, "updatePassword"), `r.PostFormValue("email")`) {
+	if !strings.Contains(source, `form:"email"`) ||
+		!strings.Contains(bodyOf(t, source, "updatePassword"), "m.users.Lookup(r.Context(), m.tenant(r), in.Email)") {
 		t.Error("the address the form asks for is discarded, which makes a Required input decoration")
 	}
 }
@@ -500,7 +516,10 @@ func TestTheConfirmationScreenHasARouteAHandlerAndAnAddressToPostTo(t *testing.T
 func TestTheRememberBoxIsReadAndSurvivesARejection(t *testing.T) {
 	handlers := authFile(t, "LoginController_handlers.go")
 
-	if !strings.Contains(handlers, `r.PostFormValue("remember")`) {
+	doLogin := bodyOf(t, handlers, "doLogin")
+	if !strings.Contains(handlers, `form:"remember"`) ||
+		!strings.Contains(doLogin, "m.finishSignIn(w, r, u, in.Remember)") ||
+		!strings.Contains(doLogin, "m.writePending(w, u, in.Remember)") {
 		t.Fatal("nothing reads the remember-me box, so ticking it does nothing at all")
 	}
 	if !strings.Contains(handlers, "session.Remember(remember)") {
@@ -1183,10 +1202,11 @@ func stringLiteral(t *testing.T, expr ast.Expr) string {
 // The table is exact, order included, so that a route added to the kit is a row
 // somebody wrote here rather than a screen that quietly arrives unnamed.
 //
-// The last column is exact too. The eight that take a form somebody can get
-// wrong are controller actions, so a refusal is returned to the router and
-// answered by it; a route that moved back to Post would have to draw its own
-// refusal, which is the second way of answering one that the kit gave up.
+// The last column is exact too. The ten that read a form are controller
+// actions: each converts its form with ctx.Bind, which only an action is handed
+// a context for, and a refusal is returned to the router and answered by it. A
+// route that moved back to Post would have to read its form by hand and draw
+// its own refusal, which are the second ways of doing both that the kit gave up.
 func TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy(t *testing.T) {
 	want := []registration{
 		{"Get", "/login", "auth.login", false},
@@ -1194,7 +1214,7 @@ func TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy(t *testing.T) {
 		{"Post", "/logout", "auth.logout", false},
 
 		{"Get", "/password", "auth.password.request", false},
-		{"Post", "/password/email", "auth.password.email", false},
+		{"Post", "/password/email", "auth.password.email", true},
 		{"Get", "/password/reset", "auth.password.reset", false},
 		{"Post", "/password/update", "auth.password.update", true},
 		{"Get", "/password/confirm", "auth.password.confirm", false},
@@ -1204,7 +1224,7 @@ func TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy(t *testing.T) {
 		{"Post", "/register", "", true},
 		{"Get", "/verify", "auth.verify.notice", false},
 		{"Post", "/verify/confirm", "auth.verify.confirm", true},
-		{"Post", "/verify/resend", "auth.verify.resend", false},
+		{"Post", "/verify/resend", "auth.verify.resend", true},
 
 		{"Get", "/two-factor/challenge", "auth.two-factor.challenge", false},
 		{"Post", "/two-factor/challenge", "", true},
@@ -1948,3 +1968,57 @@ func main() {
 	fmt.Printf("reset then: %s\n", follow(send))
 }
 `
+
+// TestNoPublishedHandlerReadsItsFormByHand.
+//
+// Every handler that reads a form converts it with ctx.Bind into a request
+// struct declared beside it, and none reads a field by hand: a field read in
+// the body is a second request type nobody else can share, and one that is
+// missing arrives as an empty string rather than a message. The doctor reports
+// both shapes in a project as input-read-by-hand, and it reported ten of them
+// on every project this kit was published into. Nor does a handler call
+// Validate(): the checks a form here needs are written in the handler, where
+// the kit's contract keeps them.
+//
+// The second half reads the routes: each of the ten registered with Action is
+// a handler that binds, so a form added to the kit arrives bound or not at all.
+func TestNoPublishedHandlerReadsItsFormByHand(t *testing.T) {
+	sources := map[string]string{}
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		if !strings.HasPrefix(path, "app/Http/Controllers/") || strings.HasSuffix(path, ".kyse.go") {
+			continue
+		}
+		sources[path] = string(f.Content)
+		for _, byHand := range []string{
+			".PostFormValue(", ".FormValue(", ".ParseForm(", ".ParseMultipartForm(", "json.NewDecoder(",
+			"ctx.Input(", ".Validate()",
+		} {
+			if strings.Contains(string(f.Content), byHand) {
+				t.Errorf("%s calls %s: a form is converted with ctx.Bind into a request struct, and the "+
+					"handler neither reads a field by hand nor calls Validate", path, byHand)
+			}
+		}
+	}
+
+	routes := bodyOf(t, authFile(t, "Auth/LoginController.go"), "Routes")
+	actions := regexp.MustCompile(`g\.Action\(stdhttp\.MethodPost, "[^"]+", m\.(\w+)`).FindAllStringSubmatch(routes, -1)
+	if len(actions) != 10 {
+		t.Fatalf("the module registers %d actions and this test knows 10", len(actions))
+	}
+	for _, action := range actions {
+		handler := action[1]
+		var body string
+		for _, source := range sources {
+			if strings.Contains(source, "func (m *Module) "+handler+"(") {
+				body = bodyOf(t, source, handler)
+			}
+		}
+		switch {
+		case body == "":
+			t.Errorf("no published file declares %s", handler)
+		case !strings.Contains(body, "ctx.Bind(&in)"):
+			t.Errorf("%s is registered with Action and does not convert its form with ctx.Bind(&in)", handler)
+		}
+	}
+}
