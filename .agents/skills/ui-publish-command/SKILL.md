@@ -1,6 +1,6 @@
 ---
 name: ui-publish-command
-description: The command that writes the Arandu starter kit into a project, and what a republish refreshes versus leaves alone. Use when the request is to "add a file to the kit", "publish another view", "change what --force does", "why was my file not overwritten", "my edit was lost", "the custom block did not survive", "add a flag", "change the wiring instructions", or when a pull request touches publish.go, main.go or GenerateAuth. Covers the 30 files it writes, the 5 replaced with no flag, the 23 that --views refreshes, how merge carries a custom block over in two comment syntaxes, and why nothing is added to the caller's go.mod.
+description: The command that writes the Arandu starter kit into a project, and what a republish refreshes versus leaves alone. Use when the request is to "add a file to the kit", "publish another view", "change what --force does", "why was my file not overwritten", "my edit was lost", "the custom block did not survive", "add a flag", "change the wiring instructions", or when a pull request touches publish.go, main.go or GenerateAuth. Covers the 29 files it writes, the 5 replaced with no flag, the 22 that --views refreshes, the two things it refuses to publish into, how merge carries a custom block over in two comment syntaxes, and why nothing is added to the caller's go.mod.
 license: MIT
 ---
 
@@ -29,7 +29,7 @@ export GOWORK=off
 go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run)
 ```
 
-30 files: 18 views, 11 plain Go and 1 script. The Go set is five controller files in
+29 files: 17 views, 11 plain Go and 1 script. The Go set is five controller files in
 `app/Http/Controllers/Auth/` (`LoginController.go`,
 `LoginController_handlers.go`, `RegisterController.go`,
 `PasswordController.go`, `TwoFactorController.go`), `render.go` and `page.go`
@@ -37,16 +37,16 @@ beside them, the two mailables in `app/Mail/`, and
 `app/Http/Controllers/HomeController.go`.
 
 `GenerateAuth` in `views_controllers.go:18` is the list of the ten Go files;
-`AuthViews` in `views.go:110` is the list of the eighteen views plus `page.go`.
-There are exactly 30 template constants, one per published file
-(`grep -ho 'const [a-zA-Z]*Template' views*.go | wc -l`), and 30 golden files
+`AuthViews` in `views.go:110` is the list of the seventeen views plus `page.go`.
+There are exactly 29 template constants, one per published file
+(`grep -ho 'const [a-zA-Z]*Template' views*.go | wc -l`), and 29 golden files
 under `testdata/auth/`.
 
 `--dry-run` prints the list and writes nothing. Use it before anything else.
 
 ## The three states a file can be in
 
-`write` in `publish.go:297` reads the file on disk — it does not stat it — and
+`write` in `publish.go:367` reads the file on disk — it does not stat it — and
 that read is what decides:
 
 | state | when | reported as |
@@ -55,11 +55,11 @@ that read is what decides:
 | **kept** | it exists, no `--force`, not in `replaced` | `kept <path> (exists; --force overwrites)` |
 | **merged** | it was written over and the old file had a custom block whose content differed | `wrote <path> (your custom block was carried over)` |
 
-Publishing twice into the same project, with no flag, writes 5 and keeps 25.
+Publishing twice into the same project, with no flag, writes 5 and keeps 24.
 That is not a convenience. In kyse a page renders **with the type of its
 layout**, so the layout and everything that extends it are one unit; publishing
 a new layout beside the old pages leaves a project that builds and fails to
-render. `replaced` in `publish.go:288` spells the five out rather than inferring
+render. `replaced` in `publish.go:359` spells the five out rather than inferring
 them, so a sixth cannot join quietly:
 
 ```
@@ -72,7 +72,7 @@ app/Http/Controllers/Auth/page.go
 
 ## `--views`: the screens, not the flow
 
-23 of the 30. The 18 views, plus the three Go files the layout unit does not
+22 of the 29. The 17 views, plus the three Go files the layout unit does not
 compile without — `page.go`, `render.go` and `HomeController.go` — plus the two
 under `resources/js/`, which are the asset the refreshed layout asks for by
 name. What it leaves alone is the flow: the five authentication controller
@@ -87,14 +87,14 @@ naming two symbols it had never heard of. It is safe to include precisely
 because it is **not** in `replaced`: an existing one is kept and reported as
 kept, so adding it changed what a project *without* one gets and nothing else.
 
-`screensOnly` in `views.go:1319` is the filter, and
+`screensOnly` in `views.go:1385` is the filter, and
 `TestViewsOnlyPublishesTheScreensAndTheLayoutUnit` at
-`publish_write_internal_test.go:239` holds it to the list.
+`publish_write_internal_test.go:278` holds it to the list.
 
 ## The custom block
 
 The escape hatch: what does not fit the standard shape is written inside
-markers, and a republish carries it forward. 9 of the 30 published files have
+markers, and a republish carries it forward. 9 of the 29 published files have
 one — 5 in Go comment syntax, 4 in kyse comment syntax:
 
 ```go
@@ -146,13 +146,13 @@ views. One line in a file the person reads beats a generator that edits
 Two things about that text are checked by the suite rather than by review,
 because both have shipped wrong:
 
-- `wiring` is a `const` in `main.go:219` rather than a literal inside the
+- `wiring` is a `const` in `main.go:239` rather than a literal inside the
   `Printf`, so a test can read it.
   `TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes` at
-  `publish_internal_test.go:522` parses both the printed call and the published
+  `publish_internal_test.go:647` parses both the printed call and the published
   constructor and compares the arity. It shipped with three parameters emitted
   and five passed.
-- The blank-import block is computed by `blankImports` in `main.go:68` from what
+- The blank-import block is computed by `blankImports` in `main.go:73` from what
   `AuthViews` actually writes, never typed out. A view added to the kit cannot
   ship with an instruction that does not mention it — which is how a project
   ends up answering 500 with *no view named auth.verify* on a screen the kit
@@ -169,9 +169,30 @@ because both have shipped wrong:
    render without it — and whether `screensOnly` keeps it.
 3. `go test . -update`, then read `git diff testdata`. There should be exactly
    one new golden file per new published file.
-4. If it mounts a route, the route and its name go in the table at
-   `flow_internal_test.go:946`, which is exact and ordered on purpose.
+4. If it mounts a route, the route and its name go in the table of
+   `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
+   `flow_internal_test.go:1190`, which is exact and ordered on purpose.
 5. Run the gates.
+
+## What it refuses to publish into
+
+Two questions are asked after `--dry-run` and before the first byte is written,
+so a refusal never leaves a half-published tree:
+
+- **The floor.** `checkAruFloor` reads the `[arandu] aru` line of the project's
+  `arandu.toml` and refuses a project that would accept a CLI below `aruFloor`,
+  the oldest one measured to compile every view published here.
+- **The flow.** `checkFlowAnswersByRedirect` reads the flow files this run will
+  not write — every one without `--force`, and every one under `--views`, which
+  never writes the flow — and refuses when one still names
+  `http.StatusUnprocessableEntity`. Those are handlers from a kit that drew its
+  own refusals with a 422; beside the layout and `page.go` that every run
+  replaces, a refused sign-in under htmx would be thrown away and the project
+  would stop building. The message names the files and `auth --force`.
+
+`TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens` and
+`TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals` in
+`publish_write_internal_test.go` drive the command itself and look at the disk.
 
 ## The arguments it accepts, and the one it refuses
 
@@ -188,7 +209,7 @@ exist. The verb is what varies.
 
 ## Where it runs
 
-`projectRoot` at `publish.go:90` walks up from the working directory looking for
+`projectRoot` at `publish.go:91` walks up from the working directory looking for
 `go.mod`, `main.go` and `arandu.toml` **together** — any one alone is a Go
 module, a program, or a directory somebody copied a config into. Run from a
 subdirectory it still writes into the project root, not the current directory.
@@ -197,12 +218,12 @@ Run outside a project it exits 1 with *this is not an Arandu project*.
 ## This module takes one dependency
 
 Not a style preference: it is run from inside somebody's project, so every
-`require` here is something they download to publish 30 files. A CI step reads
+`require` here is something they download to publish 29 files. A CI step reads
 the require directives and fails on anything but `github.com/arandu-io/hesape`,
 which is there for `publish.Merge` and nothing else.
 
 That one is the exception that proves where the line is. `render` in
-`publish.go:44` is still a copy of the CLI's renderer rather than an import —
+`publish.go:45` is still a copy of the CLI's renderer rather than an import —
 importing that would put the CLI back in the way — and the golden files still
 compare the published output byte for byte, so what drifts in the copy is caught
 where it matters. The merge is different: a copy of it does not drift into a

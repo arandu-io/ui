@@ -73,7 +73,7 @@ writes anything, and refuses a project whose floor is below `aruFloor` in
 skeleton and compiling the complete generated view set with released CLIs.
 `v0.34.0` and below compile `view.Page` through the former framework alias, so
 they reject the application-owned native page imported from `hesape/view`.
-`v0.35.0` emits the native page contract and compiles all eighteen views,
+`v0.35.0` emits the native page contract and compiles all seventeen views,
 including the four two-factor screens.
 
 The floor and not the `aru` on PATH. `arandu.mod.toml` declares `exec = false`,
@@ -84,32 +84,63 @@ first and refuses a CLI below it, so a floor set too low switches off the one
 mechanism that would have said "your aru is old" instead of sixty messages
 about markup that is correct.
 
-`--dry-run` is exempt, and the split is the point: it is asked what would be
-written and answers that, which is why the counts below still measure against
-`../arandu`; the skeleton now declares the same `v0.35.0` floor this kit needs.
+It also refuses a project whose flow still draws its own refusals.
+`checkFlowAnswersByRedirect` reads the flow files this run will not write — all
+of them without `--force`, and all of them under `--views`, which never writes
+the flow — and refuses when one still names `http.StatusUnprocessableEntity`.
+Those are handlers from an earlier kit: beside the layout and `page.go` a run
+replaces, a refused sign-in under htmx would be thrown away and the project
+would stop building. The message names the files and `auth --force`.
+
+`--dry-run` is exempt from both, and the split is the point: it is asked what
+would be written and answers that, which is why the counts below still measure
+against `../arandu`; the skeleton now declares the same `v0.35.0` floor this kit
+needs.
 
 ## What this repository holds
 
 | | measured with |
 | --- | --- |
 | 5 Go source files, one package, no subdirectories | `ls *.go \| grep -v _test.go \| wc -l` |
-| 30 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
-| 30 files published by `auth` — 18 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
-| 23 of those refreshed by `auth --views` — 18 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
-| 30 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 88 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
-| 23 routes mounted by the module it publishes, 9 for two-factor authentication | `grep -hE '^\tg\.(Get\|Post)\(' views_controllers.go views_auth_flow.go \| wc -l` |
+| 29 template constants, one per file the command writes | `grep -ho 'const [a-zA-Z]*Template' views*.go \| wc -l` |
+| 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
+| 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
+| 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
+| 96 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 23 routes mounted by the module it publishes, 9 for two-factor authentication, 8 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |
 
-Of the 18 views, 13 are screens — the layout, home, welcome, six base auth
+Of the 17 views, 13 are screens — the layout, home, welcome, six base auth
 screens and four two-factor screens — 4 are message bodies, an HTML part and a
-plain-text part for each of the two messages the flow sends, and 1 is a
+plain-text part for each of the two messages the flow sends, and none is a
 fragment. The three are counted separately by
-`TestTheAuthViewsAreEighteenAndWellFormed` in
+`TestTheAuthViewsAreSeventeenAndWellFormed` in
 `views_internal_test.go:20`, because they are different things: a mail body has
 no layout, no navigation and no token, and a fragment has no layout either but
 for the opposite reason — it is swapped **into** a page that already drew one.
+
+**A rejected form goes back to the form, through the router.** The eight routes
+that take a form somebody can get wrong are registered with `Action`, and their
+handlers return `validation.Errors`. The router answers: a 303 back to the
+Referer for a page, with the messages and what was typed (minus every secret) in
+the flash; `HX-Redirect` for htmx; a 422 problem document for a client that asked
+for JSON. No published handler writes a refusal status, and `Module.screen`
+draws every screen at 200 and puts what the flash carried on the page — the
+messages in `view.Page.Errors`, the typed input in `view.Page.Old`, a notice as
+the status line — so the components ask the page by field name and no handler
+copies a message anywhere. A screen drawn after a form succeeded is reached by a
+redirect too, through `Module.notify`, so the form on it has an address a
+refusal can be sent back to and a reload never repeats the post. The layout
+leaves htmx's response handling at its default: teaching it to swap a 422 would
+be a second way to answer the same rejection.
+
+| gate | what it refuses |
+| --- | --- |
+| `TestARejectedFormIsReturnedToTheRouter` | a published Go file that writes a refusal status or draws a refusal itself |
+| `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` | a route whose name, method or `Action` registration differs from the table — the last column is who answers a rejection |
+| `TestARejectedSignInGoesBackToTheFormInEveryTransport` | runs the published module: page, htmx and JSON answers to a refused sign-in, and the reset code reached by a redirect |
+| `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` | a field a handler rejects with that no screen has an input for, or a notice no screen draws |
 
 **The directory says which, and the source has to agree.** `layouts/` yields
 sections, `partials/` and `mail/` carry no layout, everything else under
@@ -120,8 +151,11 @@ kind its path claims. It also refuses a narrowed swap anywhere but in a
 fragment: an element carrying one asks the server for its own markup back, and a
 screen answering that hands htmx a whole document for a form-shaped hole — the
 header, the navigation and a second toaster land inside the card, with a green
-build and a correct status. The kit shipped exactly that on `auth/login.kyse.go`
-until the form moved to `partials/login_form.kyse.go`.
+build and a correct status. The kit shipped exactly that on `auth/login.kyse.go`,
+then moved the form to a partial of its own answered with a 422, and finally
+gave the partial up: a refused sign-in is a redirect, the screen is drawn whole,
+and `TestTheKitPublishesNoFragmentAndAsksForNone` keeps the kit free of
+fragments.
 
 A narrowed swap has **two spellings**, and `narrowedSwap` in that file carries
 both. `hx-target=`/`hx-swap=` is the attribute a view writes; `HxTarget`/`HxSwap`
@@ -139,16 +173,19 @@ not what comes back.
 a published page can hold a value, and what tells them apart is when each is next
 drawn: a component is re-run wherever its caller is and keeps nothing, the layout
 runs once per document and no swap redraws it, a screen is the whole document for
-one request, and a fragment is what is inside one swap target. Three of those
-seams are typed — the layout renders through `view.Layout` and a component is
-handed the page as `components.Page`, so neither can name a field of a screen.
-The fourth is one type, because `@include` hands the page's own data straight
-through, so these read the published bytes instead:
+one request, and a fragment is what is inside one swap target. The kit publishes
+no fragment, so the seam with no compiler behind it — the screen and the piece
+of it answered alone, one type through `@include` — is not one it has. The two
+gates that read it, `TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap` and
+`TestNothingTheLayoutDrawsIsRedrawnInsideASwap`, left with the fragment and are
+in the history for the day one comes back. The layout renders through
+`view.Layout` and a component is handed the page as `components.Page`, so
+neither can name a field of a screen; these read the published bytes for the
+rest:
 
 | gate | what it refuses |
 | --- | --- |
-| `TestEveryFieldAFragmentAnswerFillsIsDrawnInsideTheSwap` | a field an `m.fragment` call fills that the named part does not draw — the screen around it is not being rendered, so the value is sent and dropped |
-| `TestNothingTheLayoutDrawsIsRedrawnInsideASwap` | a value drawn by the layout and inside a swap target as well, without `hx-swap-oob` — two copies, and only the inner one refreshed |
+| `TestTheKitPublishesNoFragmentAndAsksForNone` | a view under `partials/`, or published Go that calls `.Fragment(` — every screen here is answered whole |
 | `TestNoPublishedViewKeepsStateInTheBrowser` | `x-data` and its relatives in any published view: nothing the layout loads reads one, and `script-src 'self'` has no `unsafe-eval` |
 | `TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries` | a head element the skeleton's layout has and this one does not — publishing replaces that file with no flag, so a project loses it silently |
 | `TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters` | a `view.Asset("…")` in a published view naming an asset neither the runtime embeds nor this kit delivers — `view.Asset` panics on an unregistered name, so that is every request of every project answered with a panic |
@@ -190,14 +227,14 @@ them is missing by accident; each was considered and refused.
 command is meant to be run again for a fix from a newer version. That only works
 because what somebody wrote inside `arandu:begin custom` … `arandu:end custom`
 is carried forward, and because five files — the layout unit — are the only ones
-replaced without a flag. A full republish therefore writes 5 and keeps 25. Nine
-of the 30 published files carry a custom block: 5 in Go comment syntax and 4 in
+replaced without a flag. A full republish therefore writes 5 and keeps 24. Nine
+of the 29 published files carry a custom block: 5 in Go comment syntax and 4 in
 kyse comment syntax, because a `//` below the package clause of a `.kyse.go` is
 markup that would be printed into an e-mail.
 
 **The golden files are the product.** They are not a convenience for the suite;
-they are the 30 files a project receives. `TestAuthGolden` in
-`publish_internal_test.go:52` compares them byte for byte, and CI regenerates
+they are the 29 files a project receives. `TestAuthGolden` in
+`publish_internal_test.go:53` compares them byte for byte, and CI regenerates
 them and fails on a dirty tree.
 
 ## Writing code
@@ -211,4 +248,4 @@ shipped the literal word, so every project running this command signed its first
 message to its own users with the name of the framework. The brand is a field,
 filled from the application's configuration, and
 `TestNothingTheKitPublishesIsBrandedWithItsOwnName` in
-`flow_internal_test.go:336` reads every published file to keep it that way.
+`flow_internal_test.go:599` reads every published file to keep it that way.

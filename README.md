@@ -20,27 +20,30 @@
 go run github.com/arandu-io/ui@latest auth
 ```
 
-Eighteen views, written in kyse: thirteen screens — the layout, dashboard,
-welcome page, six base authentication screens and four two-factor screens — the
-sign-in form as a fragment of its own, and both parts, HTML and plain text, of
-the two messages the flow sends. Alongside them land ten plain Go files: five
-authentication controller files, `render.go`, `page.go`, two mailables and
-`HomeController.go`. Twenty-eight files in all, and they are yours from the
-moment they land: edit them, delete them, rewrite them.
+Seventeen views, written in kyse: thirteen screens — the layout, dashboard,
+welcome page, six base authentication screens and four two-factor screens — and
+both parts, HTML and plain text, of the two messages the flow sends. Alongside
+them land ten plain Go files: five authentication controller files,
+`render.go`, `page.go`, two mailables and `HomeController.go`, plus the script
+the layout asks for and the Go file that registers it. Twenty-nine files in
+all, and they are yours from the moment they land: edit them, delete them,
+rewrite them.
 
-The fragment is under `resources/views/partials/`, and the directory is what
-makes it one: a file there draws its own markup and no layout around it, so it
-can be swapped into a page that is already on screen. A rejected sign-in is
-answered with it, and with the whole screen when htmx is not running. Everything
-else under `resources/views/` extends the layout, and a test refuses a file that
-is in the wrong one of the two.
+Every screen is answered whole, and so is a rejected form. A handler that
+refuses one returns `validation.Errors` and the router sends the person back to
+the form with a redirect, the messages and what was typed in the flash; htmx
+follows it as a navigation, and a client that asked for JSON gets a 422 problem
+document instead. Nothing here is a fragment, and a reload never posts a form
+again.
 
 Run it again to take a fix from a newer version: what you wrote inside a
 `arandu:begin custom` block is carried over, and the command says so per file.
 `--views` leaves the flow you edited alone — the five authentication controller
-files and the two mailables — and refreshes twenty-one files: the eighteen
-views plus `page.go`, `render.go` and `HomeController`, which they do not compile
-without.
+files and the two mailables — and refreshes twenty-two files: the seventeen
+views plus `page.go`, `render.go`, `HomeController` and the two under
+`resources/js/`, which they do not compile or render without. A project whose
+handlers still answer a rejected form with a 422 is refused, with nothing
+written, until it takes the flow along with `auth --force`.
 
 **A security fix in a controller does not arrive with `--views`.** It leaves the
 five authentication controller files and the two mailables exactly as they are,
@@ -72,9 +75,9 @@ handler decides and writes markup that is already correct, which leaves nothing
 in the browser to keep in step. What dies with the tab — a menu that is open, a
 row that is selected — is `ui.js`'s, kept in the ARIA the markup already carries,
 so the DOM holds the only copy. The gates that hold the kit to it read the
-published bytes: a fragment may not carry a layout, a handler answering one may
-fill only what it draws, nothing the layout draws is drawn inside a swap as well,
-and no view keeps a value in an `x-` attribute.
+published bytes: no view is a fragment and no handler answers one, a view under
+`partials/` may not carry a layout, and no view keeps a value in an `x-`
+attribute.
 
 ## Learning Arandu
 
