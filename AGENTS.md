@@ -1,3 +1,4 @@
+| `TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault` | an `htmx-config` in the published layout that sets anything but `includeIndicatorStyles:false` |
 # Working in this repository
 
 This is the starter kit. It is a `package main` whose whole job is to write
@@ -106,7 +107,7 @@ needs.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 96 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 97 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 8 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
 | 5 files replaced without `--force`, the layout unit | `sed -n '/^var replaced/,/^}/p' publish.go \| grep -c 'true,'` |

@@ -1914,6 +1914,9 @@ func main() {
 		return w
 	}
 	follow := func(w *httptest.ResponseRecorder) string {
+		if w.Header().Get("Location") == "" {
+			return "(no redirect to follow)"
+		}
 		r := httptest.NewRequest(http.MethodGet, w.Header().Get("Location"), nil)
 		r.Header.Set("Accept", "text/html")
 		for _, c := range w.Result().Cookies() {

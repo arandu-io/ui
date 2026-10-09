@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -173,6 +174,48 @@ func TestEveryPageNamesItsDataAndTheLayoutNamesNone(t *testing.T) {
 		case !isLayout && !strings.Contains(body, "= authui.AuthPage"):
 			t.Errorf("%s declares a struct of its own rather than naming the one the controller owns", f.Path)
 		}
+	}
+}
+
+// TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault.
+//
+// The layout once taught htmx to swap a 422, so that a sign-in refused with the
+// form in the body would be drawn. That was a second way to answer a rejected
+// form beside the router's, and the worse one: a reload of the answer posted the
+// form again. A rejection is now a redirect, which htmx follows as a
+// navigation, so the table of response handling stays the one htmx ships.
+//
+// What does stay is includeIndicatorStyles:false. Without it htmx injects a
+// <style> element on the first request, and the policy is style-src 'self'
+// with no unsafe-inline, so the browser refuses it on every page.
+func TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault(t *testing.T) {
+	// The comments explain the history in prose, 422 included, and are stripped
+	// before anything reaches a page.
+	layout := viewBody([]byte(authView(t, "layouts/app.kyse.go")))
+
+	meta := elementCarrying(t, layout, `name="htmx-config"`)
+	start := strings.Index(meta, `content='`)
+	if start < 0 {
+		t.Fatalf("the htmx-config has no single-quoted content:\n%s", meta)
+	}
+	content := meta[start+len(`content='`):]
+	content = content[:strings.IndexByte(content, '\'')]
+
+	var config map[string]any
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		t.Fatalf("the htmx-config is not JSON: %v\n%s", err, content)
+	}
+	if value, ok := config["includeIndicatorStyles"]; !ok || value != false {
+		t.Errorf("includeIndicatorStyles is %v: htmx would inject a <style> the policy refuses", value)
+	}
+	for key := range config {
+		if key != "includeIndicatorStyles" {
+			t.Errorf("the htmx-config sets %q: a rejected form is a redirect, and the layout leaves the rest of "+
+				"htmx's configuration at its default\n%s", key, content)
+		}
+	}
+	if strings.Contains(layout, "422") {
+		t.Error("the layout names a 422: nothing the kit publishes answers one to a page")
 	}
 }
 
