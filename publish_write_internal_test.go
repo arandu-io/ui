@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -639,5 +641,139 @@ func TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(root, "app", "Http", "Controllers", "Auth", "page.go")); err == nil {
 		t.Error("page.go was written before the project was refused, so the refusal left a tree behind")
+	}
+}
+
+// TestEveryRetiredDigestIsAVersionThisKitPublished.
+//
+// The digests are the whole of what lets --force delete a file, so each has to
+// be the hash of bytes a release really wrote. The fixtures under
+// testdata/retired are the golden files of those releases, taken from their
+// tags, and every digest has to name one of them -- a digest typed from
+// anywhere else would let --force delete a file it never published, or fail to
+// delete one it did.
+func TestEveryRetiredDigestIsAVersionThisKitPublished(t *testing.T) {
+	fixtures, err := filepath.Glob(filepath.Join("testdata", "retired", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range retired {
+		matched := map[string]bool{}
+		for _, fixture := range fixtures {
+			if !strings.HasPrefix(filepath.Base(fixture), filepath.Base(f.Path)+".") {
+				continue
+			}
+			body, err := os.ReadFile(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !publishedByThisKit(f, body, retiredModulePath) {
+				t.Errorf("%s is a version this kit published and no digest of %s names it", fixture, f.Path)
+				continue
+			}
+			for _, d := range f.Digests {
+				sum := sha256.Sum256(body)
+				if d == hex.EncodeToString(sum[:]) {
+					matched[d] = true
+				}
+			}
+		}
+		for _, d := range f.Digests {
+			if !matched[d] {
+				t.Errorf("the digest %s of %s is not the hash of any fixture under testdata/retired", d, f.Path)
+			}
+		}
+	}
+}
+
+// TestForceRemovesOnlyWhatThisKitPublishedAndNoLongerDoes.
+//
+// The partial the sign-in form lived in was published from v0.8.0 to v0.19.0,
+// and v0.20.0 stopped publishing it without removing it: every project that
+// republished kept a view nothing renders, compiled against a page.go that no
+// longer has what it reads. --force removes it now -- when it is, byte for
+// byte, a version the kit wrote. An edited copy is somebody's work and a file
+// the kit never wrote at that path is not the kit's, so both are left, and
+// said so.
+func TestForceRemovesOnlyWhatThisKitPublishedAndNoLongerDoes(t *testing.T) {
+	const modulePath = "example.test/shop"
+	partial := filepath.Join("resources", "views", "partials", "login_form.kyse.go")
+	published := strings.ReplaceAll(read(t, filepath.Join("testdata", "retired", "login_form.kyse.go.v0.18.2")),
+		retiredModulePath, modulePath)
+
+	for _, c := range []struct {
+		name          string
+		body          string
+		neighbour     bool
+		force, dryRun bool
+		removed       bool
+		says          string
+	}{
+		{"the file the kit wrote, with --force", published, false, true, false, true, "removed " + partial},
+		{"the file the kit wrote, beside another partial", published, true, true, false, true, "removed " + partial},
+		{"the file the kit wrote, without --force", published, false, false, false, false, "stale   " + partial},
+		{"the file the kit wrote, with --force --dry-run", published, false, true, true, false, "remove  " + partial},
+		{"an edited copy, with --force", published + "<p>ours</p>\n", false, true, false, false, "left    " + partial},
+		{"a file the kit never wrote, with --force", "//go:build kyse\n\npackage partials\n", false, true, false, false, "left    " + partial},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := project(t, aruFloor)
+			path := filepath.Join(root, partial)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			neighbour := filepath.Join(filepath.Dir(path), "notes_table.kyse.go")
+			if c.neighbour {
+				if err := os.WriteFile(neighbour, []byte("//go:build kyse\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			var out strings.Builder
+			if err := retire(root, modulePath, c.force, c.dryRun, &out); err != nil {
+				t.Fatal(err)
+			}
+			_, err := os.Stat(path)
+			switch {
+			case c.removed && err == nil:
+				t.Errorf("%s is still there:\n%s", partial, out.String())
+			case !c.removed && err != nil:
+				t.Errorf("%s was removed, and it was not this run's to remove:\n%s", partial, out.String())
+			}
+			if !strings.Contains(out.String(), c.says) {
+				t.Errorf("the command did not say %q:\n%s", c.says, out.String())
+			}
+
+			dirGone := os.IsNotExist(func() error { _, err := os.Stat(filepath.Dir(path)); return err }())
+			switch {
+			case c.neighbour && dirGone:
+				t.Error("the directory went with the file while another partial was still in it")
+			case c.removed && !c.neighbour && !dirGone:
+				t.Error("the directory the partial was alone in is still there, empty")
+			case c.removed && !c.neighbour &&
+				!strings.Contains(out.String(), modulePath+"/storage/framework/views/partials"):
+				t.Errorf("the directory went and the command did not name the blank import that goes with it:\n%s", out.String())
+			}
+		})
+	}
+
+	// And through the command, which is where --force is a flag somebody types.
+	root := project(t, aruFloor)
+	path := filepath.Join(root, partial)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(published), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	if err := publishAuth([]string{"--force"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Errorf("auth --force kept %s, which nothing renders and the kit no longer publishes", partial)
 	}
 }

@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"go/format"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -343,8 +346,8 @@ func checkFlowAnswersByRedirect(root string, files []File, force bool) error {
 		"Publish the flow with the screens, without --views:\n\n"+
 		"    go run github.com/arandu-io/ui@latest auth --force\n\n"+
 		"What you wrote inside arandu:begin custom blocks is carried over; commit first and review the diff.\n"+
-		"resources/views/partials/login_form.kyse.go is no longer published and nothing renders it, so it\n"+
-		"can be deleted. Nothing has been written.",
+		"resources/views/partials/login_form.kyse.go is no longer published and nothing renders it: --force\n"+
+		"removes it if it is still the file this kit wrote. Nothing has been written.",
 		strings.Join(stale, "\n    "))
 }
 
@@ -393,6 +396,99 @@ func checkKeptFilesNameOnlyWhatPageDeclares(root string, files []File, force boo
 		"or the whole kit, with auth --force. What you wrote inside arandu:begin custom blocks is carried\n"+
 		"over; commit first and review the diff. Nothing has been written.",
 		strings.Join(gonePageNames, ", "), strings.Join(stale, "\n    "))
+}
+
+// retiredFile is a file an earlier release of this kit published and this one
+// does not.
+type retiredFile struct {
+	// Path is where it was published, relative to the project root.
+	Path string
+	// Why is the reason it is gone, said when it is removed.
+	Why string
+	// Digests are the SHA-256 of every version a release published, with the
+	// project's module path written as retiredModulePath.
+	Digests []string
+}
+
+// retiredModulePath stands in for the project's module path in a retired
+// file's digest. It is the path the golden files are rendered with, so a digest
+// is the hash of a golden file in the release that published it.
+const retiredModulePath = "example.test/project"
+
+// retired is every file this kit used to publish and no longer does.
+//
+// A file in this list is removed by auth --force only when its bytes are, byte
+// for byte, a version this kit wrote: one that was edited is somebody's work,
+// and a file at the same path that the kit never wrote is not this kit's to
+// touch. Both are left where they are, and said so.
+var retired = []retiredFile{
+	{
+		Path: filepath.Join("resources", "views", "partials", "login_form.kyse.go"),
+		Why:  "the sign-in form is drawn by its screen, and nothing renders this partial",
+		Digests: []string{
+			"217db5cdfa78966621584d0c95eed0af9e58164b86be69557feb4f3178a60802", // v0.8.0 to v0.14.0
+			"454ee1217e7b51eb9513c47d1d99f5fca605f2fb30ea4695c78564f927486806", // v0.15.0 to v0.18.1
+			"618b11b7a02ed722b3803e0f5f9b9882c4148c6db9945e24c27b9d83aa66671a", // v0.18.2 to v0.19.0
+		},
+	},
+}
+
+// publishedByThisKit reports whether body is, byte for byte, one of the
+// versions of f this kit published into a project whose module path is
+// modulePath.
+func publishedByThisKit(f retiredFile, body []byte, modulePath string) bool {
+	normalized := bytes.ReplaceAll(body, []byte(modulePath), []byte(retiredModulePath))
+	sum := sha256.Sum256(normalized)
+	digest := hex.EncodeToString(sum[:])
+	for _, want := range f.Digests {
+		if digest == want {
+			return true
+		}
+	}
+	return false
+}
+
+// retire deals with the files this kit no longer publishes, and says what it
+// did with each one present in the project.
+//
+// With --force a file that is still exactly what the kit wrote is removed --
+// and so is the directory it leaves empty, which only it was in. Without it,
+// the file is named and kept. A file that differs from every version the kit
+// wrote is never touched. With dryRun it removes nothing and says what --force
+// would.
+func retire(root, modulePath string, force, dryRun bool, out io.Writer) error {
+	for _, f := range retired {
+		full := filepath.Join(root, f.Path)
+		body, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		switch {
+		case !publishedByThisKit(f, body, modulePath):
+			fmt.Fprintf(out, "  left    %s (no longer published, and not a version this kit wrote: "+
+				"delete it yourself once nothing uses it)\n", f.Path)
+		case dryRun && force:
+			fmt.Fprintf(out, "  remove  %s (no longer published: %s)\n", f.Path, f.Why)
+		case !force:
+			fmt.Fprintf(out, "  stale   %s (no longer published; auth --force removes it)\n", f.Path)
+		default:
+			if err := os.Remove(full); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "  removed %s (no longer published: %s)\n", f.Path, f.Why)
+			// The directory goes too when the file was all it held, and
+			// os.Remove refuses one that still holds anything. A view directory
+			// that is gone compiles into no package, so the blank import
+			// bootstrap/app.go carries for it has to go with it.
+			if dir := filepath.Dir(full); os.Remove(dir) == nil {
+				rel, _ := filepath.Rel(root, dir)
+				compiled := strings.Replace(filepath.ToSlash(rel), "resources/views", "storage/framework/views", 1)
+				fmt.Fprintf(out, "  removed %s (it is empty now: remove the blank import of %s/%s from bootstrap/app.go)\n",
+					rel, modulePath, compiled)
+			}
+		}
+	}
+	return nil
 }
 
 // write puts the files in the project.

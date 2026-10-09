@@ -198,7 +198,7 @@ func publishAuth(args []string) error {
 		for _, f := range files {
 			fmt.Printf("%s (%d bytes)\n", f.Path, len(f.Content))
 		}
-		return nil
+		return retire(root, modulePath, *force, true, os.Stdout)
 	}
 
 	// After --dry-run and before the first byte is written, which is where this
@@ -225,6 +225,11 @@ func publishAuth(args []string) error {
 
 	fmt.Printf("publishing the sign-in screens into %s\n\n", modulePath)
 	if err := write(root, files, *force, os.Stdout); err != nil {
+		return err
+	}
+	// What an earlier release published and this one does not: removed under
+	// --force when it is still exactly what the kit wrote, named otherwise.
+	if err := retire(root, modulePath, *force, false, os.Stdout); err != nil {
 		return err
 	}
 
