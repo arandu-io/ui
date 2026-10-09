@@ -348,6 +348,53 @@ func checkFlowAnswersByRedirect(root string, files []File, force bool) error {
 		strings.Join(stale, "\n    "))
 }
 
+// gonePageNames are names page.go declared in an earlier release of this kit
+// and no longer declares.
+//
+// TrustedQRCode marked the two-factor QR code as trusted markup, and took
+// html/template into app/ to do it. The setup screen draws the code as an image
+// now, so nothing needs a value that skips escaping and the function is gone.
+var gonePageNames = []string{"TrustedQRCode"}
+
+// checkKeptFilesNameOnlyWhatPageDeclares refuses to publish beside a file
+// that still names something page.go no longer declares.
+//
+// page.go is in replaced, so every run writes it, with or without a flag. A
+// screen from an earlier kit is kept unless --force, and a kept one calling a
+// function the new page.go dropped is a project that stops building on a
+// command whose promise is that it can be run again. What decides it is the
+// file on disk this run would keep; nothing is written when it refuses.
+func checkKeptFilesNameOnlyWhatPageDeclares(root string, files []File, force bool) error {
+	var stale []string
+	for _, f := range files {
+		if force || replaced[f.Path] {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(root, f.Path))
+		if err != nil {
+			continue
+		}
+		for _, name := range gonePageNames {
+			if bytes.Contains(body, []byte(name)) {
+				stale = append(stale, f.Path)
+				break
+			}
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	return fmt.Errorf("these files name %s, which page.go no longer declares:\n\n    %s\n\n"+
+		"The setup screen draws the two-factor QR code as an image now, so page.go -- which every run\n"+
+		"replaces -- no longer marks the code as trusted markup, and no longer imports html/template to do\n"+
+		"it. Kept beside the new page.go, these files would stop the project building.\n\n"+
+		"Publish the screens again with it:\n\n"+
+		"    go run github.com/arandu-io/ui@latest auth --views --force\n\n"+
+		"or the whole kit, with auth --force. What you wrote inside arandu:begin custom blocks is carried\n"+
+		"over; commit first and review the diff. Nothing has been written.",
+		strings.Join(gonePageNames, ", "), strings.Join(stale, "\n    "))
+}
+
 // write puts the files in the project.
 //
 // Five of them replace what is there without --force, and that is not a

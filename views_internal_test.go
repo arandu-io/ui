@@ -669,29 +669,47 @@ func TestTheKitsPageEmbedsTheNativePage(t *testing.T) {
 	}
 }
 
-// TestTheQRCodeCrossesANamedTrustedMarkupBoundary keeps raw rendering limited
-// to one explicit component. The handler obtains this SVG from hesape/qr; a
-// string-valued page method is indistinguishable from arbitrary unescaped data
-// to both a reader and `aru doctor`.
-func TestTheQRCodeCrossesANamedTrustedMarkupBoundary(t *testing.T) {
+// TestTheQRCodeIsAnImageAndNoPublishedGoImportsHTMLTemplate.
+//
+// The setup screen drew the QR code as raw markup, through a page function
+// returning template.HTML -- which put html/template in page.go, a second
+// template engine under app/ and the one value that skips escaping, and the
+// doctor reported it on every project. The code is an image now: the screen
+// writes the data: scheme itself and the page hands it the base64 body, so
+// nothing reaches the page unescaped and nothing under app/ names the type.
+//
+// Every {!! !!} left in a published view is a component's, and that is held
+// here too: a raw output of anything else is markup some handler built.
+func TestTheQRCodeIsAnImageAndNoPublishedGoImportsHTMLTemplate(t *testing.T) {
 	setup := authView(t, "auth/two-factor/setup.kyse.go")
-	page := authFile(t, "page.go")
+	if !strings.Contains(setup, `src="data:image/svg+xml;base64,{{ .QRCodeImage() }}"`) {
+		t.Error("two-factor setup does not draw its QR code as an image whose scheme the screen spells out")
+	}
+	if !strings.Contains(authFile(t, "page.go"), "func (p AuthPage) QRCodeImage() string") {
+		t.Error("AuthPage does not hand the screen the QR code as the body of a data URL")
+	}
 
-	if !strings.Contains(setup, `{!! authui.TrustedQRCode(.QRCodeSVG) !!}`) {
-		t.Error("two-factor setup does not render its QR through the named trusted-markup component")
-	}
-	if strings.Contains(setup, `{!! .QRCode() !!}`) {
-		t.Error("two-factor setup still sends a raw string-valued page method directly to output")
-	}
-	for _, want := range []string{
-		`"html/template"`,
-		`func TrustedQRCode(svg string) template.HTML`,
-		`return template.HTML(svg)`,
-		`hesape/qr`,
-		`validated`,
-	} {
-		if !strings.Contains(page, want) {
-			t.Errorf("the published trusted QR boundary does not make %q explicit", want)
+	for _, f := range mustGenerateAuth(t) {
+		path := filepath.ToSlash(f.Path)
+		content := string(f.Content)
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, ".kyse.go") {
+			for _, bad := range []string{`"html/template"`, "template.HTML"} {
+				if strings.Contains(content, bad) {
+					t.Errorf("%s names %s: markup is a view, and a value that skips escaping is one nobody escaped", path, bad)
+				}
+			}
+			continue
+		}
+		for rest := content; ; {
+			at := strings.Index(rest, "{!!")
+			if at < 0 {
+				break
+			}
+			rest = rest[at+len("{!!"):]
+			call := strings.TrimSpace(rest)
+			if !strings.HasPrefix(call, "components.") && !strings.HasPrefix(call, "mailui.") {
+				t.Errorf("%s writes raw output that is not a component: {!! %.40s", path, call)
+			}
 		}
 	}
 }

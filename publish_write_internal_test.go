@@ -555,3 +555,89 @@ func TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt.
+//
+// page.go is replaced on every run, and the setup screen of the previous
+// release is kept by every run without --force. That screen called
+// authui.TrustedQRCode, which the new page.go no longer declares -- so a plain
+// republish, and a --views without --force, would leave a project that does not
+// build. Both are refused before anything is written; --force and --views
+// --force write the screen and are let through.
+func TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt(t *testing.T) {
+	setup := filepath.Join("resources", "views", "auth", "two-factor", "setup.kyse.go")
+	previous := "//go:build kyse\n\npackage twofactor\n\n" +
+		"<div class=\"mx-auto max-w-64\">{!! authui.TrustedQRCode(.QRCodeSVG) !!}</div>\n"
+	files, err := GenerateAuth(Module{ModulePath: "example.test/shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current string
+	for _, f := range files {
+		if f.Path == setup {
+			current = string(f.Content)
+		}
+	}
+	if current == "" {
+		t.Fatalf("the kit no longer publishes %s, so this test names the wrong file", setup)
+	}
+
+	for _, c := range []struct {
+		name     string
+		existing string
+		files    []File
+		force    bool
+		refused  bool
+	}{
+		{"a project with no setup screen yet", "", files, false, false},
+		{"the setup screen this release publishes", current, files, false, false},
+		{"the previous screen, kept by a plain republish", previous, files, false, true},
+		{"the previous screen, kept by --views", previous, screensOnly(files), false, true},
+		{"the previous screen, replaced by --views --force", previous, screensOnly(files), true, false},
+		{"the previous screen, replaced by --force", previous, files, true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := project(t, aruFloor)
+			if c.existing != "" {
+				path := filepath.Join(root, setup)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(c.existing), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := checkKeptFilesNameOnlyWhatPageDeclares(root, c.files, c.force)
+			switch {
+			case c.refused && err == nil:
+				t.Fatal("the new page.go was let in beside a screen that calls what it no longer declares")
+			case !c.refused && err != nil:
+				t.Fatalf("refused a project the screens fit: %v", err)
+			case err != nil:
+				for _, want := range []string{setup, "TrustedQRCode", "auth --views --force", "Nothing has been written"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not mention %q:\n%v", want, err)
+					}
+				}
+			}
+		})
+	}
+
+	// And through the command: the refusal comes before the first byte.
+	root := project(t, aruFloor)
+	path := filepath.Join(root, setup)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(previous), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	if err := publishAuth(nil); err == nil {
+		t.Fatal("auth published a page.go beside a setup screen that calls what it no longer declares")
+	}
+	if _, err := os.Stat(filepath.Join(root, "app", "Http", "Controllers", "Auth", "page.go")); err == nil {
+		t.Error("page.go was written before the project was refused, so the refusal left a tree behind")
+	}
+}

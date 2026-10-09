@@ -216,6 +216,12 @@ func publishAuth(args []string) error {
 	if err := checkFlowAnswersByRedirect(root, files, *force); err != nil {
 		return err
 	}
+	// And about the screens: page.go is replaced on every run, so a screen
+	// this run keeps cannot go on calling what it no longer declares. See
+	// checkKeptFilesNameOnlyWhatPageDeclares.
+	if err := checkKeptFilesNameOnlyWhatPageDeclares(root, files, *force); err != nil {
+		return err
+	}
 
 	fmt.Printf("publishing the sign-in screens into %s\n\n", modulePath)
 	if err := write(root, files, *force, os.Stdout); err != nil {

@@ -176,8 +176,8 @@ func AuthViews(m Module) ([]File, error) {
 const authPageTemplate = `package authui
 
 import (
+	"encoding/base64"
 	"encoding/json"
-	"html/template"
 	"log/slog"
 
 	"github.com/arandu-io/hesape/validation"
@@ -319,10 +319,24 @@ func (p AuthPage) AsksForPassword() bool { return !p.WithoutPasswordBox }
 // AsksForPasswordConfirmation reports whether it draws a second one.
 func (p AuthPage) AsksForPasswordConfirmation() bool { return !p.WithoutConfirmationBox }
 
-// TrustedQRCode marks the SVG produced by hesape/qr as trusted markup. The
-// two-factor handler reaches this boundary only after qr.Encode and Code.SVG
-// produce the validated document; arbitrary strings must remain escaped.
-func TrustedQRCode(svg string) template.HTML { return template.HTML(svg) }
+// QRCodeImage is the QR code as the base64 body of a data URL, for an image.
+//
+// The setup screen writes the scheme and the media type in its own markup,
+// data:image/svg+xml;base64, and puts this value after them. It has to: the
+// view escape refuses an address whose scheme comes from a value, and a scheme
+// the screen spelled out is one no value can change. An image is a document of
+// its own, so what the SVG carries is drawn and never run, and nothing reaches
+// the page unescaped -- the screen needs no trusted markup at all. The content
+// security policy the framework sends admits data: for images and for nothing
+// else.
+//
+// Empty when there is no code to draw.
+func (p AuthPage) QRCodeImage() string {
+	if p.QRCodeSVG == "" {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString([]byte(p.QRCodeSVG))
+}
 
 // redacted is what a secret looks like once it has left this package.
 //
@@ -1271,7 +1285,7 @@ type SetupData = authui.AuthPage
 					</form>
 				@endif
 				@if(.SecretKey != "")
-					<div class="mx-auto max-w-64">{!! authui.TrustedQRCode(.QRCodeSVG) !!}</div>
+					<img class="mx-auto size-64" src="data:image/svg+xml;base64,{{ .QRCodeImage() }}" alt="QR code to scan with your authenticator app" width="256" height="256">
 					<p class="text-muted-foreground text-sm">If the camera cannot scan the code, type this key:</p>
 					<code class="rounded border p-3 text-sm break-all">{{ .SecretKey }}</code>
 					<form class="flex flex-col gap-4" method="post" action="{{ .TwoFactorSetupConfirmURL }}">
