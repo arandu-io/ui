@@ -165,6 +165,11 @@ type Module struct {
 // csrf is kept for the call bootstrap/app.go already makes, and no screen
 // issues a token with it: each draws the one CSRFProtect put on the request
 // context.
+//
+// secure is whether the cookies this module writes itself carry Secure: the
+// short pending cookie of a two-factor sign-in, and the flash it builds for a
+// router that was wired with none. Pass cfg.Framework.Session.Secure, the one
+// decision the session cookie and the kernel's flash already follow.
 func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
@@ -172,6 +177,7 @@ func New(users Users, factors Factors, codes onetime.CodeStore, sessions *securi
 	return &Module{
 		users: users, factors: factors, codes: codes, sessions: sessions,
 		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
+		// Replaced in Routes by the router's flash when it carries one.
 		flash: session.NewFlash(appKey, secure),
 		appName: appName, tenant: tenant, secure: secure,
 	}
@@ -192,12 +198,19 @@ func (m *Module) Name() string { return "authui" }
 // JSON gets a 422 problem document with the messages by field. No handler here
 // writes a rejection itself.
 //
-// The router is handed this module's flash, the one its notices are written
-// with, so a rejection and a notice travel in the same signed cookie however the
-// router was built -- the kernel's carries a flash already, and a router a test
-// builds carries none.
+// A rejection and a notice travel in one signed cookie, the flash the
+// application reads back on the next page. The kernel's router carries that
+// flash, and when it does this module writes its notices with it rather than
+// with one of its own, so the key and the Secure attribute are the ones the
+// application decided once. A router that carries none -- one a test builds --
+// is handed the flash New built, and both kinds of message go through it.
 func (m *Module) Routes(r *fhttp.Router) {
-	g := r.WithFlash(m.flash).Group("/auth")
+	if f := flashOf(r); f != nil {
+		m.flash = f
+	} else {
+		r = r.WithFlash(m.flash)
+	}
+	g := r.Group("/auth")
 	guest := middleware.RedirectIfAuthenticated(m.sessions, "/")
 	signedIn := middleware.RequireAuth(m.sessions)
 	confirmed := middleware.RequireConfirmedPassword(m.sessions)
@@ -232,6 +245,23 @@ func (m *Module) Routes(r *fhttp.Router) {
 	// arandu:begin custom
 	// Register application-specific authentication routes here.
 	// arandu:end custom
+}
+
+// flashCarrier is a router that says which flash it was wired with.
+type flashCarrier interface {
+	Flash() *session.Flash
+}
+
+// flashOf returns the flash the router was wired with, or nil.
+//
+// It asks through flashCarrier rather than calling r.Flash() so that this file
+// still compiles against a framework whose router keeps its flash to itself;
+// there the answer is nil and the module wires its own, as it always did.
+func flashOf(r *fhttp.Router) *session.Flash {
+	if c, ok := any(r).(flashCarrier); ok {
+		return c.Flash()
+	}
+	return nil
 }
 `
 

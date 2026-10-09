@@ -1984,6 +1984,147 @@ func main() {
 }
 `
 
+// TestTheKitWritesItsNoticesWithTheRoutersFlash.
+//
+// The kernel's router carries the flash the application reads back on the next
+// page, with the key and the Secure attribute the application decided once. A
+// module that builds a flash of its own repeats that decision and can make it
+// differently -- the kit's own was Secure by the skeleton's rule while the
+// kernel's was Secure by another -- so Routes takes the router's when it has one.
+//
+// The probe tells the two apart by key and by attribute. The module is built
+// with one key and secure=false, the router's flash with another key and
+// secure=true, and the application reads with the router's: a notice written
+// with the module's own flash would carry no Secure and would not verify, so the
+// reset screen would draw no status. The second half is the fallback: a router
+// with no flash, as a test builds one, gets the module's, and the cookie carries
+// the secure New was given.
+func TestTheKitWritesItsNoticesWithTheRoutersFlash(t *testing.T) {
+	out := runAgainstPublishedKit(t, routerFlashProbe)
+
+	for _, want := range []string{
+		"router notice: status=303 secure=true",
+		"router then: status=If that address is registered, a code is on its way. email=a@example.test",
+		"router refusal: status=303 secure=true",
+		"router refusal then: message=invalid email or password",
+		"fallback notice: status=303 secure=true",
+		"fallback then: status=If that address is registered, a code is on its way. email=a@example.test",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// routerFlashProbe posts a reset request and a refused sign-in through a router
+// that carries a flash, and a reset request through one that carries none.
+const routerFlashProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+type users struct{ authui.Users }
+
+func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
+	return models.User{}, nativeauth.ErrInvalidCredentials
+}
+
+func (users) Lookup(context.Context, string, string) (models.User, error) {
+	return models.User{}, errors.New("no such account")
+}
+
+func main() {
+	view.Register("auth.login", func(w io.Writer, data any) error {
+		_, err := fmt.Fprintf(w, "message=%s", data.(authui.AuthPage).FieldError("email"))
+		return err
+	})
+	view.Register("auth.passwords.reset", func(w io.Writer, data any) error {
+		page := data.(authui.AuthPage)
+		_, err := fmt.Fprintf(w, "status=%s email=%s", page.Status, page.OldOr("email", ""))
+		return err
+	})
+
+	moduleKey := []byte("0123456789abcdef0123456789abcdef")
+	routerKey := []byte("fedcba9876543210fedcba9876543210")
+	build := func(secure bool) *authui.Module {
+		sessions := security.NewSessionStore(moduleKey, time.Hour, false,
+			security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+		return authui.New(users{}, nil, nil, sessions, session.NewCSRF(moduleKey, time.Hour), nil,
+			moduleKey, "Probe", authui.FixedTenant("tenant-a"), secure)
+	}
+
+	post := func(app http.Handler, path string, form url.Values) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", path)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w
+	}
+	secure := func(w *httptest.ResponseRecorder) string {
+		for _, c := range w.Result().Cookies() {
+			if c.Name == session.FlashCookieName && c.MaxAge >= 0 {
+				return fmt.Sprint(c.Secure)
+			}
+		}
+		return "(no flash cookie)"
+	}
+	follow := func(app http.Handler, w *httptest.ResponseRecorder) string {
+		r := httptest.NewRequest(http.MethodGet, w.Header().Get("Location"), nil)
+		r.Header.Set("Accept", "text/html")
+		for _, c := range w.Result().Cookies() {
+			if c.MaxAge >= 0 {
+				r.AddCookie(c)
+			}
+		}
+		next := httptest.NewRecorder()
+		app.ServeHTTP(next, r)
+		return next.Body.String()
+	}
+	reset := url.Values{"email": {"a@example.test"}}
+	refused := url.Values{"email": {"a@example.test"}, "password": {"wrong-password"}}
+
+	routerFlash := session.NewFlash(routerKey, true)
+	router := fhttp.NewRouter().WithFlash(routerFlash)
+	build(false).Routes(router)
+	app := middleware.Flash(routerFlash)(router)
+
+	notice := post(app, "/auth/password/email", reset)
+	fmt.Printf("router notice: status=%d secure=%s\n", notice.Code, secure(notice))
+	fmt.Printf("router then: %s\n", follow(app, notice))
+	refusal := post(app, "/auth/login", refused)
+	fmt.Printf("router refusal: status=%d secure=%s\n", refusal.Code, secure(refusal))
+	fmt.Printf("router refusal then: %s\n", follow(app, refusal))
+
+	bare := fhttp.NewRouter()
+	build(true).Routes(bare)
+	fallback := middleware.Flash(session.NewFlash(moduleKey, false))(bare)
+	own := post(fallback, "/auth/password/email", reset)
+	fmt.Printf("fallback notice: status=%d secure=%s\n", own.Code, secure(own))
+	fmt.Printf("fallback then: %s\n", follow(fallback, own))
+}
+`
+
 // TestNoPublishedHandlerReadsItsFormByHand.
 //
 // Every handler that reads a form converts it with ctx.Bind into a request
