@@ -257,7 +257,12 @@ and, in the k.Register(...) list:
 
     authui.New(userService, twoFactorService, emailCodes, sessions, csrf,
         mailer, fw.App.Key, cfg.App.Name,
-        authui.FixedTenant(cfg.Auth.Tenant), cfg.Session.Secure),
+        authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure),
+
+The last argument is whether the cookies the module writes itself carry Secure.
+cfg.Framework.Session.Secure is the decision the session cookie and the flash
+already follow -- SESSION_SECURE_COOKIE when it is set, and otherwise Secure
+everywhere but APP_ENV=dev -- so the three cannot disagree.
 
 The landing page is published too, because a page renders with the type of its
 layout and this command replaces the layout. It is built in the same file, and

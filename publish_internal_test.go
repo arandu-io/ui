@@ -662,6 +662,98 @@ func TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes(t *testing.T) 
 	}
 }
 
+// TestTheWiringPassesTheOneSecureDecision.
+//
+// The last argument of authui.New is whether the cookies the module writes
+// itself carry Secure. The instruction used to pass cfg.Session.Secure, the
+// skeleton's own reading of SESSION_SECURE with a rule of its own, while the
+// session cookie and the kernel's flash followed the framework's. The framework
+// reads the variable once, into cfg.Framework.Session.Secure, and that is the
+// value the module has to be given for the three cookies to agree.
+func TestTheWiringPassesTheOneSecureDecision(t *testing.T) {
+	args := callFromWiring(t, "authui.New").Args
+	if len(args) == 0 {
+		t.Fatal("the printed authui.New call passes nothing")
+	}
+	if got := types.ExprString(args[len(args)-1]); got != "cfg.Framework.Session.Secure" {
+		t.Errorf("the printed wiring passes %s as the module's secure, and the session cookie and the "+
+			"kernel's flash follow cfg.Framework.Session.Secure: the pending cookie and the flash the module "+
+			"builds would be Secure by a different rule", got)
+	}
+}
+
+// TestThePendingCookieCarriesTheSecureNewWasGiven runs the published module:
+// a password sign-in on an account with a second factor writes the short
+// pending cookie, and its Secure attribute is the one the wiring passed.
+func TestThePendingCookieCarriesTheSecureNewWasGiven(t *testing.T) {
+	out := runAgainstPublishedKit(t, pendingSecureProbe)
+
+	for _, want := range []string{
+		"secure=true: status=303 pending=true",
+		"secure=false: status=303 pending=false",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+const pendingSecureProbe = `package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/session"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+type users struct{ authui.Users }
+
+func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
+	return models.User{ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: "stored"}, nil
+}
+
+type factors struct{ authui.Factors }
+
+func (factors) Required(context.Context, string, string) (bool, error) { return true, nil }
+
+func main() {
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	for _, secure := range []bool{true, false} {
+		sessions := security.NewSessionStore(appKey, time.Hour, false,
+			security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+		module := authui.New(users{}, factors{}, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
+			appKey, "Probe", authui.FixedTenant("tenant-a"), secure)
+		router := fhttp.NewRouter()
+		module.Routes(router)
+
+		form := url.Values{"email": {"a@example.test"}, "password": {"a-password-long-enough"}}
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+
+		pending := "(no pending cookie)"
+		for _, c := range w.Result().Cookies() {
+			if c.Name == "two-factor-pending" {
+				pending = fmt.Sprint(c.Secure)
+			}
+		}
+		fmt.Printf("secure=%t: status=%d pending=%s\n", secure, w.Code, pending)
+	}
+}
+`
+
 // TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes.
 //
 // The drift this catches survived because nobody ran the publisher against the
