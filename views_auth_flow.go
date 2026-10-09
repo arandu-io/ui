@@ -99,6 +99,46 @@ func (in registrationRequest) LogValue() slog.Value {
 	)
 }
 
+// passwordPolicy is the rule a password chosen on these screens is held to,
+// and the list drawn under the box it is typed into.
+//
+// Both handlers that take a new password -- sign-up and reset -- check it
+// against this, and both screens are handed the same declaration as
+// AuthPage.PasswordPolicy, which the password component draws its checklist
+// from. The line a person reads and the rule that turns them away are one
+// declaration, so a minimum raised here is raised in both places and a screen
+// never promises a password its handler then refuses.
+//
+// It starts at hashing.MinPasswordLen and ends at hashing.MaxPasswordLen, the
+// bounds hashing.Make refuses outside of. Raise the minimum, or add MixedCase,
+// Numbers or Symbols; a minimum below that floor would accept on the screen a
+// password the user service cannot store.
+//
+// A new policy on every call, because a policy records what its last check
+// refused: one shared between two requests could answer one with the other's
+// messages.
+func passwordPolicy() *validation.Password {
+	return validation.PasswordMin(hashing.MinPasswordLen).Max(hashing.MaxPasswordLen)
+}
+
+// checkNewPassword adds what passwordPolicy refuses about password to errs,
+// under field.
+//
+// The empty password is refused here first, and not left to the policy: a
+// policy's length rule, like every rule but required, passes a value that is
+// absent, so an empty box would go through it and reach the user service -- and
+// the reset would spend its code on a password that cannot be stored.
+func checkNewPassword(errs validation.Errors, field, password string) {
+	if password == "" {
+		errs[field] = []string{"type a password"}
+		return
+	}
+	policy := passwordPolicy()
+	if !policy.Passes(field, password) {
+		errs[field] = policy.Message()
+	}
+}
+
 // verifyRequest is what the confirmation form sends: the address and the code
 // mailed to it.
 type verifyRequest struct {
@@ -130,6 +170,7 @@ func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
 		Page: m.page(r, "Create an account"),
 		WithoutPasswordBox: !registrationAsks.asksForPassword(),
 		WithoutConfirmationBox: !registrationAsks.asksForConfirmation(),
+		PasswordPolicy: passwordPolicy(),
 	})
 }
 
@@ -157,8 +198,8 @@ func (m *Module) doRegister(ctx *hhttp.Context) error {
 	if in.Email == "" {
 		errs["email"] = []string{"type your email address"}
 	}
-	if registrationAsks.asksForPassword() && len([]rune(in.Password)) < hashing.MinPasswordLen {
-		errs["password"] = []string{"the password is too short"}
+	if registrationAsks.asksForPassword() {
+		checkNewPassword(errs, "password", in.Password)
 	}
 	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
 		errs["password_confirmation"] = []string{"the two passwords do not match"}
@@ -437,7 +478,6 @@ import (
 	"strings"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
-	"github.com/arandu-io/hesape/hashing"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	hmiddleware "github.com/arandu-io/hesape/routing/middleware"
@@ -529,6 +569,7 @@ func (m *Module) showPasswordReset(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.passwords.reset", AuthPage{
 		Page: m.page(r, "Choose a new password"),
 		Email: strings.TrimSpace(r.URL.Query().Get("email")),
+		PasswordPolicy: passwordPolicy(),
 	})
 }
 
@@ -547,8 +588,10 @@ func (m *Module) updatePassword(ctx *hhttp.Context) error {
 	if in.Password != in.PasswordConfirmation {
 		return validation.Errors{"password_confirmation": {"the two passwords do not match"}}
 	}
-	if len([]rune(in.Password)) < hashing.MinPasswordLen {
-		return validation.Errors{"password": {fmt.Sprintf("must be at least %d characters", hashing.MinPasswordLen)}}
+	errs := validation.Errors{}
+	checkNewPassword(errs, "password", in.Password)
+	if errs.Any() {
+		return errs
 	}
 	u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email)
 	if err != nil || m.codes.Consume(r.Context(), resetPurpose, resetCodeSubject(u), in.Code) != nil {

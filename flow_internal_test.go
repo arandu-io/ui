@@ -108,7 +108,7 @@ func TestTheSignUpFormAsksForAPasswordTwiceUnlessTheProjectSaysOtherwise(t *test
 
 	doRegister := bodyOf(t, controller, "doRegister")
 	for _, rule := range []string{
-		"len([]rune(in.Password)) < hashing.MinPasswordLen",
+		`checkNewPassword(errs, "password", in.Password)`,
 		"in.Password != in.PasswordConfirmation",
 	} {
 		if !strings.Contains(doRegister, rule) {
@@ -138,7 +138,7 @@ func TestTheSignUpFormAndItsHandlerAskForTheSameThing(t *testing.T) {
 	}{
 		{
 			"password", "@if(.AsksForPassword())", "registrationAsks.asksForPassword()",
-			"len([]rune(in.Password)) < hashing.MinPasswordLen",
+			`checkNewPassword(errs, "password", in.Password)`,
 		},
 		{
 			"password_confirmation", "@if(.AsksForPasswordConfirmation())",
@@ -240,7 +240,7 @@ func TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison(t *testing.T) {
 		{"PasswordController.go", "confirmPassword", `in.Password == ""`, "m.users.ConfirmPassword("},
 		{
 			"PasswordController.go", "updatePassword",
-			"len([]rune(in.Password)) < hashing.MinPasswordLen", "m.users.ResetPassword(",
+			`checkNewPassword(errs, "password", in.Password)`, "m.users.ResetPassword(",
 		},
 	} {
 		body := bodyOf(t, authFile(t, c.file), c.handler)
@@ -271,6 +271,21 @@ func TestNoPublishedHandlerPutsAnEmptyPasswordIntoAComparison(t *testing.T) {
 			"off, a forged body would still set the credential on the new account")
 	case cleared > registered:
 		t.Error("the registration handler drops the undrawn password only after registering with it")
+	}
+
+	// The reset's guard is checkNewPassword, and the policy inside it is not a
+	// guard against the empty password: its length rule, like every rule but
+	// required, passes a value that is absent. So the refusal of "" has to come
+	// before the policy is asked.
+	check := bodyOf(t, authFile(t, "RegisterController.go"), "checkNewPassword")
+	empty, policy := strings.Index(check, `if password == ""`), strings.Index(check, ".Passes(")
+	switch {
+	case policy < 0:
+		t.Error("checkNewPassword no longer asks passwordPolicy, so the checklist the screens draw and the " +
+			"rule the handlers apply are two declarations again")
+	case empty < 0 || empty > policy:
+		t.Error("checkNewPassword leaves the empty password to the policy, which passes it: an empty box " +
+			"would reach the user service, and the reset would spend its code on a password nobody can store")
 	}
 }
 
@@ -383,7 +398,7 @@ func TestTheResetIsThrottledByTheCounterSigningInAlreadyUses(t *testing.T) {
 func TestNothingIsConsumedUntilThePasswordIsAcceptable(t *testing.T) {
 	body := bodyOf(t, authFile(t, "PasswordController.go"), "updatePassword")
 
-	length := strings.Index(body, "len([]rune(in.Password)) < hashing.MinPasswordLen")
+	length := strings.Index(body, `checkNewPassword(errs, "password", in.Password)`)
 	match := strings.Index(body, "in.Password != in.PasswordConfirmation")
 	consume := strings.Index(body, "m.codes.Consume(")
 	write := strings.Index(body, "m.users.ResetPassword(")
@@ -2019,6 +2034,59 @@ func TestNoPublishedHandlerReadsItsFormByHand(t *testing.T) {
 			t.Errorf("no published file declares %s", handler)
 		case !strings.Contains(body, "ctx.Bind(&in)"):
 			t.Errorf("%s is registered with Action and does not convert its form with ctx.Bind(&in)", handler)
+		}
+	}
+}
+
+// TestTheChecklistAndTheHandlerAreOnePasswordPolicy.
+//
+// The password box draws its checklist from a policy, and with none it draws
+// the application's registered default -- a minimum of eight when nothing was
+// registered. The handlers refused anything under hashing.MinPasswordLen,
+// twelve. So the sign-up screen ticked every line at eight characters and the
+// handler turned the password away: two policies, agreeing on nothing.
+//
+// One declaration now, passwordPolicy, and both ends read it. The two screens
+// where a password is chosen hand it to the box; the handlers that draw them
+// fill it; the handlers that take the form check against it. A box that is
+// Confirming draws no checklist and needs none.
+func TestTheChecklistAndTheHandlerAreOnePasswordPolicy(t *testing.T) {
+	register := authFile(t, "RegisterController.go")
+	policy := bodyOf(t, register, "passwordPolicy")
+	if !strings.Contains(policy, "validation.PasswordMin(hashing.MinPasswordLen).Max(hashing.MaxPasswordLen)") {
+		t.Errorf("passwordPolicy does not start from the bounds hashing.Make enforces:\n%s", policy)
+	}
+
+	for view, handler := range map[string]struct{ file, show string }{
+		"auth/register.kyse.go":        {"RegisterController.go", "showRegister"},
+		"auth/passwords/reset.kyse.go": {"PasswordController.go", "showPasswordReset"},
+	} {
+		markup := authView(t, view)
+		for rest := markup; ; {
+			at := strings.Index(rest, "components.Password(")
+			if at < 0 {
+				break
+			}
+			rest = rest[at+len("components.Password("):]
+			call := rest
+			if end := strings.Index(call, "}) !!}"); end >= 0 {
+				call = call[:end]
+			}
+			if !strings.Contains(call, "Confirming: true") && !strings.Contains(call, "Policy: .PasswordPolicy") {
+				t.Errorf("%s draws a password checklist without the policy its handler checks with", view)
+			}
+		}
+		if !regexp.MustCompile(`PasswordPolicy:\s+passwordPolicy\(\)`).MatchString(bodyOf(t, authFile(t, handler.file), handler.show)) {
+			t.Errorf("%s draws %s without filling PasswordPolicy: the checklist falls back to a default the "+
+				"handler does not apply", handler.show, view)
+		}
+	}
+	for _, c := range []struct{ file, handler string }{
+		{"RegisterController.go", "doRegister"},
+		{"PasswordController.go", "updatePassword"},
+	} {
+		if !strings.Contains(bodyOf(t, authFile(t, c.file), c.handler), `checkNewPassword(errs, "password", in.Password)`) {
+			t.Errorf("%s checks a new password against something other than passwordPolicy", c.handler)
 		}
 	}
 }

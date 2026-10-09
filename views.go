@@ -180,6 +180,7 @@ import (
 	"html/template"
 	"log/slog"
 
+	"github.com/arandu-io/hesape/validation"
 	"github.com/arandu-io/hesape/view"
 	"github.com/arandu-io/kyse/components"
 )
@@ -252,6 +253,16 @@ type AuthPage struct {
 	// sentence somebody reads once, and "that link has expired" is one they
 	// need while they retype the address.
 	StatusAsToast bool
+
+	// PasswordPolicy is the rule a password chosen on this screen is checked
+	// against, and what the password component draws its checklist from.
+	//
+	// The handler that answers the form fills it from the declaration it
+	// validates with, so the list under the box and the refusal are the same
+	// rule. Nil draws the application's registered default instead, which is
+	// what a handler older than this field leaves behind: the screen still
+	// builds, and asks for what it asked for before.
+	PasswordPolicy *validation.Password
 
 	// The addresses these screens post to and link to, beyond the navigation
 	// view.Page already carries. They come from the router, through the handler.
@@ -932,7 +943,7 @@ type RegisterData = authui.AuthPage
 							"reveal": {Class: "order-last me-1 shrink-0"},
 						}},
 						Name: "password", Label: "Password",
-						Page: .,
+						Page: ., Policy: .PasswordPolicy,
 						Autocomplete: "new-password", Required: true,
 					}) !!}
 				@endif
@@ -1127,7 +1138,7 @@ type ResetData = authui.AuthPage
 						"reveal": {Class: "order-last me-1 shrink-0"},
 					}},
 					Name: "password", Label: "New password",
-					Page: .,
+					Page: ., Policy: .PasswordPolicy,
 					Autocomplete: "new-password", Required: true,
 				}) !!}
 

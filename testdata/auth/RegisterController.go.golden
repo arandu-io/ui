@@ -94,6 +94,46 @@ func (in registrationRequest) LogValue() slog.Value {
 	)
 }
 
+// passwordPolicy is the rule a password chosen on these screens is held to,
+// and the list drawn under the box it is typed into.
+//
+// Both handlers that take a new password -- sign-up and reset -- check it
+// against this, and both screens are handed the same declaration as
+// AuthPage.PasswordPolicy, which the password component draws its checklist
+// from. The line a person reads and the rule that turns them away are one
+// declaration, so a minimum raised here is raised in both places and a screen
+// never promises a password its handler then refuses.
+//
+// It starts at hashing.MinPasswordLen and ends at hashing.MaxPasswordLen, the
+// bounds hashing.Make refuses outside of. Raise the minimum, or add MixedCase,
+// Numbers or Symbols; a minimum below that floor would accept on the screen a
+// password the user service cannot store.
+//
+// A new policy on every call, because a policy records what its last check
+// refused: one shared between two requests could answer one with the other's
+// messages.
+func passwordPolicy() *validation.Password {
+	return validation.PasswordMin(hashing.MinPasswordLen).Max(hashing.MaxPasswordLen)
+}
+
+// checkNewPassword adds what passwordPolicy refuses about password to errs,
+// under field.
+//
+// The empty password is refused here first, and not left to the policy: a
+// policy's length rule, like every rule but required, passes a value that is
+// absent, so an empty box would go through it and reach the user service -- and
+// the reset would spend its code on a password that cannot be stored.
+func checkNewPassword(errs validation.Errors, field, password string) {
+	if password == "" {
+		errs[field] = []string{"type a password"}
+		return
+	}
+	policy := passwordPolicy()
+	if !policy.Passes(field, password) {
+		errs[field] = policy.Message()
+	}
+}
+
 // verifyRequest is what the confirmation form sends: the address and the code
 // mailed to it.
 type verifyRequest struct {
@@ -125,6 +165,7 @@ func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
 		Page:                   m.page(r, "Create an account"),
 		WithoutPasswordBox:     !registrationAsks.asksForPassword(),
 		WithoutConfirmationBox: !registrationAsks.asksForConfirmation(),
+		PasswordPolicy:         passwordPolicy(),
 	})
 }
 
@@ -152,8 +193,8 @@ func (m *Module) doRegister(ctx *hhttp.Context) error {
 	if in.Email == "" {
 		errs["email"] = []string{"type your email address"}
 	}
-	if registrationAsks.asksForPassword() && len([]rune(in.Password)) < hashing.MinPasswordLen {
-		errs["password"] = []string{"the password is too short"}
+	if registrationAsks.asksForPassword() {
+		checkNewPassword(errs, "password", in.Password)
 	}
 	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
 		errs["password_confirmation"] = []string{"the two passwords do not match"}

@@ -54,7 +54,7 @@ type RegisterData = authui.AuthPage
 							"reveal": {Class: "order-last me-1 shrink-0"},
 						}},
 						Name: "password", Label: "Password",
-						Page: .,
+						Page: ., Policy: .PasswordPolicy,
 						Autocomplete: "new-password", Required: true,
 					}) !!}
 				@endif
