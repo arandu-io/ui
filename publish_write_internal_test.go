@@ -461,3 +461,97 @@ func TestDryRunAnswersWhatWouldBeWrittenWhateverTheProjectAccepts(t *testing.T) 
 		t.Fatalf("--dry-run was refused, and it writes nothing to refuse: %v", err)
 	}
 }
+
+// TestHandlersThatDrawTheirOwnRefusalsAreNotLeftBesideTheseScreens.
+//
+// A project that published an earlier kit has handlers that answer a rejected
+// form with a 422 and the form. A plain republish keeps them and replaces the
+// layout and page.go, which no longer swap a 422 or carry the fields those
+// handlers fill -- so the project would lose its refusals under htmx and then
+// stop building. --views keeps them by design, so it cannot be the way through
+// either, whatever else is passed.
+func TestHandlersThatDrawTheirOwnRefusalsAreNotLeftBesideTheseScreens(t *testing.T) {
+	handlers := filepath.Join("app", "Http", "Controllers", "Auth", "LoginController_handlers.go")
+	drawn := "package authui\n\nfunc rejected() { _ = http.StatusUnprocessableEntity }\n"
+	files, err := GenerateAuth(Module{ModulePath: "example.test/shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var published string
+	for _, f := range files {
+		if f.Path == handlers {
+			published = string(f.Content)
+		}
+	}
+	if published == "" {
+		t.Fatalf("the kit no longer publishes %s, so this test names the wrong file", handlers)
+	}
+
+	for _, c := range []struct {
+		name     string
+		existing string
+		files    []File
+		force    bool
+		refused  bool
+	}{
+		{"a project with no flow yet", "", files, false, false},
+		{"a flow that already returns its refusals", published, files, false, false},
+		{"handlers that draw them, kept by a plain republish", drawn, files, false, true},
+		{"handlers that draw them, replaced by --force", drawn, files, true, false},
+		{"handlers that draw them, kept by --views even with --force", drawn, screensOnly(files), true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := project(t, aruFloor)
+			if c.existing != "" {
+				path := filepath.Join(root, handlers)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(c.existing), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := checkFlowAnswersByRedirect(root, c.files, c.force)
+			switch {
+			case c.refused && err == nil:
+				t.Fatal("the screens were let in beside handlers that answer a refusal with a 422")
+			case !c.refused && err != nil:
+				t.Fatalf("refused a project the screens fit: %v", err)
+			case err != nil:
+				for _, want := range []string{handlers, "auth --force", "Nothing has been written"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not mention %q:\n%v", want, err)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals drives the command
+// itself, for the reason the floor's test does: a refusal that arrives after
+// the files is a tree left half replaced.
+func TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals(t *testing.T) {
+	root := project(t, aruFloor)
+	handlers := filepath.Join(root, "app", "Http", "Controllers", "Auth", "LoginController_handlers.go")
+	if err := os.MkdirAll(filepath.Dir(handlers), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(handlers, []byte("package authui\n\nvar _ = http.StatusUnprocessableEntity\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	if err := publishAuth(nil); err == nil {
+		t.Fatal("auth published its screens beside handlers that answer a refusal with a 422")
+	}
+	for _, gone := range []string{
+		filepath.Join("resources", "views"),
+		filepath.Join("app", "Http", "Controllers", "Auth", "page.go"),
+	} {
+		if _, err := os.Stat(filepath.Join(root, gone)); err == nil {
+			t.Errorf("%s was written before the project was refused, so the refusal left a tree behind", gone)
+		}
+	}
+}

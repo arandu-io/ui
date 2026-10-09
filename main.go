@@ -210,6 +210,12 @@ func publishAuth(args []string) error {
 	if err := checkAruFloor(root); err != nil {
 		return err
 	}
+	// The same question about the flow already in the project: handlers that
+	// answer a rejected form themselves cannot keep running beside the layout
+	// and page.go this run replaces. See checkFlowAnswersByRedirect.
+	if err := checkFlowAnswersByRedirect(root, files, *force); err != nil {
+		return err
+	}
 
 	fmt.Printf("publishing the sign-in screens into %s\n\n", modulePath)
 	if err := write(root, files, *force, os.Stdout); err != nil {
