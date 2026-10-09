@@ -184,7 +184,7 @@ the value the session cookie and the kernel's flash follow, and the pending
 two-factor cookie takes it. `TestTheWiringPassesTheOneSecureDecision` holds the
 printed argument and `TestThePendingCookieCarriesTheSecureNewWasGiven` reads the
 cookie off a running module. The compile and run gates pin framework v0.53.0 and
-hesape v0.50.2.
+hesape v0.50.3, the versions skeleton v0.32.0 requires.
 
 | gate | what it refuses |
 | --- | --- |

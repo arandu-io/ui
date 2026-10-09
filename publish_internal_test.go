@@ -961,7 +961,7 @@ func authFile(t *testing.T, name string) string {
 const (
 	publishedFramework = "v0.53.0"
 	publishedKyse      = "v0.30.0"
-	publishedHesape    = "v0.50.2"
+	publishedHesape    = "v0.50.3"
 )
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
