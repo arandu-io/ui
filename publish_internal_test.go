@@ -954,11 +954,14 @@ func authFile(t *testing.T, name string) string {
 // compiles the working tree, and the working tree is the one framework nobody
 // receives.
 //
-// These three are what the skeleton pins, so they are what a project starts life
-// with. Bump them together with arandu/go.mod --
-// TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets says so when
-// they drift apart.
+// The three modules are what publishedSkeleton requires, so they are what a
+// project created from that release starts life with. Moving to a new skeleton
+// is the line that names it and the three below it, in one change --
+// TestThePinnedVersionsAreTheOnesTheNamedSkeletonRequires says so when they
+// drift apart, and TestTheNamedSkeletonIsTheOneANewProjectGets says when a newer
+// skeleton has been released.
 const (
+	publishedSkeleton  = "v0.34.0"
 	publishedFramework = "v0.55.0"
 	publishedKyse      = "v0.32.0"
 	publishedHesape    = "v0.52.0"
@@ -1916,20 +1919,27 @@ func goDirective(t *testing.T) string {
 	return ""
 }
 
-// TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets keeps the gate
-// from going quietly out of date.
+// TestThePinnedVersionsAreTheOnesTheNamedSkeletonRequires keeps the gate from
+// going quietly out of date, and gives the same answer on every day it is run.
 //
 // A pin left behind still compiles, and it stops answering the question it was
-// written for: what a project gets today. The skeleton's go.mod is what a new
-// project starts with, so it is the answer, and this is the one check here that
-// may skip -- the pins are still exercised by the gate above when the skeleton is
-// not beside this module. CI resolves the latest published skeleton instead of
-// skipping, because the isolated runner is exactly where this drift used to
-// pass unnoticed.
-func TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets(t *testing.T) {
-	body, err := currentSkeletonGoMod()
+// written for: what a project gets. The skeleton's go.mod is what a new project
+// starts with, so the release publishedSkeleton names is the answer, downloaded
+// at that exact version. It is never resolved as latest, and the checkout beside
+// this module is not read either: a tag of this module is executed as proof long
+// after it was cut, and a check that read the newest skeleton would fail every
+// earlier tag the day the framework moved, while the files those tags publish
+// had not changed. Whether the named release is still the newest is the question
+// of TestTheNamedSkeletonIsTheOneANewProjectGets.
+//
+// It skips when the release is neither in the module cache nor reachable. CI
+// fails instead of skipping, because the isolated runner is exactly where this
+// drift used to pass unnoticed.
+func TestThePinnedVersionsAreTheOnesTheNamedSkeletonRequires(t *testing.T) {
+	body, err := skeletonGoMod(publishedSkeleton)
 	if err != nil {
-		message := fmt.Sprintf("the current skeleton go.mod is unavailable, so nothing here says whether the pinned versions are current: %v", err)
+		message := fmt.Sprintf("the go.mod of skeleton %s is unavailable, so nothing here says whether the pinned versions are the ones it requires: %v",
+			publishedSkeleton, err)
 		if os.Getenv("CI") != "" {
 			t.Fatal(message)
 		}
@@ -1943,54 +1953,89 @@ func TestTheVersionsThisGateCompilesAgainstAreTheOnesANewProjectGets(t *testing.
 	} {
 		got := requiredVersion(string(body), want.module)
 		if got != want.pinned {
-			t.Errorf("a new project gets %s %s and this suite compiles the published files against %s.\n"+
-				"Bump the constant in publish_internal_test.go, and read what the build says about the difference.",
-				want.module, got, want.pinned)
+			t.Errorf("skeleton %s requires %s %s and this suite compiles the published files against %s.\n"+
+				"Move the constants in publish_internal_test.go together, and read what the build says about the difference.",
+				publishedSkeleton, want.module, got, want.pinned)
 		}
 	}
 }
 
-func currentSkeletonGoMod() ([]byte, error) {
-	path := filepath.Join("..", "arandu", "go.mod")
-	body, err := os.ReadFile(path)
-	if err == nil {
-		return body, nil
+// TestTheNamedSkeletonIsTheOneANewProjectGets says when a skeleton newer than
+// publishedSkeleton has been released, so the pins move with it.
+//
+// It is the one check here whose answer changes with the calendar, so it runs
+// only where that is the question: this repository's own CI on a branch or a
+// pull request, which is GITHUB_REPOSITORY arandu-io/ui with a GITHUB_REF that
+// is not a tag. A tag of this module checked out and tested anywhere else skips
+// it, and that is the point: what the tag publishes was compiled against the
+// skeleton it names, and a release cut after it does not change that. To ask
+// from a workstation:
+//
+//	GITHUB_REPOSITORY=arandu-io/ui go test -run TestTheNamedSkeletonIsTheOneANewProjectGets .
+func TestTheNamedSkeletonIsTheOneANewProjectGets(t *testing.T) {
+	if os.Getenv("GITHUB_REPOSITORY") != "arandu-io/ui" || strings.HasPrefix(os.Getenv("GITHUB_REF"), "refs/tags/") {
+		t.Skip("not the head of arandu-io/ui: whether a newer skeleton exists is asked of the branch, never of a tag")
 	}
-	if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read sibling skeleton: %w", err)
+	latest, err := downloadSkeleton("latest")
+	if err != nil {
+		t.Fatalf("the latest published skeleton is unavailable, so nothing here says whether %s is still the one a new project gets: %v",
+			publishedSkeleton, err)
 	}
+	if latest.Version != publishedSkeleton {
+		t.Errorf("a new project gets skeleton %s and this suite names %s.\n"+
+			"Move publishedSkeleton in publish_internal_test.go, and the three versions it requires with it.",
+			latest.Version, publishedSkeleton)
+	}
+}
 
+// skeletonGoMod returns the go.mod of one tagged release of the skeleton.
+func skeletonGoMod(version string) ([]byte, error) {
+	skeleton, err := downloadSkeleton(version)
+	if err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(skeleton.GoMod)
+	if err != nil {
+		return nil, fmt.Errorf("read the go.mod of skeleton %s: %w", version, err)
+	}
+	return body, nil
+}
+
+// skeletonModule is what `go mod download -json` reports for one release of the
+// skeleton: the version it resolved to and where it left that release's go.mod.
+type skeletonModule struct {
+	Version string
+	GoMod   string
+	Error   string
+}
+
+// downloadSkeleton fetches one release of the skeleton through the module proxy,
+// or from the module cache when it is already there. version is a tag or
+// "latest".
+func downloadSkeleton(version string) (skeletonModule, error) {
 	tool, err := exec.LookPath("go")
 	if err != nil {
-		return nil, fmt.Errorf("find go: %w", err)
+		return skeletonModule{}, fmt.Errorf("find go: %w", err)
 	}
 
-	download := exec.Command(tool, "mod", "download", "-json", "github.com/arandu-io/arandu@latest")
+	download := exec.Command(tool, "mod", "download", "-json", "github.com/arandu-io/arandu@"+version)
 	download.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local")
 	out, err := download.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("download current skeleton: %w: %s", err, out)
+		return skeletonModule{}, fmt.Errorf("download skeleton %s: %w: %s", version, err, out)
 	}
 
-	var module struct {
-		GoMod string
-		Error string
-	}
+	var module skeletonModule
 	if err := json.Unmarshal(out, &module); err != nil {
-		return nil, fmt.Errorf("decode current skeleton metadata: %w", err)
+		return skeletonModule{}, fmt.Errorf("decode skeleton %s metadata: %w", version, err)
 	}
 	if module.Error != "" {
-		return nil, fmt.Errorf("download current skeleton: %s", module.Error)
+		return skeletonModule{}, fmt.Errorf("download skeleton %s: %s", version, module.Error)
 	}
-	if module.GoMod == "" {
-		return nil, fmt.Errorf("download current skeleton: go.mod path is empty")
+	if module.Version == "" || module.GoMod == "" {
+		return skeletonModule{}, fmt.Errorf("download skeleton %s: the version or the go.mod path is empty", version)
 	}
-
-	body, err = os.ReadFile(module.GoMod)
-	if err != nil {
-		return nil, fmt.Errorf("read downloaded skeleton go.mod: %w", err)
-	}
-	return body, nil
+	return module, nil
 }
 
 // requiredVersion reads the version a go.mod requires for one module path.

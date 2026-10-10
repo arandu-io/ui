@@ -128,7 +128,7 @@ a fixture under `testdata/retired/`, taken from the golden file at the tag.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 106 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 107 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 1 file retired, removed by `--force` while it is still the kit's bytes, and 3 fixtures, one per version published | `sed -n '/^var retired/,/^}/p' publish.go \| grep -c 'Path:'` and `ls testdata/retired \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 10 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
@@ -200,6 +200,17 @@ hesape v0.52.0 and kyse v0.32.0, the versions skeleton v0.34.0 requires.
 | `TestTheQRCodeIsAnImageAndNoPublishedGoImportsHTMLTemplate` | published Go naming `html/template` or `template.HTML`, a `{!! !!}` that is not a component, or a setup screen not drawing the QR code as an image |
 | `TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt` | a run that keeps a file calling what `page.go` dropped |
 | `TestForceRemovesOnlyWhatThisKitPublishedAndNoLongerDoes` | `--force` keeping a retired file the kit wrote, or removing an edited one or one it never wrote |
+
+**The pins answer the same on every day.** `publishedSkeleton` names the
+skeleton release the pins come from, and
+`TestThePinnedVersionsAreTheOnesTheNamedSkeletonRequires` downloads that exact
+release and compares its go.mod, never `@latest`: a tag of this module is run as
+proof long after it is cut, and a check against the newest skeleton failed every
+earlier tag the day the framework moved. Whether a newer skeleton exists is
+`TestTheNamedSkeletonIsTheOneANewProjectGets`, which runs only in this
+repository's CI on a branch or a pull request (`GITHUB_REPOSITORY=arandu-io/ui`,
+a ref that is not a tag) and skips everywhere else. Moving to a new skeleton is
+the four constants in one change.
 
 **The directory says which, and the source has to agree.** `layouts/` yields
 sections, `partials/` and `mail/` carry no layout, everything else under
