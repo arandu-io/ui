@@ -644,6 +644,111 @@ func TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt(t *testing.T)
 	}
 }
 
+// TestALandingBlockThatNamesWhatHomeControllerDroppedIsNotCarriedIntoIt.
+//
+// HomeController.go is replaced on every run and its custom block is carried
+// into the new file, with or without --force. The block an earlier release
+// published titled the page with c.appName, a field the new controller no
+// longer has, so carrying it over leaves a project that does not build. Every
+// run that would write that file is refused before anything is written; a
+// block that reads the name off the request, and the skeleton's own
+// controller, which has no block, are let through.
+func TestALandingBlockThatNamesWhatHomeControllerDroppedIsNotCarriedIntoIt(t *testing.T) {
+	home := filepath.Join("app", "Http", "Controllers", "HomeController.go")
+	block := func(body string) string {
+		return "package controllers\n\nfunc (c *HomeController) Index(ctx *hhttp.Context) error {\n" +
+			"\t// arandu:begin custom\n" + body + "\t// arandu:end custom\n}\n"
+	}
+	previous := block("\treturn ctx.View(\"welcome\", authui.AuthPage{Page: authui.Chrome(authui.ChromeProps{\n" +
+		"\t\tAppName: c.appName,\n\t\tTitle:   c.appName,\n\t})})\n")
+	edited := block("\tappName := hhttp.AppNameFrom(ctx.Ctx())\n" +
+		"\treturn ctx.View(\"welcome\", authui.AuthPage{Page: authui.Chrome(authui.ChromeProps{\n" +
+		"\t\tAppName: appName,\n\t\tTitle:   appName,\n\t})})\n")
+	// The skeleton's controller names the field too, outside any block: the
+	// run replaces all of it and carries nothing.
+	skeleton := "package controllers\n\nfunc (c *HomeController) Index(ctx *hhttp.Context) error {\n" +
+		"\tpage := view.New(ctx, c.appName)\n\treturn ctx.View(\"home\", page)\n}\n"
+
+	files, err := GenerateAuth(Module{ModulePath: "example.test/shop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current string
+	for _, f := range files {
+		if f.Path == home {
+			current = string(f.Content)
+		}
+	}
+	if current == "" {
+		t.Fatalf("the kit no longer publishes %s, so this test names the wrong file", home)
+	}
+
+	for _, c := range []struct {
+		name     string
+		existing string
+		files    []File
+		refused  bool
+	}{
+		{"a project with no landing controller yet", "", files, false},
+		{"the skeleton's controller, which has no block", skeleton, files, false},
+		{"the controller this release publishes", current, files, false},
+		{"a block that reads the name off the request", edited, files, false},
+		{"the previous block, carried by a plain republish", previous, files, true},
+		{"the previous block, carried by --views", previous, screensOnly(files), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := project(t, aruFloor)
+			if c.existing != "" {
+				path := filepath.Join(root, home)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(c.existing), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			err := checkCarriedBlockNamesOnlyWhatHomeControllerDeclares(root, c.files)
+			switch {
+			case c.refused && err == nil:
+				t.Fatal("the new HomeController was let in carrying a block that names what it no longer declares")
+			case !c.refused && err != nil:
+				t.Fatalf("refused a project the landing page fits: %v", err)
+			case err != nil:
+				for _, want := range []string{home, "c.appName", "hhttp.AppNameFrom(ctx.Ctx())",
+					"controllers.NewHomeController", "Nothing has been written"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not mention %q:\n%v", want, err)
+					}
+				}
+			}
+		})
+	}
+
+	// And through the command, --force included: the refusal comes before the
+	// first byte.
+	for _, args := range [][]string{nil, {"--force"}} {
+		root := project(t, aruFloor)
+		path := filepath.Join(root, home)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(previous), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(root)
+		if err := publishAuth(args); err == nil {
+			t.Fatalf("auth %v carried a block naming c.appName into the new HomeController", args)
+		}
+		if got, err := os.ReadFile(path); err != nil || string(got) != previous {
+			t.Errorf("auth %v rewrote %s before the project was refused", args, home)
+		}
+		if _, err := os.Stat(filepath.Join(root, "resources", "views")); err == nil {
+			t.Errorf("auth %v wrote the views before the project was refused, so the refusal left a tree behind", args)
+		}
+	}
+}
+
 // TestEveryRetiredDigestIsAVersionThisKitPublished.
 //
 // The digests are the whole of what lets --force delete a file, so each has to

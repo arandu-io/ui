@@ -57,7 +57,8 @@ views plus `page.go`, `render.go`, `HomeController` and the two under
 handlers still answer a rejected form with a 422 is refused, with nothing
 written, until it takes the flow along with `auth --force`; one whose setup
 screen still calls `TrustedQRCode` is refused until `auth --views --force`
-replaces it. `--force` also removes what an earlier release published and this
+replaces it; one whose landing page block still names `c.appName` is refused
+until that block reads the name with `hhttp.AppNameFrom(ctx.Ctx())`. `--force` also removes what an earlier release published and this
 one does not — the sign-in partial under `resources/views/partials/` — when it
 is still byte for byte the kit's, and names what it removed.
 

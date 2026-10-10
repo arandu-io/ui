@@ -398,6 +398,61 @@ func checkKeptFilesNameOnlyWhatPageDeclares(root string, files []File, force boo
 		strings.Join(gonePageNames, ", "), strings.Join(stale, "\n    "))
 }
 
+// goneHomeControllerNames are names the custom block of an earlier release's
+// HomeController.go used and the HomeController this kit publishes no longer
+// declares.
+//
+// c.appName was the field the constructor filled with the application name.
+// The landing page reads that name off the request now, where the framework
+// puts it, so the field and the constructor parameter are gone.
+var goneHomeControllerNames = []string{"c.appName"}
+
+// checkCarriedBlockNamesOnlyWhatHomeControllerDeclares refuses to publish over
+// a HomeController.go whose custom block names what the new file no longer
+// declares.
+//
+// HomeController.go is in replaced, so every run writes it, and publish.Merge
+// carries the custom block of the file on disk into it, with or without
+// --force. The block of an earlier release named c.appName, and carried into
+// the new file it is a project that stops building on a command whose promise
+// is that it can be run again. What decides it is the file this run would
+// write, merged exactly as write merges it; nothing is written when it refuses.
+func checkCarriedBlockNamesOnlyWhatHomeControllerDeclares(root string, files []File) error {
+	path := filepath.Join("app", "Http", "Controllers", "HomeController.go")
+	for _, f := range files {
+		if f.Path != path {
+			continue
+		}
+		existing, err := os.ReadFile(filepath.Join(root, f.Path))
+		if err != nil {
+			return nil
+		}
+		carried := publish.Merge(f.Path, existing, f.Content)
+		var stale []string
+		for _, name := range goneHomeControllerNames {
+			if bytes.Contains(carried, []byte(name)) {
+				stale = append(stale, name)
+			}
+		}
+		if len(stale) == 0 {
+			return nil
+		}
+		return fmt.Errorf("the custom block of %s names %s, which the HomeController this kit publishes no "+
+			"longer declares.\n\n"+
+			"The landing page reads the application name off the request now -- the framework puts APP_NAME\n"+
+			"there before every route -- and its constructor no longer takes it. Every run replaces\n"+
+			"HomeController.go and carries that block into the new file, with or without --force, so the block\n"+
+			"as it stands would stop the project building.\n\n"+
+			"In the block, read the name off the request:\n\n"+
+			"    appName := hhttp.AppNameFrom(ctx.Ctx())\n\n"+
+			"and write appName where it says c.appName, then run the command again. bootstrap/app.go passes\n"+
+			"cfg.App.Name to controllers.NewHomeController, and with --force to authui.New as well: the wiring\n"+
+			"printed at the end shows both calls without it. Nothing has been written.",
+			path, strings.Join(stale, ", "))
+	}
+	return nil
+}
+
 // retiredFile is a file an earlier release of this kit published and this one
 // does not.
 type retiredFile struct {

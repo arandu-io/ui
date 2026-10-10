@@ -99,7 +99,17 @@ today `TrustedQRCode`, which the setup screen of v0.20.0 and earlier calls.
 `page.go` is replaced on every run, so beside it that screen would stop the
 project building. The message names the files and `auth --views --force`.
 
-`--dry-run` is exempt from all three, and the split is the point: it is asked what
+And it refuses a landing page whose custom block names what the new
+`HomeController.go` no longer declares.
+`checkCarriedBlockNamesOnlyWhatHomeControllerDeclares` merges the file on disk
+into the one this run writes, exactly as `write` does, and refuses when the
+result names a name in `goneHomeControllerNames` — today `c.appName`, which the
+block of v0.22.1 and earlier titles the page with. The file is replaced on every
+run and its block is carried with or without `--force`, so no flag gets past
+it: the message says to read `hhttp.AppNameFrom(ctx.Ctx())` in the block and
+to drop `cfg.App.Name` from the two calls in `bootstrap/app.go`.
+
+`--dry-run` is exempt from all four, and the split is the point: it is asked what
 would be written and answers that, which is why the counts below still measure
 against `../arandu`; the skeleton now declares the same `v0.35.0` floor this kit
 needs.
@@ -128,7 +138,7 @@ a fixture under `testdata/retired/`, taken from the golden file at the tag.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 108 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 109 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 1 file retired, removed by `--force` while it is still the kit's bytes, and 3 fixtures, one per version published | `sed -n '/^var retired/,/^}/p' publish.go \| grep -c 'Path:'` and `ls testdata/retired \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 10 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
@@ -200,6 +210,7 @@ hesape v0.54.0 and kyse v0.34.1, the versions skeleton v0.34.3 requires.
 | `TestTheChecklistAndTheHandlerAreOnePasswordPolicy` | a password box that chooses a password without `Policy: .PasswordPolicy`, a screen whose handler does not fill it, or a handler that checks a new password against anything but `passwordPolicy` |
 | `TestTheQRCodeIsAnImageAndNoPublishedGoImportsHTMLTemplate` | published Go naming `html/template` or `template.HTML`, a `{!! !!}` that is not a component, or a setup screen not drawing the QR code as an image |
 | `TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt` | a run that keeps a file calling what `page.go` dropped |
+| `TestALandingBlockThatNamesWhatHomeControllerDroppedIsNotCarriedIntoIt` | a run that carries a custom block naming what the new `HomeController.go` dropped |
 | `TestForceRemovesOnlyWhatThisKitPublishedAndNoLongerDoes` | `--force` keeping a retired file the kit wrote, or removing an edited one or one it never wrote |
 
 **The pins answer the same on every day.** `publishedSkeleton` names the

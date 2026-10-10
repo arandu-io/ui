@@ -1,6 +1,6 @@
 ---
 name: ui-publish-command
-description: The command that writes the Arandu starter kit into a project, and what a republish refreshes versus leaves alone. Use when the request is to "add a file to the kit", "publish another view", "change what --force does", "why was my file not overwritten", "my edit was lost", "the custom block did not survive", "add a flag", "change the wiring instructions", or when a pull request touches publish.go, main.go or GenerateAuth. Covers the 29 files it writes, the 5 replaced with no flag, the 22 that --views refreshes, the three things it refuses to publish into, the file --force removes because the kit no longer publishes it, how merge carries a custom block over in two comment syntaxes, and why nothing is added to the caller's go.mod.
+description: The command that writes the Arandu starter kit into a project, and what a republish refreshes versus leaves alone. Use when the request is to "add a file to the kit", "publish another view", "change what --force does", "why was my file not overwritten", "my edit was lost", "the custom block did not survive", "add a flag", "change the wiring instructions", or when a pull request touches publish.go, main.go or GenerateAuth. Covers the 29 files it writes, the 5 replaced with no flag, the 22 that --views refreshes, the four things it refuses to publish into, the file --force removes because the kit no longer publishes it, how merge carries a custom block over in two comment syntaxes, and why nothing is added to the caller's go.mod.
 license: MIT
 ---
 
@@ -177,7 +177,7 @@ because both have shipped wrong:
 
 ## What it refuses to publish into
 
-Three questions are asked after `--dry-run` and before the first byte is written,
+Four questions are asked after `--dry-run` and before the first byte is written,
 so a refusal never leaves a half-published tree:
 
 - **The floor.** `checkAruFloor` reads the `[arandu] aru` line of the project's
@@ -196,10 +196,19 @@ so a refusal never leaves a half-published tree:
   and earlier calls to draw the QR code as trusted markup. `page.go` is
   replaced on every run and no longer declares it, so the project would stop
   building. The message names the files and `auth --views --force`.
+- **The landing page.** `checkCarriedBlockNamesOnlyWhatHomeControllerDeclares`
+  merges the `HomeController.go` on disk into the one this run writes, with
+  `publish.Merge` exactly as `write` does, and refuses when the result still
+  names something in `goneHomeControllerNames` — today `c.appName`, which the
+  custom block of v0.22.1 and earlier titles the page with. The file is
+  replaced on every run and its block is carried with or without `--force`, so
+  no flag gets past it; the message says what to write in the block instead and
+  which two calls in `bootstrap/app.go` drop `cfg.App.Name`.
 
 `TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens`,
-`TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals` and
-`TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt` in
+`TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals`,
+`TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt` and
+`TestALandingBlockThatNamesWhatHomeControllerDroppedIsNotCarriedIntoIt` in
 `publish_write_internal_test.go` drive the command itself and look at the disk.
 
 ## What --force removes

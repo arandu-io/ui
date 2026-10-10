@@ -222,6 +222,13 @@ func publishAuth(args []string) error {
 	if err := checkKeptFilesNameOnlyWhatPageDeclares(root, files, *force); err != nil {
 		return err
 	}
+	// And about the landing page: HomeController.go is replaced on every run
+	// with the custom block of the one on disk carried into it, so that block
+	// cannot go on naming what the new file dropped. See
+	// checkCarriedBlockNamesOnlyWhatHomeControllerDeclares.
+	if err := checkCarriedBlockNamesOnlyWhatHomeControllerDeclares(root, files); err != nil {
+		return err
+	}
 
 	fmt.Printf("publishing the sign-in screens into %s\n\n", modulePath)
 	if err := write(root, files, *force, os.Stdout); err != nil {
