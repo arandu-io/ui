@@ -69,7 +69,6 @@ type Module struct {
 	mailer   *mail.Mailer
 	signer   *encryption.Signer
 	flash    *session.Flash
-	appName  string
 	tenant   TenantResolver
 	secure   bool
 }
@@ -84,7 +83,13 @@ type Module struct {
 // short pending cookie of a two-factor sign-in, and the flash it builds for a
 // router that was wired with none. Pass cfg.Framework.Session.Secure, the one
 // decision the session cookie and the kernel's flash already follow.
-func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
+//
+// There is no application name here. The framework puts APP_NAME on every
+// request, and the module reads it there -- hhttp.AppNameFrom -- for the brand
+// on each screen, the signature of each message and the issuer an
+// authenticator app files a second factor under. A name passed in as well
+// would be a second answer to the same question.
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
 	}
@@ -92,8 +97,8 @@ func New(users Users, factors Factors, codes onetime.CodeStore, sessions *securi
 		users: users, factors: factors, codes: codes, sessions: sessions,
 		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
 		// Replaced in Routes by the router's flash when it carries one.
-		flash:   session.NewFlash(appKey, secure),
-		appName: appName, tenant: tenant, secure: secure,
+		flash:  session.NewFlash(appKey, secure),
+		tenant: tenant, secure: secure,
 	}
 }
 

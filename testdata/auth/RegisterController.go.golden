@@ -283,7 +283,7 @@ func (m *Module) sendVerification(r *http.Request, u models.User) error {
 		return err
 	}
 	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
-		Name: firstWord(u.Name), Code: code, BrandName: m.appName,
+		Name: firstWord(u.Name), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
 	})
 }
 

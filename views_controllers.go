@@ -155,7 +155,6 @@ type Module struct {
 	mailer   *mail.Mailer
 	signer   *encryption.Signer
 	flash    *session.Flash
-	appName  string
 	tenant   TenantResolver
 	secure   bool
 }
@@ -170,7 +169,13 @@ type Module struct {
 // short pending cookie of a two-factor sign-in, and the flash it builds for a
 // router that was wired with none. Pass cfg.Framework.Session.Secure, the one
 // decision the session cookie and the kernel's flash already follow.
-func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, appName string, tenant TenantResolver, secure bool) *Module {
+//
+// There is no application name here. The framework puts APP_NAME on every
+// request, and the module reads it there -- hhttp.AppNameFrom -- for the brand
+// on each screen, the signature of each message and the issuer an
+// authenticator app files a second factor under. A name passed in as well
+// would be a second answer to the same question.
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
 	}
@@ -179,7 +184,7 @@ func New(users Users, factors Factors, codes onetime.CodeStore, sessions *securi
 		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
 		// Replaced in Routes by the router's flash when it carries one.
 		flash: session.NewFlash(appKey, secure),
-		appName: appName, tenant: tenant, secure: secure,
+		tenant: tenant, secure: secure,
 	}
 }
 
@@ -509,19 +514,22 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 // authHomeControllerTemplate is the HomeController the kit publishes, the same
 // file the starter kit generates.
 //
-// The constructor takes the application name, the application-owned name reader
-// and the tenant, and nothing else. That is the signature the skeleton declares,
-// and it has to be: this file is in `replaced`, so a publish overwrites it with
-// no flag at all, and a constructor here that the project's bootstrap/app.go
-// does not call is a build that breaks on a command whose whole promise is that
-// it can be run again.
+// The constructor takes the application-owned name reader and the tenant, and
+// nothing else. That is the signature the skeleton declares, and it has to be:
+// this file is in `replaced`, so a publish overwrites it with no flag at all,
+// and a constructor here that the project's bootstrap/app.go does not call is a
+// build that breaks on a command whose whole promise is that it can be run
+// again.
 //
-// There is no session store and no CSRF issuer among the parameters. The
-// skeleton mounts GET / behind middleware.LoadSubject, so who is signed in is
-// on the request, and CSRFProtect put the token there too; the page reads both
-// off the request it is answering. The kit took both collaborators once, and
+// There is no session store, no CSRF issuer and no application name among the
+// parameters. The skeleton mounts GET / behind middleware.LoadSubject, so who is
+// signed in is on the request, CSRFProtect put the token there too, and the
+// framework puts APP_NAME there before every route; the page reads all three
+// off the request it is answering. The kit took the two collaborators once, and
 // publishing it into a project whose bootstrap/app.go called the three-argument
-// constructor left that project unable to compile.
+// constructor left that project unable to compile. The name is read inside the
+// custom block, never above it: a variable declared above that an older block
+// carried over does not use is a build that breaks.
 //
 // TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes keeps the line
 // the command prints in step with this constructor, and
@@ -543,11 +551,6 @@ import (
 type HomeController struct {
 	Controller
 
-	// appName is what the page is titled. It arrives through the constructor
-	// rather than through a global read: a controller that reads the
-	// environment is a controller no test can pin.
-	appName string
-
 	// people and tenant are how the id in a session becomes a name to greet.
 	// A session carries an id and not a name on purpose -- a name kept in one
 	// stays wrong after somebody changes theirs -- so the header costs one
@@ -563,11 +566,12 @@ type HomeController struct {
 // NewHomeController returns the controller. bootstrap/app.go builds it and hands
 // it to the routes.
 //
-// There is no session store and no CSRF issuer here: the route puts who is
-// signed in on the request, and the middleware that protects forms puts the
-// token there, so the page reads both off the request it is answering.
-func NewHomeController(appName string, people authui.UserNames, tenant string) *HomeController {
-	return &HomeController{appName: appName, people: people, tenant: tenant}
+// There is no session store, no CSRF issuer and no application name here: the
+// route puts who is signed in on the request, the middleware that protects
+// forms puts the token there, and the framework puts APP_NAME there, so the
+// page reads all three off the request it is answering.
+func NewHomeController(people authui.UserNames, tenant string) *HomeController {
+	return &HomeController{people: people, tenant: tenant}
 }
 
 // Compile-time proof that this controller answers GET / the way Resource and the
@@ -604,6 +608,11 @@ func (c *HomeController) Index(ctx *hhttp.Context) error {
 	// this page and the thirteen beside it answer the same way when the lookup fails.
 	name := authui.SignedInName(ctx.Ctx(), c.people, c.tenant, subject.ID)
 
+	// The application's name, which titles this page as well as branding it.
+	// The framework puts APP_NAME on every request, so it is read here, off the
+	// request, and the constructor does not take it.
+	appName := hhttp.AppNameFrom(ctx.Ctx())
+
 	// Which of the two published screens the front page is.
 	//
 	// It used to be "home" for everybody, and home.kyse.go is a card headed
@@ -627,8 +636,8 @@ func (c *HomeController) Index(ctx *hhttp.Context) error {
 		// somebody can forget: this one forgot the name, the register link and
 		// the reset, on the screen everybody sees first.
 		Page: authui.Chrome(authui.ChromeProps{
-			AppName:       c.appName,
-			Title:         c.appName,
+			AppName:       appName,
+			Title:         appName,
 			Path:          ctx.Request.URL.Path,
 			Token:         token,
 			Authenticated: signedIn,

@@ -628,7 +628,7 @@ func urlFields(t *testing.T, page string) []string {
 // The verification mail carried the literal word "Arandu" in its header, so
 // every project that ran this command sent its first message to its own users
 // signed with the name of the framework. The brand is a field, filled from the
-// configuration the module was built with, and the mail views name that field --
+// application name on the request, and the mail views name that field --
 // a word typed into published markup is the kit's word going out on somebody
 // else's mail.
 func TestNothingTheKitPublishesIsBrandedWithItsOwnName(t *testing.T) {
@@ -651,10 +651,10 @@ func TestNothingTheKitPublishesIsBrandedWithItsOwnName(t *testing.T) {
 			t.Errorf("%s carries no BrandName, so the view has nothing to draw but a literal", mailable)
 		}
 	}
-	if body := bodyOf(t, authFile(t, "RegisterController.go"), "sendVerification"); !strings.Contains(body, "BrandName: m.appName") {
+	if body := bodyOf(t, authFile(t, "RegisterController.go"), "sendVerification"); !strings.Contains(body, "BrandName: hhttp.AppNameFrom(r.Context())") {
 		t.Error("the verification mail goes out without the application's name: the field exists and nobody fills it")
 	}
-	if body := bodyOf(t, authFile(t, "PasswordController.go"), "sendPasswordReset"); !strings.Contains(body, "BrandName: m.appName") {
+	if body := bodyOf(t, authFile(t, "PasswordController.go"), "sendPasswordReset"); !strings.Contains(body, "BrandName: hhttp.AppNameFrom(r.Context())") {
 		t.Error("the reset mail goes out without the application's name: the field exists and nobody fills it")
 	}
 }
@@ -1552,7 +1552,7 @@ func main() {
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	f := &factors{}
 	module := authui.New(users{}, f, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+		appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 	app := middleware.Flash(session.NewFlash(appKey, false))(router)
@@ -1682,7 +1682,7 @@ func main() {
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	module := authui.New(users{}, factors{}, nil, sessions, security.NewCSRF(appKey, time.Hour), nil,
-		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+		appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 
@@ -1791,7 +1791,7 @@ func main() {
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	csrf := session.NewCSRF(appKey, time.Hour)
 	module := authui.New(users{}, nil, nil, sessions, csrf, nil,
-		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+		appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 	app := middleware.Flash(session.NewFlash(appKey, false))(
@@ -1933,7 +1933,7 @@ func main() {
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	module := authui.New(users{}, nil, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-		appKey, "Probe", authui.FixedTenant("tenant-a"), false)
+		appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 	app := middleware.Flash(session.NewFlash(appKey, false))(router)
@@ -2070,7 +2070,7 @@ func main() {
 		sessions := security.NewSessionStore(moduleKey, time.Hour, false,
 			security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 		return authui.New(users{}, nil, nil, sessions, session.NewCSRF(moduleKey, time.Hour), nil,
-			moduleKey, "Probe", authui.FixedTenant("tenant-a"), secure)
+			moduleKey, authui.FixedTenant("tenant-a"), secure)
 	}
 
 	post := func(app http.Handler, path string, form url.Values) *httptest.ResponseRecorder {
@@ -2307,7 +2307,7 @@ func main() {
 	flash := session.NewFlash(appKey, false)
 	router := fhttp.NewRouter().WithFlash(flash)
 	authui.New(service, factors{}, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-		appKey, "Probe", authui.FixedTenant("tenant-a"), false).Routes(router)
+		appKey, authui.FixedTenant("tenant-a"), false).Routes(router)
 	app := middleware.Flash(flash)(router)
 
 	send := func(r *http.Request, cookies []*http.Cookie) *httptest.ResponseRecorder {
@@ -2477,3 +2477,257 @@ func TestTheChecklistAndTheHandlerAreOnePasswordPolicy(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryPublishedPageDrawsTheApplicationNameTheRequestCarries runs the
+// published module and landing page twice: once with an application name on
+// the request, put there with hhttp.WithAppName as the framework puts
+// APP_NAME on every request, and once with none.
+//
+// The name is one no screen is titled with, so a screen that drew its title
+// where the brand goes cannot pass for one that drew the brand. The landing
+// page is titled with the name on purpose, and is asked for both. The two
+// messages and the issuer an authenticator app files a second factor under are
+// read the same way. With no name on the request every one of them is empty:
+// nothing published keeps a name of its own, or takes one from a constructor.
+func TestEveryPublishedPageDrawsTheApplicationNameTheRequestCarries(t *testing.T) {
+	const brand = "Brandproof Ltd"
+	out := runAgainstPublishedKit(t, appNameProbe)
+
+	want := []string{
+		"screen welcome", "screen home", "screen auth.login", "screen auth.register",
+		"screen auth.passwords.email", "screen auth.passwords.reset", "screen auth.passwords.confirm",
+		"screen auth.verify", "screen auth.two-factor.challenge", "screen auth.two-factor.recovery",
+		"screen auth.two-factor.setup", "screen auth.two-factor.recovery-codes",
+		"mail mail.verify-email", "mail mail.verify-email-text",
+		"mail mail.password-reset", "mail mail.password-reset-text",
+		"issuer two-factor",
+	}
+	seen := map[string]map[string]bool{"named": {}, "bare": {}}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		// The log of the setup the probe stops shares the output; the probe's
+		// own lines are the ones that open with the run.
+		if !strings.HasPrefix(line, "named|") && !strings.HasPrefix(line, "bare|") {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) != 5 {
+			t.Errorf("the probe printed a line it was not written to print: %q", line)
+			continue
+		}
+		run, kind, what, title, got := parts[0], parts[1], parts[2], parts[3], parts[4]
+		if kind == "miss" {
+			t.Errorf("%s: %s answered %s instead of drawing a screen", run, what, title)
+			continue
+		}
+		seen[run][kind+" "+what] = true
+
+		landing := kind == "screen" && (what == "welcome" || what == "home")
+		switch run {
+		case "named":
+			if got != brand {
+				t.Errorf("%s %s drew the brand %q with %q on the request: the application name the framework "+
+					"puts there is not what it reads", kind, what, got, brand)
+			}
+			if kind == "screen" && landing && title != brand {
+				t.Errorf("the landing page %s is titled %q, and its title is the application name on the request, %q",
+					what, title, brand)
+			}
+			if kind == "screen" && !landing && (title == "" || title == brand) {
+				t.Errorf("%s is titled %q: a screen titled with the name cannot tell its brand from its title", what, title)
+			}
+		case "bare":
+			if got != "" {
+				t.Errorf("%s %s drew the brand %q with no name on the request: it keeps a name of its own", kind, what, got)
+			}
+			if landing && title != "" {
+				t.Errorf("the landing page %s is titled %q with no name on the request", what, title)
+			}
+		}
+	}
+	for run, lines := range seen {
+		for _, w := range want {
+			if !lines[w] {
+				t.Errorf("%s: the probe never reached %s, so nothing here says what it draws; it printed:\n%s", run, w, out)
+			}
+		}
+	}
+}
+
+// appNameProbe draws every screen the kit publishes, sends both messages and
+// starts a second factor, printing the title and the name each one was handed.
+const appNameProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/arandu-io/framework/http/middleware"
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/mail"
+	"github.com/arandu-io/framework/security"
+	twofactor "github.com/arandu-io/hesape/2fa"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	hhttp "github.com/arandu-io/hesape/http"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	controllers "example.test/project/app/Http/Controllers"
+	authui "example.test/project/app/Http/Controllers/Auth"
+	appmail "example.test/project/app/Mail"
+	models "example.test/project/app/Models"
+)
+
+var run string
+
+var account = models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada Lovelace", Email: "a@example.test", Password: "stored"}
+
+type users struct{ authui.Users }
+
+func (users) PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error) {
+	return map[string]string{"user-a": "Ada Lovelace"}, nil
+}
+func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
+	return account, nil
+}
+func (users) FindForAuthentication(context.Context, string, string) (models.User, error) {
+	return account, nil
+}
+func (users) Lookup(context.Context, string, string) (models.User, error) { return account, nil }
+func (users) ConfirmPassword(context.Context, nativeauth.Subject, string, string) error { return nil }
+
+type factors struct{ authui.Factors }
+
+func (factors) Required(context.Context, string, string) (bool, error) { return true, nil }
+func (factors) Begin(_ context.Context, _ nativeauth.Subject, issuer string) (twofactor.Provisioning, error) {
+	fmt.Printf("%s|issuer|two-factor||%s\n", run, issuer)
+	return twofactor.Provisioning{}, errors.New("the probe stops at the issuer")
+}
+func (factors) RegenerateRecoveryCodes(context.Context, nativeauth.Subject) ([]string, error) {
+	return []string{"one", "two"}, nil
+}
+
+type codes struct{}
+
+func (codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (codes) Consume(context.Context, string, string, string) error  { return nil }
+
+type outbox struct{}
+
+func (outbox) Name() string                             { return "probe" }
+func (outbox) Send(context.Context, mail.Message) error { return nil }
+
+type bodies struct{}
+
+func (bodies) RenderToString(name string, data any) (string, error) {
+	brand := "(not a message of the kit)"
+	switch m := data.(type) {
+	case appmail.VerifyEmail:
+		brand = m.BrandName
+	case appmail.PasswordReset:
+		brand = m.BrandName
+	}
+	fmt.Printf("%s|mail|%s||%s\n", run, name, brand)
+	return "body", nil
+}
+
+func main() {
+	for _, name := range []string{
+		"welcome", "home", "auth.login", "auth.register", "auth.passwords.email", "auth.passwords.reset",
+		"auth.passwords.confirm", "auth.verify", "auth.two-factor.challenge", "auth.two-factor.recovery",
+		"auth.two-factor.setup", "auth.two-factor.recovery-codes",
+	} {
+		view.Register(name, func(w io.Writer, data any) error {
+			page := data.(authui.AuthPage)
+			_, err := fmt.Fprintf(w, "%s|screen|%s|%s|%s", run, name, page.Title, page.AppName)
+			return err
+		})
+	}
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	mailer := mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
+	module := authui.New(users{}, factors{}, codes{}, sessions, session.NewCSRF(appKey, time.Hour), mailer,
+		appKey, authui.FixedTenant("tenant-a"), false)
+	home := controllers.NewHomeController(users{}, "tenant-a")
+
+	router := fhttp.NewRouter().WithRenderer(view.NewRenderer())
+	module.Routes(router)
+	router.Action("GET", "/{$}", home.Index, middleware.LoadSubject(sessions)).Name("home")
+
+	for _, c := range []struct{ run, name string }{{"named", "Brandproof Ltd"}, {"bare", ""}} {
+		run = c.run
+		// What the framework does before every route: the configured name on
+		// the request context, and nothing when none is configured.
+		app := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			router.ServeHTTP(w, r.WithContext(hhttp.WithAppName(r.Context(), c.name)))
+		})
+
+		jar := map[string]*http.Cookie{}
+		send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+			r := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+			r.Header.Set("Accept", "text/html")
+			if form != nil {
+				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
+			for _, cookie := range jar {
+				r.AddCookie(cookie)
+			}
+			w := httptest.NewRecorder()
+			app.ServeHTTP(w, r)
+			for _, cookie := range w.Result().Cookies() {
+				if cookie.MaxAge < 0 {
+					delete(jar, cookie.Name)
+				} else {
+					jar[cookie.Name] = cookie
+				}
+			}
+			return w
+		}
+		draw := func(method, path string, form url.Values) {
+			w := send(method, path, form)
+			if w.Code != http.StatusOK {
+				fmt.Printf("%s|miss|%s %s|%d|\n", run, method, path, w.Code)
+				return
+			}
+			fmt.Println(w.Body.String())
+		}
+
+		for _, path := range []string{"/", "/auth/login", "/auth/register", "/auth/password",
+			"/auth/password/reset", "/auth/verify"} {
+			draw("GET", path, nil)
+		}
+		send("POST", "/auth/verify/resend", url.Values{"email": {account.Email}})
+		send("POST", "/auth/password/email", url.Values{"email": {account.Email}})
+
+		// A password sign-in on an account with a second factor leaves the
+		// pending cookie the two challenge screens ask for.
+		send("POST", "/auth/login", url.Values{"email": {account.Email}, "password": {"a-password-long-enough"}})
+		draw("GET", "/auth/two-factor/challenge", nil)
+		draw("GET", "/auth/two-factor/recovery", nil)
+
+		signedIn := httptest.NewRecorder()
+		if _, err := sessions.Rotate(context.Background(), signedIn, "",
+			security.Subject{ID: "user-a", Tenant: "tenant-a"}, security.Remember(false)); err != nil {
+			panic(err)
+		}
+		jar = map[string]*http.Cookie{}
+		for _, cookie := range signedIn.Result().Cookies() {
+			jar[cookie.Name] = cookie
+		}
+		draw("GET", "/", nil)
+		draw("GET", "/auth/password/confirm", nil)
+		send("POST", "/auth/password/confirm", url.Values{"password": {"a-password-long-enough"}})
+		draw("GET", "/auth/two-factor/setup", nil)
+		send("POST", "/auth/two-factor/setup", url.Values{})
+		draw("POST", "/auth/two-factor/recovery-codes", url.Values{})
+	}
+}
+`

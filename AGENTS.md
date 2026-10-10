@@ -128,7 +128,7 @@ a fixture under `testdata/retired/`, taken from the golden file at the tag.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 107 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 108 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 1 file retired, removed by `--force` while it is still the kit's bytes, and 3 fixtures, one per version published | `sed -n '/^var retired/,/^}/p' publish.go \| grep -c 'Path:'` and `ls testdata/retired \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 10 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
@@ -193,6 +193,7 @@ hesape v0.54.0 and kyse v0.34.1, the versions skeleton v0.34.3 requires.
 | `TestARejectedSignInGoesBackToTheFormInEveryTransport` | runs the published module: page, htmx and JSON answers to a refused sign-in, and the reset code reached by a redirect |
 | `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` | a field a handler rejects with that no screen has an input for, or a notice no screen draws |
 | `TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault` | an `htmx-config` in the published layout that sets anything but `includeIndicatorStyles:false` |
+| `TestEveryPublishedPageDrawsTheApplicationNameTheRequestCarries` | runs the published module and landing page: a screen, a message or the second-factor issuer that draws a name other than the one the framework put on the request, or any name when none is there |
 | `TestTheKitWritesItsNoticesWithTheRoutersFlash` | runs the published module: a notice or a refusal written with a flash other than the router's, or a router with no flash left without the module's |
 | `TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped` | runs the published sign-in against a user service that hashes for real: a password stored trimmed that stays locked out or is not rewritten as typed, a second attempt counted, a second form tried on a lock or on an empty trimmed form, or a refusal that differs or escapes the timebox |
 | `TestNoPublishedHandlerReadsItsFormByHand` | a published controller that reads a field by hand or calls `Validate()`, or an `Action` whose handler does not call `ctx.Bind(&in)` |
@@ -316,6 +317,6 @@ becomes source in somebody's repository.
 Nothing published may carry the framework's name. The verification mail once
 shipped the literal word, so every project running this command signed its first
 message to its own users with the name of the framework. The brand is a field,
-filled from the application's configuration, and
+filled from the application name the framework puts on every request, and
 `TestNothingTheKitPublishesIsBrandedWithItsOwnName` in
 `flow_internal_test.go:634` reads every published file to keep it that way.

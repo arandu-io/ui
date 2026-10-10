@@ -249,7 +249,7 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, "/auth/login")
 		return
 	}
-	provisioning, err := m.factors.Begin(r.Context(), subject, m.appName)
+	provisioning, err := m.factors.Begin(r.Context(), subject, hhttp.AppNameFrom(r.Context()))
 	if err != nil {
 		log.For(r.Context()).Error("starting two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

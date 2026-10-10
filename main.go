@@ -256,7 +256,7 @@ the framework's. The import:
 and, in the k.Register(...) list:
 
     authui.New(userService, twoFactorService, emailCodes, sessions, csrf,
-        mailer, fw.App.Key, cfg.App.Name,
+        mailer, fw.App.Key,
         authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure),
 
 The last argument is whether the cookies the module writes itself carry Secure.
@@ -269,7 +269,12 @@ layout and this command replaces the layout. It is built in the same file, and
 it takes the application-owned user service and tenant so the header can greet by name rather
 than by the id in the session:
 
-    controllers.NewHomeController(cfg.App.Name, userService, cfg.Auth.Tenant),
+    controllers.NewHomeController(userService, cfg.Auth.Tenant),
+
+Neither constructor takes the application name. The framework puts APP_NAME on
+every request, and the screens, the messages and the landing page read it
+there. A bootstrap/app.go that passes cfg.App.Name to either one drops that
+argument.
 
 It reads who is signed in off the request, so GET / has to carry LoadSubject in
 routes/web.go, as a new project's already does:

@@ -242,9 +242,11 @@ received a layout that panicked on every request, and the layout is in
 `replaced`, so nobody chose it.
 
 **Do not type the framework's name into published markup.** The brand is
-`.BrandName`, filled from the application's own configuration. The verification
-mail once carried the literal word, so every project running this command signed
-its first message to its own users with a name that was not theirs.
+`.BrandName`, filled from the application's own configuration, which the
+framework puts on every request and the handlers read with `hhttp.AppNameFrom`.
+The verification mail once carried the literal word, so every project running
+this command signed its first message to its own users with a name that was not
+theirs.
 `TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:634`
 searches every published file for it.
 

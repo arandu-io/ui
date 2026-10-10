@@ -15,11 +15,6 @@ import (
 type HomeController struct {
 	Controller
 
-	// appName is what the page is titled. It arrives through the constructor
-	// rather than through a global read: a controller that reads the
-	// environment is a controller no test can pin.
-	appName string
-
 	// people and tenant are how the id in a session becomes a name to greet.
 	// A session carries an id and not a name on purpose -- a name kept in one
 	// stays wrong after somebody changes theirs -- so the header costs one
@@ -35,11 +30,12 @@ type HomeController struct {
 // NewHomeController returns the controller. bootstrap/app.go builds it and hands
 // it to the routes.
 //
-// There is no session store and no CSRF issuer here: the route puts who is
-// signed in on the request, and the middleware that protects forms puts the
-// token there, so the page reads both off the request it is answering.
-func NewHomeController(appName string, people authui.UserNames, tenant string) *HomeController {
-	return &HomeController{appName: appName, people: people, tenant: tenant}
+// There is no session store, no CSRF issuer and no application name here: the
+// route puts who is signed in on the request, the middleware that protects
+// forms puts the token there, and the framework puts APP_NAME there, so the
+// page reads all three off the request it is answering.
+func NewHomeController(people authui.UserNames, tenant string) *HomeController {
+	return &HomeController{people: people, tenant: tenant}
 }
 
 // Compile-time proof that this controller answers GET / the way Resource and the
@@ -76,6 +72,11 @@ func (c *HomeController) Index(ctx *hhttp.Context) error {
 	// this page and the thirteen beside it answer the same way when the lookup fails.
 	name := authui.SignedInName(ctx.Ctx(), c.people, c.tenant, subject.ID)
 
+	// The application's name, which titles this page as well as branding it.
+	// The framework puts APP_NAME on every request, so it is read here, off the
+	// request, and the constructor does not take it.
+	appName := hhttp.AppNameFrom(ctx.Ctx())
+
 	// Which of the two published screens the front page is.
 	//
 	// It used to be "home" for everybody, and home.kyse.go is a card headed
@@ -99,8 +100,8 @@ func (c *HomeController) Index(ctx *hhttp.Context) error {
 		// somebody can forget: this one forgot the name, the register link and
 		// the reset, on the screen everybody sees first.
 		Page: authui.Chrome(authui.ChromeProps{
-			AppName:       c.appName,
-			Title:         c.appName,
+			AppName:       appName,
+			Title:         appName,
 			Path:          ctx.Request.URL.Path,
 			Token:         token,
 			Authenticated: signedIn,

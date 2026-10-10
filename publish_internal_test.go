@@ -403,8 +403,8 @@ func TestTheLandingPageDrawsTheSignedInHalf(t *testing.T) {
 // The session store and the CSRF issuer are refused by name. The kit's
 // constructor took both once, while the skeleton's bootstrap/app.go called the
 // three-argument one, and publishing broke that build: the subject is on the
-// request because GET / is mounted behind LoadSubject, and the token is on it
-// because CSRFProtect put it there.
+// request because GET / is mounted behind LoadSubject, and the token and the
+// application name are on it because CSRFProtect and the framework put them.
 func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 	source := authFile(t, "HomeController.go")
 
@@ -419,8 +419,8 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 			continue
 		}
 		params := constructorNames(t, source, "NewHomeController")
-		if want := []string{"string", "authui.UserNames", "string"}; !slices.Equal(params, want) {
-			t.Errorf("NewHomeController takes %v and bootstrap/app.go calls it with (appName, userService, tenant) %v", params, want)
+		if want := []string{"authui.UserNames", "string"}; !slices.Equal(params, want) {
+			t.Errorf("NewHomeController takes %v and bootstrap/app.go calls it with (userService, tenant) %v", params, want)
 		}
 		for _, refused := range []string{"*security.SessionStore", "*security.CSRF"} {
 			if slices.Contains(params, refused) {
@@ -443,7 +443,7 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 // TestTheLandingPageGreetsTheSubjectLoadSubjectPutOnTheRequest runs the
 // published HomeController the way the skeleton mounts it: GET / behind
 // middleware.LoadSubject, the whole router behind CSRFProtect, and the
-// controller built with the three arguments bootstrap/app.go passes.
+// controller built with the two arguments bootstrap/app.go passes.
 //
 // A guest has to get the welcome screen with the guest half of the header and a
 // token to post with. Somebody signed in has to get the home screen, greeted by
@@ -514,7 +514,7 @@ func main() {
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	csrf := security.NewCSRF(appKey, time.Hour)
 
-	home := controllers.NewHomeController("Probe", names{}, "tenant-a")
+	home := controllers.NewHomeController(names{}, "tenant-a")
 	// The renderer the kernel hands every router at boot, given here by hand
 	// because nothing in this probe boots a kernel.
 	router := fhttp.NewRouter().WithRenderer(view.NewRenderer())
@@ -733,7 +733,7 @@ func main() {
 		sessions := security.NewSessionStore(appKey, time.Hour, false,
 			security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 		module := authui.New(users{}, factors{}, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-			appKey, "Probe", authui.FixedTenant("tenant-a"), secure)
+			appKey, authui.FixedTenant("tenant-a"), secure)
 		router := fhttp.NewRouter()
 		module.Routes(router)
 

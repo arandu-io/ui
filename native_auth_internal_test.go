@@ -248,7 +248,7 @@ func TestSessionCreationWaitsForTheFinalFactor(t *testing.T) {
 		t.Error("pending sign-in carries the password hash instead of its full fingerprint")
 	}
 	if !strings.Contains(bodyOf(t, twoFactor, "beginTwoFactorSetup"),
-		"m.factors.Begin(r.Context(), subject, m.appName)") {
+		"m.factors.Begin(r.Context(), subject, hhttp.AppNameFrom(r.Context()))") {
 		t.Error("two-factor provisioning does not use the application name as issuer")
 	}
 }

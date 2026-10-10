@@ -288,7 +288,7 @@ func (m *Module) sendVerification(r *http.Request, u models.User) error {
 		return err
 	}
 	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
-		Name: firstWord(u.Name), Code: code, BrandName: m.appName,
+		Name: firstWord(u.Name), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
 	})
 }
 
@@ -379,7 +379,7 @@ func SignedInName(ctx context.Context, people UserNames, tenant, id string) stri
 func (m *Module) page(r *http.Request, title string) view.Page {
 	subject, err := m.sessions.Load(r.Context(), r)
 	return Chrome(ChromeProps{
-		AppName: m.appName, Title: title, Path: r.URL.Path,
+		Title: title, Path: r.URL.Path,
 		Authenticated: err == nil,
 		UserName: SignedInName(r.Context(), m.users, subject.Tenant, subject.ID),
 	})
@@ -417,7 +417,8 @@ func (m *Module) notify(w http.ResponseWriter, r *http.Request, to, notice strin
 //
 // The token every screen carries is the one CSRFProtect put on the request
 // context, issued for this visitor's session or for their guest cookie when
-// they have none. No screen issues one.
+// they have none. No screen issues one. The brand is the application name the
+// framework put on the request context, read here for every screen at once.
 func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, data AuthPage) {
 	token, _ := hhttp.CSRFTokenFrom(r.Context())
 	if data.Page.Title == "" {
@@ -436,7 +437,7 @@ func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 	data.Page.Old = state.Old
 	data.Page.Path = r.URL.Path
-	data.Page.AppName = m.appName
+	data.Page.AppName = hhttp.AppNameFrom(r.Context())
 	data.Page.Token = token
 	data.HasPasswordReset = true
 	data.DashboardURL = "/"
@@ -557,7 +558,7 @@ func (m *Module) sendPasswordReset(r *http.Request, u models.User) error {
 		return err
 	}
 	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.PasswordReset{
-		Name: firstWord(u.Name), Code: code, BrandName: m.appName,
+		Name: firstWord(u.Name), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
 	})
 }
 
@@ -910,7 +911,7 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, "/auth/login")
 		return
 	}
-	provisioning, err := m.factors.Begin(r.Context(), subject, m.appName)
+	provisioning, err := m.factors.Begin(r.Context(), subject, hhttp.AppNameFrom(r.Context()))
 	if err != nil {
 		log.For(r.Context()).Error("starting two-factor setup", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
