@@ -90,6 +90,10 @@ type Module struct {
 	// three fields the kit reads. Nil is the form the kit publishes. See
 	// WithRegistration.
 	registration RegistrationReader
+
+	// withoutRemember withholds "remember me". The zero value offers it, which
+	// is what these screens have always done. See WithRemember.
+	withoutRemember bool
 }
 
 // New returns the authentication screen module.
@@ -119,6 +123,18 @@ func New(users Users, factors Factors, codes onetime.CodeStore, sessions *securi
 		flash:  session.NewFlash(appKey, secure),
 		tenant: tenant, secure: secure,
 	}
+}
+
+// WithRemember offers or withholds "remember me" on the sign-in screen.
+//
+// Offered, which is what New leaves, the box is drawn and a ticked one starts
+// the long-lived session. Withheld, the box is not drawn and a remember field
+// that arrives anyway is ignored, so every sign-in ends with the browser. One
+// value decides both, which is what keeps the screen from offering what the
+// handler then refuses.
+func (m *Module) WithRemember(offered bool) *Module {
+	m.withoutRemember = !offered
+	return m
 }
 
 var _ foundation.Module = (*Module)(nil)

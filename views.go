@@ -296,6 +296,16 @@ type AuthPage struct {
 	// what the rejected attempt left behind.
 	Remember bool
 
+	// WithoutRemember leaves the remember-me box off the sign-in screen. It
+	// comes from the module's WithRemember, which the sign-in handler reads
+	// too, so a box the screen does not draw is not one the handler honours.
+	//
+	// The negative for the reason WithoutPasswordBox is: this file is replaced
+	// on every publish and the sign-in handler is not, and a handler older
+	// than the setting leaves it false -- which draws the box, as it always
+	// was.
+	WithoutRemember bool
+
 	// Provisioning material is rendered once and deliberately omitted from
 	// MarshalJSON and LogValue.
 	QRCodeSVG        string
@@ -318,6 +328,9 @@ func (p AuthPage) AsksForPassword() bool { return !p.WithoutPasswordBox }
 
 // AsksForPasswordConfirmation reports whether it draws a second one.
 func (p AuthPage) AsksForPasswordConfirmation() bool { return !p.WithoutConfirmationBox }
+
+// OffersRemember reports whether the sign-in screen draws the remember-me box.
+func (p AuthPage) OffersRemember() bool { return !p.WithoutRemember }
 
 // QRCodeImage is the QR code as the base64 body of a data URL, for an image.
 //
@@ -870,23 +883,27 @@ type LoginData = authui.AuthPage
 					Autocomplete: "current-password", Required: true,
 				}) !!}
 
-				<label class="flex items-center gap-2 text-sm">
-					{{-- checked is a presence attribute: a browser reads the box as ticked
-					     whether the value is "true", "false" or empty, so what is conditional
-					     is the attribute and not its value. @if writes the whole attribute or
-					     none of it, which is how every other boolean attribute in a kyse view
-					     is drawn. --}}
-					<input
-						class="input"
-						type="checkbox"
-						name="remember"
-						value="1"
-						@if(.Remember)
-							checked
-						@endif
-					>
-					Remember me
-				</label>
+				{{-- Drawn when the application offers it, which the sign-in handler
+				     reads as well: a box nobody can see is not one it honours. --}}
+				@if(.OffersRemember())
+					<label class="flex items-center gap-2 text-sm">
+						{{-- checked is a presence attribute: a browser reads the box as ticked
+						     whether the value is "true", "false" or empty, so what is conditional
+						     is the attribute and not its value. @if writes the whole attribute or
+						     none of it, which is how every other boolean attribute in a kyse view
+						     is drawn. --}}
+						<input
+							class="input"
+							type="checkbox"
+							name="remember"
+							value="1"
+							@if(.Remember)
+								checked
+							@endif
+						>
+						Remember me
+					</label>
+				@endif
 
 				<div class="flex items-center justify-between gap-3">
 					<button type="submit" class="btn">Login</button>

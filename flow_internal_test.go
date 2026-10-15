@@ -534,9 +534,10 @@ func TestTheRememberBoxIsReadAndSurvivesARejection(t *testing.T) {
 
 	doLogin := bodyOf(t, handlers, "doLogin")
 	if !strings.Contains(handlers, `form:"remember"`) ||
-		!strings.Contains(doLogin, "m.finishSignIn(w, r, u, in.Remember)") ||
-		!strings.Contains(doLogin, "m.writePending(w, u, in.Remember)") {
-		t.Fatal("nothing reads the remember-me box, so ticking it does nothing at all")
+		!strings.Contains(doLogin, "remember := in.Remember && !m.withoutRemember") ||
+		!strings.Contains(doLogin, "m.finishSignIn(w, r, u, remember)") ||
+		!strings.Contains(doLogin, "m.writePending(w, u, remember)") {
+		t.Fatal("nothing reads the remember-me box, or it is honoured when the application withheld it")
 	}
 	if !strings.Contains(handlers, "session.Remember(remember)") {
 		t.Error("the answer is read and not passed to the session, so the session still lives for the plain ttl")
@@ -544,8 +545,17 @@ func TestTheRememberBoxIsReadAndSurvivesARejection(t *testing.T) {
 	// A rejection is answered by the router, which keeps what was typed in the
 	// flash; the box is markup rather than a component, so the screen reads it
 	// back from there itself.
-	if !strings.Contains(bodyOf(t, handlers, "showLogin"), `Remember: hhttp.StateFrom(r.Context()).Old.Get("remember") != ""`) {
+	showLogin := bodyOf(t, handlers, "showLogin")
+	if !strings.Contains(showLogin, `hhttp.StateFrom(r.Context()).Old.Get("remember") != ""`) {
 		t.Error("a rejected sign-in loses the box, and nothing on screen says it was unticked")
+	}
+	// WithRemember is one value read by both ends: the screen leaves the box
+	// off and the handler ignores a field nobody could tick.
+	if !strings.Contains(showLogin, "WithoutRemember: m.withoutRemember") {
+		t.Error("the sign-in screen draws the box whether or not the application offers it")
+	}
+	if !strings.Contains(authFile(t, "login.kyse.go"), "@if(.OffersRemember())") {
+		t.Error("the sign-in screen draws the remember-me box without asking whether it is offered")
 	}
 }
 
@@ -2729,9 +2739,10 @@ func main() {
 // confirmation, two-factor setup with a real authenticator code, the challenge
 // refusing a wrong code and taking a right one, and a recovery code spent once.
 //
-// A second module over the same tables carries WithRegistration, with a sign-up
-// form that asks a document number instead of a name, completed by
-// account.Hooks.Prepare from the registration's Extra.
+// Two more modules over the same tables carry the two options: WithRegistration
+// with a sign-up form that asks a document number instead of a name, completed
+// by account.Hooks.Prepare from the registration's Extra; and WithRemember(false),
+// which draws no box and ignores a ticked one.
 //
 // It requires the SQLite connector the skeleton requires, by published tag like
 // the rest, and skips like the compile gate when the tags are not to be had.
@@ -2766,6 +2777,9 @@ func TestTheFlowRunsOnTheAccountPackage(t *testing.T) {
 		"seam screen: errors=document",
 		"seam register: status=303 location=/auth/verify",
 		"seam name: Holder of 123.456.789-09",
+		"withheld screen: offers-remember=false",
+		"withheld login: status=303 location=/ remembered=false",
+		"offered screen: offers-remember=true",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the published kit on the account package did not answer %q; it printed:\n%s", want, out)
@@ -2920,7 +2934,7 @@ func main() {
 				fields = append(fields, field)
 			}
 			sort.Strings(fields)
-			_, err := fmt.Fprintf(w, "status=%s|errors=%s", page.Status, strings.Join(fields, ","))
+			_, err := fmt.Fprintf(w, "status=%s|errors=%s|offers-remember=%t", page.Status, strings.Join(fields, ","), page.OffersRemember())
 			return err
 		})
 	}
@@ -2975,6 +2989,7 @@ func main() {
 	}
 	kit := mount(newModule(users))
 	seam := mount(newModule(seamUsers).WithRegistration(readPerson))
+	withheld := mount(newModule(users).WithRemember(false))
 
 	type browser struct{ jar map[string]*http.Cookie }
 	send := func(app http.Handler, b *browser, method, path string, form url.Values) *http.Response {
@@ -3129,6 +3144,13 @@ func main() {
 	holder, err := users.Lookup(ctx, "tenant-a", "doc@example.test")
 	must(err)
 	fmt.Printf("seam name: %s\n", holder.AccountName())
+
+	// Remember-me withheld: no box, and a ticked one ignored.
+	b = fresh()
+	fmt.Printf("withheld screen: offers-remember=%s\n", field(screen(withheld, b, "/auth/login"), "offers-remember"))
+	res = send(withheld, b, "POST", "/auth/login", url.Values{"email": {"doc@example.test"}, "password": {first}, "remember": {"1"}})
+	fmt.Printf("withheld login: %s remembered=%t\n", at(res), remembered(b))
+	fmt.Printf("offered screen: offers-remember=%s\n", field(screen(kit, fresh(), "/auth/login"), "offers-remember"))
 }
 
 func cookieHeader(jar map[string]*http.Cookie) []string {

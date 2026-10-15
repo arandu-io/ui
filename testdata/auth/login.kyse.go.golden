@@ -64,23 +64,27 @@ type LoginData = authui.AuthPage
 					Autocomplete: "current-password", Required: true,
 				}) !!}
 
-				<label class="flex items-center gap-2 text-sm">
-					{{-- checked is a presence attribute: a browser reads the box as ticked
-					     whether the value is "true", "false" or empty, so what is conditional
-					     is the attribute and not its value. @if writes the whole attribute or
-					     none of it, which is how every other boolean attribute in a kyse view
-					     is drawn. --}}
-					<input
-						class="input"
-						type="checkbox"
-						name="remember"
-						value="1"
-						@if(.Remember)
-							checked
-						@endif
-					>
-					Remember me
-				</label>
+				{{-- Drawn when the application offers it, which the sign-in handler
+				     reads as well: a box nobody can see is not one it honours. --}}
+				@if(.OffersRemember())
+					<label class="flex items-center gap-2 text-sm">
+						{{-- checked is a presence attribute: a browser reads the box as ticked
+						     whether the value is "true", "false" or empty, so what is conditional
+						     is the attribute and not its value. @if writes the whole attribute or
+						     none of it, which is how every other boolean attribute in a kyse view
+						     is drawn. --}}
+						<input
+							class="input"
+							type="checkbox"
+							name="remember"
+							value="1"
+							@if(.Remember)
+								checked
+							@endif
+						>
+						Remember me
+					</label>
+				@endif
 
 				<div class="flex items-center justify-between gap-3">
 					<button type="submit" class="btn">Login</button>

@@ -281,7 +281,8 @@ and, in the k.Register(...) list:
 A sign-up form that asks for more than a name, an address and a password --
 a document number, a phone -- adds .WithRegistration(read) to that call: read
 binds the extra fields into the registration's Extra, and account.Hooks.Prepare
-stores them.
+stores them. .WithRemember(false) takes the remember-me box off the sign-in
+screen.
 
 The last argument is whether the cookies the module writes itself carry Secure.
 cfg.Framework.Session.Secure is the decision the session cookie and the flash

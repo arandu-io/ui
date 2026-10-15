@@ -176,6 +176,10 @@ type Module struct {
 	// three fields the kit reads. Nil is the form the kit publishes. See
 	// WithRegistration.
 	registration RegistrationReader
+
+	// withoutRemember withholds "remember me". The zero value offers it, which
+	// is what these screens have always done. See WithRemember.
+	withoutRemember bool
 }
 
 // New returns the authentication screen module.
@@ -205,6 +209,18 @@ func New(users Users, factors Factors, codes onetime.CodeStore, sessions *securi
 		flash: session.NewFlash(appKey, secure),
 		tenant: tenant, secure: secure,
 	}
+}
+
+// WithRemember offers or withholds "remember me" on the sign-in screen.
+//
+// Offered, which is what New leaves, the box is drawn and a ticked one starts
+// the long-lived session. Withheld, the box is not drawn and a remember field
+// that arrives anyway is ignored, so every sign-in ends with the browser. One
+// value decides both, which is what keeps the screen from offering what the
+// handler then refuses.
+func (m *Module) WithRemember(offered bool) *Module {
+	m.withoutRemember = !offered
+	return m
 }
 
 var _ foundation.Module = (*Module)(nil)
@@ -345,10 +361,13 @@ func (in loginRequest) LogValue() slog.Value {
 // the flash. The box is the one field drawn by hand rather than by a component,
 // so it is read here: a box that quietly unticks itself after a refused sign-in
 // is worse than an empty field, because nothing on screen says it happened.
+// Whether the box is drawn at all is WithRemember's, and doLogin reads the same
+// value.
 func (m *Module) showLogin(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.login", AuthPage{
-		Page:     m.page(r, "Sign in"),
-		Remember: hhttp.StateFrom(r.Context()).Old.Get("remember") != "",
+		Page:            m.page(r, "Sign in"),
+		Remember:        !m.withoutRemember && hhttp.StateFrom(r.Context()).Old.Get("remember") != "",
+		WithoutRemember: m.withoutRemember,
 	})
 }
 
@@ -376,6 +395,8 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 		}
 		return errs
 	}
+	// A box the screen did not draw was not ticked by anybody here.
+	remember := in.Remember && !m.withoutRemember
 
 	tenant := m.tenant(r)
 	u, err := m.users.VerifyCredentials(r.Context(), tenant, in.Email, in.Password, hmiddleware.KeyByIP(r))
@@ -405,7 +426,7 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 		return nil
 	}
 	if required {
-		if err := m.writePending(w, u, in.Remember); err != nil {
+		if err := m.writePending(w, u, remember); err != nil {
 			log.For(r.Context()).Error("starting the second-factor challenge", "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return nil
@@ -413,7 +434,7 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 		redirect(w, r, "/auth/two-factor/challenge")
 		return nil
 	}
-	m.finishSignIn(w, r, u, in.Remember)
+	m.finishSignIn(w, r, u, remember)
 	return nil
 }
 
