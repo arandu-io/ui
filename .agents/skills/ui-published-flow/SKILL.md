@@ -146,6 +146,23 @@ in the handler, where they were. `aru doctor` reports the first shape as
 `TestNoPublishedHandlerReadsItsFormByHand` refuses both, and an `Action` whose
 handler does not bind.
 
+**The account rules are `hesape/auth/account`'s.** `Users` and `Factors` in
+`LoginController.go` are the method sets of `*account.Users` and
+`*account.Factors`, and the file asserts both, so a method renamed there is a
+build error here. Every method answers an `account.Account`: read it through
+`AccountID`, `AccountTenant`, `AccountEmail`, `AccountName`, `PasswordHash` and
+`IsVerified`, take fingerprints with `account.Fingerprint` and addresses through
+`account.NormalizeEmail`, and match `account.ErrEmailTaken`. Only `subjectOf`
+asserts `*models.User`, for the roles column the package does not read. A
+handler that names `app/Services` again fails the compile gate, which lays no
+such package. What an application's sign-up form adds goes through
+`WithRegistration` into `account.Registration.Extra`, for `Hooks.Prepare`: the
+kit keeps checking the address and the password, and drops its name check, so a
+form with a document number and no name works without a copied controller.
+`WithRemember(false)` is one value read by `showLogin`, through
+`AuthPage.WithoutRemember`, and by `doLogin`. `TestTheFlowRunsOnTheAccountPackage`
+runs all of it on the real package.
+
 **A new password is held to one policy.** `passwordPolicy` in
 `RegisterController.go` is the rule — from `hashing.MinPasswordLen` to
 `hashing.MaxPasswordLen` — and both ends read it: `showRegister` and
@@ -256,7 +273,9 @@ together, and `TestASignUpScreenNobodyFilledInStillAsksForBothBoxes` holds the
 negation.
 
 `NoPassword` hands the credential to `Users.Register`, and the requirement on
-that implementation is one line: do not hash the empty password it is given. A
+that implementation is one line: do not hash the empty password it is given.
+`account.Users` meets it by refusing a registration without a password, so an
+application that switches the password off puts a `Users` of its own in front. A
 stored hash of the empty string is a credential anybody can offer. An account
 with no password is one whose password column is EMPTY, which the native
 provider refuses to authenticate whatever is offered against it. On the near
@@ -269,8 +288,8 @@ value into a comparison.
 **Every second-factor code goes through the account's attempt budget.** The
 challenge handlers hand each authenticator code to
 `m.factors.VerifyAuthenticator` and each recovery code to
-`m.factors.ConsumeRecovery`, and nothing else checks a code. The application's
-service counts both kinds against one budget per tenant and user — five codes
+`m.factors.ConsumeRecovery`, and nothing else checks a code. `account.Factors`
+counts both kinds against one budget per tenant and user — five codes
 per fifteen minutes, counted before the code is checked — because a pending
 sign-in lives for five minutes, a wrong code does not spend it, and whoever
 holds the password can start as many as they like. A handler that validated a

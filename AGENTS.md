@@ -138,7 +138,7 @@ a fixture under `testdata/retired/`, taken from the golden file at the tag.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 109 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 110 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 1 file retired, removed by `--force` while it is still the kit's bytes, and 3 fixtures, one per version published | `sed -n '/^var retired/,/^}/p' publish.go \| grep -c 'Path:'` and `ls testdata/retired \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 10 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
@@ -193,8 +193,25 @@ printed wiring passes `cfg.Framework.Session.Secure` as the module's `secure`,
 the value the session cookie and the kernel's flash follow, and the pending
 two-factor cookie takes it. `TestTheWiringPassesTheOneSecureDecision` holds the
 printed argument and `TestThePendingCookieCarriesTheSecureNewWasGiven` reads the
-cookie off a running module. The compile and run gates pin framework v0.56.0,
-hesape v0.54.0 and kyse v0.34.1, the versions skeleton v0.34.4 requires.
+cookie off a running module. The compile and run gates pin framework v0.56.0
+and kyse v0.34.1, the versions skeleton v0.34.4 requires, and hesape v0.60.0,
+ahead of that skeleton's v0.54.0 because the published controllers call
+`hesape/auth/account`: `ahead` in `publish_internal_test.go` names the lead and
+its reason, and the pin check fails the day a named skeleton catches up and the
+entry is left behind.
+
+**The account rules are the package's.** The published `Users` and `Factors`
+are the method sets of `*account.Users` and `*account.Factors`, asserted in
+`LoginController.go`, so a project hands `authui.New` what `account.NewUsers`
+and `account.NewFactors` return and keeps no user or second-factor service.
+Every method answers an `account.Account`; the handlers read its six readers,
+and `subjectOf` alone asserts `*models.User`, for the roles. The compile gate
+lays a `models.User` that implements `account.Account` and no `app/Services`,
+and `TestTheFlowRunsOnTheAccountPackage` runs the whole flow on the package over
+SQLite. Two options sit on the module: `WithRegistration` reads what a sign-up
+form adds into `account.Registration.Extra` for `Hooks.Prepare`, and
+`WithRemember(false)` takes the remember-me box away from the screen and the
+handler at once.
 
 | gate | what it refuses |
 | --- | --- |
@@ -205,6 +222,7 @@ hesape v0.54.0 and kyse v0.34.1, the versions skeleton v0.34.4 requires.
 | `TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault` | an `htmx-config` in the published layout that sets anything but `includeIndicatorStyles:false` |
 | `TestEveryPublishedPageDrawsTheApplicationNameTheRequestCarries` | runs the published module and landing page: a screen, a message or the second-factor issuer that draws a name other than the one the framework put on the request, or any name when none is there |
 | `TestTheKitWritesItsNoticesWithTheRoutersFlash` | runs the published module: a notice or a refusal written with a flash other than the router's, or a router with no flash left without the module's |
+| `TestTheFlowRunsOnTheAccountPackage` | runs the published module on `account.NewUsers` and `account.NewFactors` over SQLite: sign-up, verification, sign-in with and without remember-me, reset, confirmation, two-factor setup, challenge and recovery, the `WithRegistration` seam and `WithRemember(false)` |
 | `TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped` | runs the published sign-in against a user service that hashes for real: a password stored trimmed that stays locked out or is not rewritten as typed, a second attempt counted, a second form tried on a lock or on an empty trimmed form, or a refusal that differs or escapes the timebox |
 | `TestNoPublishedHandlerReadsItsFormByHand` | a published controller that reads a field by hand or calls `Validate()`, or an `Action` whose handler does not call `ctx.Bind(&in)` |
 | `TestTheChecklistAndTheHandlerAreOnePasswordPolicy` | a password box that chooses a password without `Policy: .PasswordPolicy`, a screen whose handler does not fill it, or a handler that checks a new password against anything but `passwordPolicy` |
