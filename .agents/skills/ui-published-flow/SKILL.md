@@ -226,22 +226,26 @@ header directly gives a plain browser form post 200 and an empty body — a blan
 page. `TestTheRedirectSurvivesWithoutJavaScript` at
 `publish_internal_test.go:806` checks both exits.
 
-**A password stored trimmed signs in once more.** Bind trimmed the password
-until hesape v0.50.2, so one chosen with spaces at its ends through the v0.21.0
-handlers was hashed without them. `doLogin` asks `Users.VerifyCredentials` with
-the password as typed; only when that is a plain refusal — not a lock, which is
-why `wrongPassword` rules out a `retryAfterError` that also matches
-`ErrInvalidCredentials` — and the typed password differs from a non-empty
-trimmed form does it call `verifyTrimmedPassword`. That compares the trimmed
-form against the hash `Users.Lookup` returns, or a decoy when no account with a
-password answers, inside a timebox as long as the service's, so the refusal
-takes as long either way. On success it stores the password as typed through
-`Users.ResetPassword`, bound to the fingerprint of the hash it compared, and the
-sign-in goes on with the rewritten account — so the pending two-factor cookie
-carries the new fingerprint. It is one attempt: the service counted the typed
-form and nothing here counts again. The refusal is the usual one. Its doc
-comment says when to delete it, and
-`TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped` runs every branch.
+**A password stored trimmed still signs in, and nothing is rewritten.** Bind
+trimmed the password until hesape v0.50.2, so one chosen with spaces at its
+ends through the v0.21.0 handlers was hashed without them. `doLogin` asks
+`Users.VerifyCredentials` with the password as typed; only when that is a plain
+refusal — not a lock, which is why `wrongPassword` rules out a
+`retryAfterError` that also matches `ErrInvalidCredentials` — and the typed
+password differs from a non-empty trimmed form does it call
+`verifyTrimmedPassword`. That asks `Users.VerifyCredentials` again with the
+trimmed form, so the service's throttle, timebox and `Hooks.Admit` hold the
+second form as they hold the first, and a password wrong both ways counts as
+two attempts. It writes nothing: the stored hash and the outbox are untouched,
+so a keyboard that adds a space signs its owner in with or without it, and the
+sign-in goes on into the second factor exactly as for the password typed
+exactly. Every refusal on that path but a lock — an account Admit refuses, a
+failing service — is answered as `ErrInvalidCredentials`, the usual message.
+It once stored the password as typed through `Users.ResetPassword`; that
+rewrote the hash of anybody whose keyboard added a space, and answered an
+account Admit refuses with a 500 where a wrong password answers with the form
+again. Its doc comment says when to delete it, and
+`TestAPasswordStoredTrimmedSignsInWithoutBeingRewritten` runs every branch.
 
 **Verification and reset use purpose-bound native codes.** Both flows issue and
 consume through the application's `onetime.CodeStore`; the purpose and subject

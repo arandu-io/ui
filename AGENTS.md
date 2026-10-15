@@ -162,11 +162,12 @@ needs stay in the handler. `Bind` trims every value but a password, which
 reaches the handler as typed from hesape v0.50.2 on. A password stored trimmed
 before that — chosen with spaces at its ends through the v0.21.0 handlers — gets
 one more try: when the typed form is refused, is not a lock and differs from its
-trimmed form, `verifyTrimmedPassword` in `LoginController_handlers.go` compares
-the trimmed form, stores the password as typed through `Users.ResetPassword` on
-success, and refuses the rest with the usual message, as one attempt and inside
-the same timebox whether the account exists or not. Its doc comment says when to
-delete it. A
+trimmed form, `verifyTrimmedPassword` in `LoginController_handlers.go` asks
+`Users.VerifyCredentials` again with the trimmed form — the service's own
+throttle, timebox and `Hooks.Admit` — and writes nothing: no hash is rewritten
+and no event is stored, so a keyboard that adds a space signs its owner in on
+every sign-in, with or without it. Every refusal on that path but a lock is the
+usual message. Its doc comment says when to delete it. A
 handler that refuses the form returns `validation.Errors`, and a new password is
 checked against `passwordPolicy` in `RegisterController.go`, the same
 declaration the sign-up and reset screens hand the password box as
@@ -222,7 +223,7 @@ handler at once.
 | `TestEveryPublishedPageDrawsTheApplicationNameTheRequestCarries` | runs the published module and landing page: a screen, a message or the second-factor issuer that draws a name other than the one the framework put on the request, or any name when none is there |
 | `TestTheKitWritesItsNoticesWithTheRoutersFlash` | runs the published module: a notice or a refusal written with a flash other than the router's, or a router with no flash left without the module's |
 | `TestTheFlowRunsOnTheAccountPackage` | runs the published module on `account.NewUsers` and `account.NewFactors` over SQLite: sign-up, verification, sign-in with and without remember-me, reset, confirmation, two-factor setup, challenge and recovery, the `WithRegistration` seam and `WithRemember(false)` |
-| `TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped` | runs the published sign-in against a user service that hashes for real: a password stored trimmed that stays locked out or is not rewritten as typed, a second attempt counted, a second form tried on a lock or on an empty trimmed form, or a refusal that differs or escapes the timebox |
+| `TestAPasswordStoredTrimmedSignsInWithoutBeingRewritten` | runs the published sign-in against a user service that hashes for real: a password stored trimmed that stays locked out, a sign-in through it that rewrites the hash or stops the next one without the spaces, a second factor it skips, a second form tried on a lock or on an empty trimmed form, or a refusal on it -- an account Admit refuses, a failing service -- answered other than a wrong password is |
 | `TestNoPublishedHandlerReadsItsFormByHand` | a published controller that reads a field by hand or calls `Validate()`, or an `Action` whose handler does not call `ctx.Bind(&in)` |
 | `TestTheChecklistAndTheHandlerAreOnePasswordPolicy` | a password box that chooses a password without `Policy: .PasswordPolicy`, a screen whose handler does not fill it, or a handler that checks a new password against anything but `passwordPolicy` |
 | `TestTheQRCodeIsAnImageAndNoPublishedGoImportsHTMLTemplate` | published Go naming `html/template` or `template.HTML`, a `{!! !!}` that is not a component, or a setup screen not drawing the QR code as an image |

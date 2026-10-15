@@ -2118,63 +2118,72 @@ func main() {
 }
 `
 
-// TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped.
+// TestAPasswordStoredTrimmedSignsInWithoutBeingRewritten.
 //
 // ctx.Bind trimmed the password until hesape v0.50.2, so the kit's v0.21.0
 // handlers stored a password chosen with spaces at its ends without them. Bind
 // now leaves it as typed, and the person typing what they chose would be
-// refused. The published sign-in tries the trimmed form once, stores the
-// password as typed through the user service on success, and refuses the rest
-// exactly as it refuses any wrong password.
+// refused. The published sign-in asks the user service a second time with the
+// trimmed form, and writes nothing.
 //
-// The probe runs the published module against hesape v0.50.2 with a user
-// service that hashes for real and counts what the real one counts: each call
-// to VerifyCredentials is one attempt against the throttle.
+// It used to store the password as typed on success, through ResetPassword.
+// That rewrote the hash of anybody whose keyboard added a space at the end, so
+// the next sign-in without the space was refused and a PasswordReset event was
+// stored for a change nobody asked for; and ResetPassword refused an account
+// Hooks.Admit refuses as a spent link, which the handler answered with a 500
+// where a wrong password answers 422 -- an oracle for a refused account's
+// password.
 //
-//   - typed with the spaces: signed in, the password rewritten as typed, one
-//     attempt, and the next sign-in passes the service on the first form;
-//   - typed with the spaces, the second factor on: the pending cookie carries
-//     the new hash, so the challenge screen opens;
-//   - wrong, unknown and an account with no password: the usual message, one
-//     attempt, nothing written, and never under the timebox;
+// The probe runs the published module with a user service that hashes for
+// real and counts what the real one counts: each call to VerifyCredentials is
+// one attempt against the throttle.
+//
+//   - typed with the spaces: signed in, twice in a row, and without the spaces
+//     too, with the stored hash untouched and nothing reset;
+//   - typed with the spaces, the second factor on: the challenge opens, as it
+//     does for the password typed exactly;
+//   - wrong, unknown, an account with no password, an account Admit refuses
+//     and a service that fails on the second form: the usual message, two
+//     attempts, nothing written;
 //   - no spaces, only spaces, or the account held back: no second form at all.
 //
 // The lock in the probe matches ErrInvalidCredentials as well, the shape
 // twofactor's lock has, because that is the one a second form could mistake
-// for a wrong password. doLogin answers it with the wrong-password message,
-// as it did before the transition; what this holds is that it is never retried.
-func TestAPasswordStoredTrimmedSignsInOnceAndIsStoredAsTyped(t *testing.T) {
+// for a wrong password. What this holds is that it is never retried.
+func TestAPasswordStoredTrimmedSignsInWithoutBeingRewritten(t *testing.T) {
 	out := runAgainstPublishedKit(t, trimmedPasswordProbe)
 
 	for _, want := range []string{
-		"spaces: status=303 location=/ attempts=1 lookups=1 resets=1 stored-as-typed=true",
-		"again: status=303 location=/ attempts=1 lookups=0 resets=0",
-		"second factor: status=303 location=/auth/two-factor/challenge attempts=1 resets=1 challenge=200",
-		"wrong: status=303 location=/auth/login attempts=1 lookups=1 resets=0 message=invalid email or password timeboxed=true",
-		"unknown: status=303 location=/auth/login attempts=1 lookups=1 resets=0 message=invalid email or password timeboxed=true",
-		"no password: status=303 location=/auth/login attempts=1 lookups=1 resets=0 message=invalid email or password timeboxed=true",
-		"no spaces: status=303 location=/auth/login attempts=1 lookups=0 resets=0 message=invalid email or password",
-		"only spaces: status=303 location=/auth/login attempts=1 lookups=0 resets=0 message=invalid email or password",
-		"locked: status=303 location=/auth/login attempts=1 lookups=0 resets=0 message=invalid email or password",
+		"spaces: status=303 location=/ attempts=2 resets=0 unchanged=true",
+		"again: status=303 location=/ attempts=2 resets=0 unchanged=true",
+		"without the spaces: status=303 location=/ attempts=1 resets=0 unchanged=true",
+		"second factor: status=303 location=/auth/two-factor/challenge attempts=2 resets=0 challenge=200",
+		"exact, second factor: status=303 location=/auth/two-factor/challenge attempts=1 resets=0 challenge=200",
+		"wrong: status=303 location=/auth/login attempts=2 resets=0 message=invalid email or password",
+		"unknown: status=303 location=/auth/login attempts=2 resets=0 message=invalid email or password",
+		"no password: status=303 location=/auth/login attempts=2 resets=0 message=invalid email or password",
+		"refused: status=303 location=/auth/login attempts=2 resets=0 message=invalid email or password",
+		"refused, wrong: status=303 location=/auth/login attempts=2 resets=0 message=invalid email or password",
+		"failing: status=303 location=/auth/login attempts=2 resets=0 message=invalid email or password",
+		"no spaces: status=303 location=/auth/login attempts=1 resets=0 message=invalid email or password",
+		"only spaces: status=303 location=/auth/login attempts=1 resets=0 message=invalid email or password",
+		"locked: status=303 location=/auth/login attempts=1 resets=0 message=invalid email or password",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
 		}
 	}
 
-	// The timebox above hides how long the refusal took, so it cannot show
-	// that a hash was compared when no account answered. The source can: the
-	// decoy stands in for a missing hash, and the comparison is the first
-	// operand of the refusal, so nothing short-circuits it.
+	// The second form is the user service's own check, so the throttle, the
+	// timebox and Hooks.Admit hold it as they hold the first; and nothing in
+	// the transition writes.
 	body := bodyOf(t, authFile(t, "LoginController_handlers.go"), "verifyTrimmedPassword")
-	for _, want := range []string{
-		"stored = trimmedDecoy()",
-		"if hashing.Check(trimmed, stored) != nil || lookupErr != nil",
-		"nativeauth.NewTimebox().Call(",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("verifyTrimmedPassword no longer says %q: a refusal for an address nobody owns could "+
-				"skip the comparison and answer faster than one for an account that exists", want)
+	if !strings.Contains(body, "m.users.VerifyCredentials(") {
+		t.Error("verifyTrimmedPassword no longer asks the user service, so its throttle, its timebox and Admit no longer hold the second form")
+	}
+	for _, gone := range []string{"ResetPassword", "SetPassword", "ChangePassword", "hashing."} {
+		if strings.Contains(body, gone) {
+			t.Errorf("verifyTrimmedPassword names %s: a sign-in through it rewrites the password or compares it by hand", gone)
 		}
 	}
 }
@@ -2220,9 +2229,13 @@ func (locked) Unwrap() error { return nativeauth.ErrInvalidCredentials }
 
 type users struct {
 	authui.Users
-	accounts                  map[string]*models.User
-	attempts, lookups, resets int
-	held                      string
+	accounts         map[string]*models.User
+	attempts, resets int
+	held             string
+	// refused is an address Hooks.Admit refuses, answered as the real
+	// service answers it; failing is one whose service fails on a right
+	// password.
+	refused, failing string
 }
 
 func (u *users) VerifyCredentials(_ context.Context, _, email, password, _ string) (account.Account, error) {
@@ -2234,14 +2247,11 @@ func (u *users) VerifyCredentials(_ context.Context, _, email, password, _ strin
 	if !ok || acct.Password == "" || hashing.Check(password, acct.Password) != nil {
 		return nil, nativeauth.ErrInvalidCredentials
 	}
-	return acct, nil
-}
-
-func (u *users) Lookup(_ context.Context, _, email string) (account.Account, error) {
-	u.lookups++
-	acct, ok := u.accounts[email]
-	if !ok {
-		return nil, errors.New("no such account")
+	switch email {
+	case u.refused:
+		return nil, account.ErrAccountRefused
+	case u.failing:
+		return nil, errors.New("the database went away")
 	}
 	return acct, nil
 }
@@ -2291,7 +2301,9 @@ func main() {
 		"a@example.test": {ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: hash},
 		"c@example.test": {ID: "user-c", TenantID: "tenant-a", Email: "c@example.test", Password: hash},
 		"n@example.test": {ID: "user-n", TenantID: "tenant-a", Email: "n@example.test"},
-	}, held: "h@example.test"}
+		"r@example.test": {ID: "user-r", TenantID: "tenant-a", Email: "r@example.test", Password: hash},
+		"f@example.test": {ID: "user-f", TenantID: "tenant-a", Email: "f@example.test", Password: hash},
+	}, held: "h@example.test", refused: "r@example.test", failing: "f@example.test"}
 
 	appKey := []byte("0123456789abcdef0123456789abcdef")
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
@@ -2313,22 +2325,31 @@ func main() {
 		app.ServeHTTP(w, r)
 		return w
 	}
-	signIn := func(email, password string) (*httptest.ResponseRecorder, time.Duration) {
+	signIn := func(email, password string) *httptest.ResponseRecorder {
 		form := url.Values{"email": {email}, "password": {password}}
 		r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.Header.Set("Referer", "/auth/login")
-		start := time.Now()
-		w := send(r, nil)
-		return w, time.Since(start)
+		return send(r, nil)
 	}
 	counted := func() string {
-		line := fmt.Sprintf("attempts=%d lookups=%d resets=%d", service.attempts, service.lookups, service.resets)
-		service.attempts, service.lookups, service.resets = 0, 0, 0
+		line := fmt.Sprintf("attempts=%d resets=%d", service.attempts, service.resets)
+		service.attempts, service.resets = 0, 0
 		return line
 	}
-	refused := func(name, email, password string, timed bool) {
-		w, took := signIn(email, password)
+	signedIn := func(name, email, password string) {
+		w := signIn(email, password)
+		fmt.Printf("%s: status=%d location=%s %s unchanged=%t\n", name, w.Code, w.Header().Get("Location"),
+			counted(), service.accounts[email].Password == hash)
+	}
+	challenged := func(name, email, password string) {
+		w := signIn(email, password)
+		challenge := send(httptest.NewRequest(http.MethodGet, "/auth/two-factor/challenge", nil), w.Result().Cookies())
+		fmt.Printf("%s: status=%d location=%s %s challenge=%d\n", name, w.Code, w.Header().Get("Location"),
+			counted(), challenge.Code)
+	}
+	refused := func(name, email, password string) {
+		w := signIn(email, password)
 		line := fmt.Sprintf("%s: status=%d location=%s %s", name, w.Code, w.Header().Get("Location"), counted())
 		if to := w.Header().Get("Location"); to != "" {
 			page := send(httptest.NewRequest(http.MethodGet, to, nil), w.Result().Cookies())
@@ -2336,30 +2357,25 @@ func main() {
 		} else {
 			line += " message=(no redirect to follow)"
 		}
-		if timed {
-			line += fmt.Sprintf(" timeboxed=%t", took >= 200*time.Millisecond)
-		}
 		fmt.Println(line)
 	}
 
-	w, _ := signIn("a@example.test", typed)
-	fmt.Printf("spaces: status=%d location=%s %s stored-as-typed=%t\n", w.Code, w.Header().Get("Location"),
-		counted(), hashing.Check(typed, service.accounts["a@example.test"].Password) == nil)
-	w, _ = signIn("a@example.test", typed)
-	fmt.Printf("again: status=%d location=%s %s\n", w.Code, w.Header().Get("Location"), counted())
+	signedIn("spaces", "a@example.test", typed)
+	signedIn("again", "a@example.test", typed)
+	signedIn("without the spaces", "a@example.test", trimmed)
 
-	w, _ = signIn("c@example.test", typed)
-	challenge := send(httptest.NewRequest(http.MethodGet, "/auth/two-factor/challenge", nil), w.Result().Cookies())
-	line := counted()
-	fmt.Printf("second factor: status=%d location=%s %s challenge=%d\n", w.Code, w.Header().Get("Location"),
-		strings.Replace(line, " lookups=1", "", 1), challenge.Code)
+	challenged("second factor", "c@example.test", typed)
+	challenged("exact, second factor", "c@example.test", trimmed)
 
-	refused("wrong", "c@example.test", "  wrong horse battery staple  ", true)
-	refused("unknown", "b@example.test", typed, true)
-	refused("no password", "n@example.test", typed, true)
-	refused("no spaces", "c@example.test", "wrong horse battery staple", false)
-	refused("only spaces", "c@example.test", "              ", false)
-	refused("locked", "h@example.test", typed, false)
+	refused("wrong", "c@example.test", "  wrong horse battery staple  ")
+	refused("unknown", "b@example.test", typed)
+	refused("no password", "n@example.test", typed)
+	refused("refused", "r@example.test", typed)
+	refused("refused, wrong", "r@example.test", "  wrong horse battery staple  ")
+	refused("failing", "f@example.test", typed)
+	refused("no spaces", "c@example.test", "wrong horse battery staple")
+	refused("only spaces", "c@example.test", "              ")
+	refused("locked", "h@example.test", typed)
 }
 `
 
