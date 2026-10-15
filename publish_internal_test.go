@@ -962,9 +962,9 @@ func authFile(t *testing.T, name string) string {
 // drift apart, and TestTheNamedSkeletonIsTheOneANewProjectGets says when a newer
 // skeleton has been released.
 const (
-	publishedSkeleton  = "v0.34.4"
-	publishedFramework = "v0.56.0"
-	publishedKyse      = "v0.34.1"
+	publishedSkeleton  = "v0.35.0"
+	publishedFramework = "v0.57.0"
+	publishedKyse      = "v0.35.0"
 	publishedHesape    = "v0.60.0"
 )
 
@@ -978,9 +978,7 @@ const (
 // pin is newer than the skeleton's, a reason is written here, and the entry
 // goes the day a named skeleton requires it -- a lead the skeleton caught up
 // with is a pin nobody checks against it any more.
-var ahead = map[string]string{
-	"github.com/arandu-io/hesape": "the published controllers call hesape/auth/account, first released in hesape v0.60.0",
-}
+var ahead = map[string]string{}
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
 // that was missing on the day render.go shipped unbuildable.

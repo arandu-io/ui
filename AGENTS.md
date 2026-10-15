@@ -193,12 +193,11 @@ printed wiring passes `cfg.Framework.Session.Secure` as the module's `secure`,
 the value the session cookie and the kernel's flash follow, and the pending
 two-factor cookie takes it. `TestTheWiringPassesTheOneSecureDecision` holds the
 printed argument and `TestThePendingCookieCarriesTheSecureNewWasGiven` reads the
-cookie off a running module. The compile and run gates pin framework v0.56.0
-and kyse v0.34.1, the versions skeleton v0.34.4 requires, and hesape v0.60.0,
-ahead of that skeleton's v0.54.0 because the published controllers call
-`hesape/auth/account`: `ahead` in `publish_internal_test.go` names the lead and
-its reason, and the pin check fails the day a named skeleton catches up and the
-entry is left behind.
+cookie off a running module. The compile and run gates pin framework v0.57.0, hesape v0.60.0 and kyse
+v0.35.0, the versions skeleton v0.35.0 requires. When the kit needs a module
+newer than the named skeleton's, `ahead` in `publish_internal_test.go` names the
+lead and its reason, and the pin check fails the day a named skeleton catches
+up.
 
 **The account rules are the package's.** The published `Users` and `Factors`
 are the method sets of `*account.Users` and `*account.Factors`, asserted in
