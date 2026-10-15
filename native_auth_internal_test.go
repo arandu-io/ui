@@ -158,8 +158,8 @@ func TestEmailMutationsUsePurposeBoundNativeCodes(t *testing.T) {
 			t.Errorf("email flow still publishes legacy signed-link element %q", legacy)
 		}
 	}
-	if subject := bodyOf(t, registration, "emailCodeSubject"); !strings.Contains(subject, "u.TenantID") || !strings.Contains(subject, "u.ID") ||
-		!strings.Contains(subject, "services.NormalizeEmail(u.Email)") {
+	if subject := bodyOf(t, registration, "emailCodeSubject"); !strings.Contains(subject, "u.AccountTenant()") || !strings.Contains(subject, "u.AccountID()") ||
+		!strings.Contains(subject, "account.NormalizeEmail(u.AccountEmail())") {
 		t.Errorf("verification codes are not bound to tenant, user and canonical e-mail: %s", subject)
 	}
 }
@@ -167,7 +167,7 @@ func TestEmailMutationsUsePurposeBoundNativeCodes(t *testing.T) {
 func TestVerificationSubjectChangesWithTheCanonicalAddress(t *testing.T) {
 	registration := authFile(t, "RegisterController.go")
 	subject := bodyOf(t, registration, "emailCodeSubject")
-	for _, want := range []string{"u.TenantID", "u.ID", "services.NormalizeEmail(u.Email)"} {
+	for _, want := range []string{"u.AccountTenant()", "u.AccountID()", "account.NormalizeEmail(u.AccountEmail())"} {
 		if !strings.Contains(subject, want) {
 			t.Fatalf("emailCodeSubject omits %s: %s", want, subject)
 		}
@@ -179,9 +179,9 @@ func TestVerificationSubjectChangesWithTheCanonicalAddress(t *testing.T) {
 
 func TestRegistrationRejectsAnAddressTheApplicationAlreadyOwns(t *testing.T) {
 	body := bodyOf(t, authFile(t, "RegisterController.go"), "doRegister")
-	if !strings.Contains(body, "errors.Is(err, services.ErrEmailTaken)") ||
+	if !strings.Contains(body, "errors.Is(err, account.ErrEmailTaken)") ||
 		!strings.Contains(body, `"email": {"that address is already registered. Sign in instead."}`) {
-		t.Error("application-owned ErrEmailTaken is not returned to the router as a field-level rejection")
+		t.Error("account.ErrEmailTaken is not returned to the router as a field-level rejection")
 	}
 }
 
@@ -238,13 +238,13 @@ func TestSessionCreationWaitsForTheFinalFactor(t *testing.T) {
 		`Path: "/auth/two-factor"`,
 		"HttpOnly: true",
 		"SameSite: http.SameSiteLaxMode",
-		"PasswordFingerprint: u.PasswordFingerprint()",
+		"PasswordFingerprint: account.Fingerprint(u.PasswordHash())",
 	} {
 		if !strings.Contains(twoFactor, required) {
 			t.Errorf("pending sign-in is missing %q", required)
 		}
 	}
-	if strings.Contains(twoFactor, "u.Password,") {
+	if strings.Contains(twoFactor, "u.Password,") || strings.Contains(twoFactor, "PasswordFingerprint: u.PasswordHash()") {
 		t.Error("pending sign-in carries the password hash instead of its full fingerprint")
 	}
 	if !strings.Contains(bodyOf(t, twoFactor, "beginTwoFactorSetup"),

@@ -712,6 +712,7 @@ import (
 	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/security"
 	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
 	models "example.test/project/app/Models"
@@ -719,8 +720,8 @@ import (
 
 type users struct{ authui.Users }
 
-func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
-	return models.User{ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: "stored"}, nil
+func (users) VerifyCredentials(context.Context, string, string, string, string) (account.Account, error) {
+	return &models.User{ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: "stored"}, nil
 }
 
 type factors struct{ authui.Factors }
@@ -964,8 +965,22 @@ const (
 	publishedSkeleton  = "v0.34.4"
 	publishedFramework = "v0.56.0"
 	publishedKyse      = "v0.34.1"
-	publishedHesape    = "v0.54.0"
+	publishedHesape    = "v0.60.0"
 )
+
+// ahead are the modules whose pin is newer than the one publishedSkeleton
+// requires, each with the reason the published Go needs it.
+//
+// A lead is the kit's files moving before the skeleton that will carry them:
+// a project created from that skeleton runs `go get` for the newer version
+// when it publishes this release, as UPGRADE.md says. The lead is held to
+// three things by TestThePinnedVersionsAreTheOnesTheNamedSkeletonRequires: the
+// pin is newer than the skeleton's, a reason is written here, and the entry
+// goes the day a named skeleton requires it -- a lead the skeleton caught up
+// with is a pin nobody checks against it any more.
+var ahead = map[string]string{
+	"github.com/arandu-io/hesape": "the published controllers call hesape/auth/account, first released in hesape v0.60.0",
+}
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
 // that was missing on the day render.go shipped unbuildable.
@@ -1078,33 +1093,10 @@ func layPublishedKit(t *testing.T, root string) []string {
 	// would make this gate skip, which is the thing it exists to replace.
 	writeInto(t, filepath.Join(root, "app", "Http", "Controllers", "Controller.go"),
 		[]byte("package controllers\n\ntype Controller struct{}\n"))
-	writeInto(t, filepath.Join(root, "app", "Models", "User.go"), []byte(`package models
-
-import (
-	"crypto/sha256"
-	"encoding/hex"
-	"time"
-)
-
-type User struct {
-	ID string
-	TenantID string
-	Name string
-	Email string
-	Password string
-	Roles []string
-	VerifiedAt *time.Time
-	CreatedAt time.Time
-}
-
-func (u User) Verified() bool { return u.VerifiedAt != nil }
-func (u User) PasswordFingerprint() string {
-	digest := sha256.Sum256([]byte(u.Password))
-	return hex.EncodeToString(digest[:])
-}
-`))
-	writeInto(t, filepath.Join(root, "app", "Services", "errors.go"),
-		[]byte("package services\n\nimport (\"errors\"; \"strings\")\n\nvar ErrEmailTaken = errors.New(\"email taken\")\nfunc NormalizeEmail(v string) string { return strings.ToLower(strings.TrimSpace(v)) }\n"))
+	writeInto(t, filepath.Join(root, "app", "Models", "User.go"), []byte(publishedUserModel))
+	// No app/Services: the published controllers are wired to
+	// hesape/auth/account, and a project that moved to it deleted its user and
+	// second-factor services. A published file still naming one fails here.
 
 	writeInto(t, filepath.Join(root, "go.mod"), []byte(
 		"module "+authSpec().ModulePath+"\n\ngo "+goDirective(t)+"\n\nrequire (\n"+
@@ -1113,6 +1105,84 @@ func (u User) PasswordFingerprint() string {
 			"\tgithub.com/arandu-io/kyse "+publishedKyse+"\n)\n"))
 	return published
 }
+
+// publishedUserModel is the one model a published file names, as a project
+// that moved to hesape/auth/account declares it: the skeleton's User, embedding
+// the model, with the six readers account.Account adds and nothing of the
+// deleted services -- no PasswordFingerprint, which is account.Fingerprint now.
+//
+// It is written here rather than read from ../arandu on purpose: a sibling that
+// may be absent would make the compile gate skip, which is the thing it exists
+// to replace. Users is the skeleton's generated query reduced to its Base(),
+// which is all account.Config.Query asks for; the flow probe builds its users
+// table from it.
+const publishedUserModel = `package models
+
+import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/database/model"
+)
+
+type User struct {
+	model.Model
+
+	ID         string     ` + "`db:\"id\"`" + `
+	TenantID   string     ` + "`db:\"tenant_id\"`" + `
+	Name       string     ` + "`db:\"name\"`" + `
+	Email      string     ` + "`db:\"email\"`" + `
+	Password   string     ` + "`db:\"password\"`" + `
+	Roles      Roles      ` + "`db:\"roles\"`" + `
+	VerifiedAt *time.Time ` + "`db:\"verified_at\"`" + `
+	CreatedAt  time.Time  ` + "`db:\"created_at\"`" + `
+}
+
+var userTable = model.NewTable(model.TableSpec{
+	Name:            "users",
+	New:             func() model.Entity { return new(User) },
+	UniqueIDs:       true,
+	UpdatedAtColumn: model.NoColumn,
+})
+
+// Users opens a query on the users table.
+func Users(db model.DB) *model.Builder { return userTable.Query(db) }
+
+type Roles []string
+
+func (r Roles) Value() (driver.Value, error) {
+	if r == nil {
+		r = Roles{}
+	}
+	b, err := json.Marshal([]string(r))
+	return string(b), err
+}
+
+func (r *Roles) Scan(src any) error {
+	switch v := src.(type) {
+	case nil:
+		*r = Roles{}
+		return nil
+	case string:
+		return json.Unmarshal([]byte(v), (*[]string)(r))
+	case []byte:
+		return json.Unmarshal(v, (*[]string)(r))
+	}
+	return fmt.Errorf("roles column holds %T", src)
+}
+
+func (u *User) AccountID() string     { return u.ID }
+func (u *User) AccountTenant() string { return u.TenantID }
+func (u *User) AccountEmail() string  { return u.Email }
+func (u *User) AccountName() string   { return u.Name }
+func (u *User) PasswordHash() string  { return u.Password }
+func (u *User) IsVerified() bool      { return u.VerifiedAt != nil && !u.VerifiedAt.IsZero() }
+
+var _ account.Account = (*User)(nil)
+`
 
 // downloadPublishedKit resolves the module layPublishedKit wrote, and skips the
 // test, saying that nothing was compiled, when the tags are neither in the
@@ -1138,7 +1208,11 @@ func downloadPublishedKit(t *testing.T, tool, root string) {
 // compile gate above builds, so a probe that runs here runs against the
 // framework a person gets. probe imports the published package itself, as
 // "example.test/project/app/Http/Controllers/Auth".
-func runAgainstPublishedKit(t *testing.T, probe string) string {
+//
+// requires are further "module version" lines for the probe's go.mod, each a
+// published tag like the three above, for a probe that needs what a project
+// adds beside the kit -- a database connector.
+func runAgainstPublishedKit(t *testing.T, probe string, requires ...string) string {
 	t.Helper()
 
 	tool, err := exec.LookPath("go")
@@ -1147,6 +1221,15 @@ func runAgainstPublishedKit(t *testing.T, probe string) string {
 	}
 	root := t.TempDir()
 	layPublishedKit(t, root)
+	if len(requires) > 0 {
+		gomod := filepath.Join(root, "go.mod")
+		body, err := os.ReadFile(gomod)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = append(body, []byte("\nrequire (\n\t"+strings.Join(requires, "\n\t")+"\n)\n")...)
+		writeInto(t, gomod, body)
+	}
 	writeInto(t, filepath.Join(root, "cmd", "probe", "main.go"), []byte(probe))
 	downloadPublishedKit(t, tool, root)
 
@@ -1952,12 +2035,28 @@ func TestThePinnedVersionsAreTheOnesTheNamedSkeletonRequires(t *testing.T) {
 		{"github.com/arandu-io/kyse", publishedKyse},
 	} {
 		got := requiredVersion(string(body), want.module)
-		if got != want.pinned {
+		reason, leads := ahead[want.module]
+		switch {
+		case leads && semverLess(got, want.pinned):
+			// The kit is ahead of the skeleton on purpose, and says why.
+		case leads:
+			t.Errorf("skeleton %s requires %s %s, which is no older than the pin %s, so the lead in ahead is over (%s).\n"+
+				"Delete that entry, and move the pin to what the skeleton requires.",
+				publishedSkeleton, want.module, got, want.pinned, reason)
+		case got != want.pinned:
 			t.Errorf("skeleton %s requires %s %s and this suite compiles the published files against %s.\n"+
 				"Move the constants in publish_internal_test.go together, and read what the build says about the difference.",
 				publishedSkeleton, want.module, got, want.pinned)
 		}
 	}
+}
+
+// semverLess reports whether version a is older than b, both vMAJOR.MINOR.PATCH.
+// A version that does not parse is never older, so a lead over one is refused.
+func semverLess(a, b string) bool {
+	pa, okA := semver(a)
+	pb, okB := semver(b)
+	return okA && okB && olderThan(pa, pb)
 }
 
 // TestTheNamedSkeletonIsTheOneANewProjectGets says when a skeleton newer than

@@ -321,7 +321,7 @@ func TestThePendingSignInRedactsLogsWithoutChangingItsSignedProtocol(t *testing.
 
 	for _, protocol := range []string{
 		`PasswordFingerprint string ` + "`json:\"password_fingerprint\"`",
-		`PasswordFingerprint: u.PasswordFingerprint()`,
+		`PasswordFingerprint: account.Fingerprint(u.PasswordHash())`,
 		`json.Marshal(pendingSignIn{`,
 	} {
 		if !strings.Contains(source, protocol) {
@@ -1390,26 +1390,7 @@ func runInPublishedKit(t *testing.T, imports []string, body string) string {
 		}
 		writeInto(t, filepath.Join(root, f.Path), f.Content)
 	}
-	writeInto(t, filepath.Join(root, "app", "Models", "User.go"), []byte(`package models
-
-import "time"
-
-type User struct {
-	ID string
-	TenantID string
-	Name string
-	Email string
-	Password string
-	Roles []string
-	VerifiedAt *time.Time
-	CreatedAt time.Time
-}
-
-func (u User) Verified() bool { return u.VerifiedAt != nil }
-func (u User) PasswordFingerprint() string { return u.Password }
-`))
-	writeInto(t, filepath.Join(root, "app", "Services", "errors.go"),
-		[]byte("package services\n\nimport (\"errors\"; \"strings\")\n\nvar ErrEmailTaken = errors.New(\"email taken\")\nfunc NormalizeEmail(v string) string { return strings.ToLower(strings.TrimSpace(v)) }\n"))
+	writeInto(t, filepath.Join(root, "app", "Models", "User.go"), []byte(publishedUserModel))
 
 	gomod := "module " + authSpec().ModulePath + "\n\ngo 1.26\n\nrequire (\n" +
 		"\tgithub.com/arandu-io/framework v0.0.0\n\tgithub.com/arandu-io/hesape v0.0.0\n\tgithub.com/arandu-io/kyse v0.0.0\n)\n\n"
@@ -1503,6 +1484,7 @@ import (
 	twofactor "github.com/arandu-io/hesape/2fa"
 	"github.com/arandu-io/hesape/session"
 	"github.com/arandu-io/hesape/view"
+	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
 	models "example.test/project/app/Models"
@@ -1516,15 +1498,15 @@ func (locked) Error() string { return "two-factor: too many codes" }
 func (locked) Seconds() int { return 900 }
 func (locked) Unwrap() error { return twofactor.ErrInvalidCode }
 
-var user = models.User{ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: "secret"}
+var user = &models.User{ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: "secret"}
 
 type users struct{ authui.Users }
 
-func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
+func (users) VerifyCredentials(context.Context, string, string, string, string) (account.Account, error) {
 	return user, nil
 }
 
-func (users) FindForAuthentication(context.Context, string, string) (models.User, error) {
+func (users) FindForAuthentication(context.Context, string, string) (account.Account, error) {
 	return user, nil
 }
 
@@ -1768,15 +1750,15 @@ import (
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/session"
 	"github.com/arandu-io/hesape/view"
+	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
-	models "example.test/project/app/Models"
 )
 
 type users struct{ authui.Users }
 
-func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
-	return models.User{}, nativeauth.ErrInvalidCredentials
+func (users) VerifyCredentials(context.Context, string, string, string, string) (account.Account, error) {
+	return nil, nativeauth.ErrInvalidCredentials
 }
 
 func main() {
@@ -1899,21 +1881,21 @@ import (
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/session"
 	"github.com/arandu-io/hesape/view"
+	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
-	models "example.test/project/app/Models"
 )
 
 type users struct{ authui.Users }
 
-func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
-	return models.User{}, nativeauth.ErrInvalidCredentials
+func (users) VerifyCredentials(context.Context, string, string, string, string) (account.Account, error) {
+	return nil, nativeauth.ErrInvalidCredentials
 }
 
 // Lookup finds nobody, so nothing is mailed and the answer is the one an
 // address nobody registered gets.
-func (users) Lookup(context.Context, string, string) (models.User, error) {
-	return models.User{}, errors.New("no such account")
+func (users) Lookup(context.Context, string, string) (account.Account, error) {
+	return nil, errors.New("no such account")
 }
 
 func main() {
@@ -2038,19 +2020,19 @@ import (
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/session"
 	"github.com/arandu-io/hesape/view"
+	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
-	models "example.test/project/app/Models"
 )
 
 type users struct{ authui.Users }
 
-func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
-	return models.User{}, nativeauth.ErrInvalidCredentials
+func (users) VerifyCredentials(context.Context, string, string, string, string) (account.Account, error) {
+	return nil, nativeauth.ErrInvalidCredentials
 }
 
-func (users) Lookup(context.Context, string, string) (models.User, error) {
-	return models.User{}, errors.New("no such account")
+func (users) Lookup(context.Context, string, string) (account.Account, error) {
+	return nil, errors.New("no such account")
 }
 
 func main() {
@@ -2209,6 +2191,7 @@ import (
 	"github.com/arandu-io/hesape/hashing"
 	"github.com/arandu-io/hesape/session"
 	"github.com/arandu-io/hesape/view"
+	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
 	models "example.test/project/app/Models"
@@ -2227,54 +2210,53 @@ func (locked) Unwrap() error { return nativeauth.ErrInvalidCredentials }
 
 type users struct {
 	authui.Users
-	accounts                  map[string]models.User
+	accounts                  map[string]*models.User
 	attempts, lookups, resets int
 	held                      string
 }
 
-func (u *users) VerifyCredentials(_ context.Context, _, email, password, _ string) (models.User, error) {
+func (u *users) VerifyCredentials(_ context.Context, _, email, password, _ string) (account.Account, error) {
 	u.attempts++
 	if email == u.held {
-		return models.User{}, locked{}
+		return nil, locked{}
 	}
-	account, ok := u.accounts[email]
-	if !ok || account.Password == "" || hashing.Check(password, account.Password) != nil {
-		return models.User{}, nativeauth.ErrInvalidCredentials
+	acct, ok := u.accounts[email]
+	if !ok || acct.Password == "" || hashing.Check(password, acct.Password) != nil {
+		return nil, nativeauth.ErrInvalidCredentials
 	}
-	return account, nil
+	return acct, nil
 }
 
-func (u *users) Lookup(_ context.Context, _, email string) (models.User, error) {
+func (u *users) Lookup(_ context.Context, _, email string) (account.Account, error) {
 	u.lookups++
-	account, ok := u.accounts[email]
+	acct, ok := u.accounts[email]
 	if !ok {
-		return models.User{}, errors.New("no such account")
+		return nil, errors.New("no such account")
 	}
-	return account, nil
+	return acct, nil
 }
 
-func (u *users) FindForAuthentication(_ context.Context, _, id string) (models.User, error) {
-	for _, account := range u.accounts {
-		if account.ID == id {
-			return account, nil
+func (u *users) FindForAuthentication(_ context.Context, _, id string) (account.Account, error) {
+	for _, acct := range u.accounts {
+		if acct.ID == id {
+			return acct, nil
 		}
 	}
-	return models.User{}, errors.New("no such account")
+	return nil, errors.New("no such account")
 }
 
-func (u *users) ResetPassword(_ context.Context, _, id, email, fingerprint, password string) (models.User, error) {
+func (u *users) ResetPassword(_ context.Context, _, id, email, fingerprint, password string) (account.Account, error) {
 	u.resets++
-	account := u.accounts[email]
-	if account.ID != id || account.PasswordFingerprint() != fingerprint {
-		return models.User{}, errors.New("the password changed")
+	acct := u.accounts[email]
+	if acct == nil || acct.ID != id || account.Fingerprint(acct.Password) != fingerprint {
+		return nil, errors.New("the password changed")
 	}
 	hash, err := hashing.Make(password)
 	if err != nil {
-		return models.User{}, err
+		return nil, err
 	}
-	account.Password = hash
-	u.accounts[email] = account
-	return account, nil
+	acct.Password = hash
+	return acct, nil
 }
 
 type factors struct{ authui.Factors }
@@ -2295,7 +2277,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	service := &users{accounts: map[string]models.User{
+	service := &users{accounts: map[string]*models.User{
 		"a@example.test": {ID: "user-a", TenantID: "tenant-a", Email: "a@example.test", Password: hash},
 		"c@example.test": {ID: "user-c", TenantID: "tenant-a", Email: "c@example.test", Password: hash},
 		"n@example.test": {ID: "user-n", TenantID: "tenant-a", Email: "n@example.test"},
@@ -2574,6 +2556,7 @@ import (
 	"github.com/arandu-io/framework/security"
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/session"
 	"github.com/arandu-io/hesape/view"
@@ -2586,20 +2569,20 @@ import (
 
 var run string
 
-var account = models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada Lovelace", Email: "a@example.test", Password: "stored"}
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada Lovelace", Email: "a@example.test", Password: "stored"}
 
 type users struct{ authui.Users }
 
 func (users) PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error) {
 	return map[string]string{"user-a": "Ada Lovelace"}, nil
 }
-func (users) VerifyCredentials(context.Context, string, string, string, string) (models.User, error) {
-	return account, nil
+func (users) VerifyCredentials(context.Context, string, string, string, string) (account.Account, error) {
+	return owner, nil
 }
-func (users) FindForAuthentication(context.Context, string, string) (models.User, error) {
-	return account, nil
+func (users) FindForAuthentication(context.Context, string, string) (account.Account, error) {
+	return owner, nil
 }
-func (users) Lookup(context.Context, string, string) (models.User, error) { return account, nil }
+func (users) Lookup(context.Context, string, string) (account.Account, error) { return owner, nil }
 func (users) ConfirmPassword(context.Context, nativeauth.Subject, string, string) error { return nil }
 
 type factors struct{ authui.Factors }
@@ -2704,12 +2687,12 @@ func main() {
 			"/auth/password/reset", "/auth/verify"} {
 			draw("GET", path, nil)
 		}
-		send("POST", "/auth/verify/resend", url.Values{"email": {account.Email}})
-		send("POST", "/auth/password/email", url.Values{"email": {account.Email}})
+		send("POST", "/auth/verify/resend", url.Values{"email": {owner.Email}})
+		send("POST", "/auth/password/email", url.Values{"email": {owner.Email}})
 
 		// A password sign-in on an account with a second factor leaves the
 		// pending cookie the two challenge screens ask for.
-		send("POST", "/auth/login", url.Values{"email": {account.Email}, "password": {"a-password-long-enough"}})
+		send("POST", "/auth/login", url.Values{"email": {owner.Email}, "password": {"a-password-long-enough"}})
 		draw("GET", "/auth/two-factor/challenge", nil)
 		draw("GET", "/auth/two-factor/recovery", nil)
 
@@ -2729,5 +2712,381 @@ func main() {
 		send("POST", "/auth/two-factor/setup", url.Values{})
 		draw("POST", "/auth/two-factor/recovery-codes", url.Values{})
 	}
+}
+`
+
+// TestTheFlowRunsOnTheAccountPackage runs the published module the way a
+// project wires it once its user and second-factor services are deleted:
+// account.NewUsers over the project's users query and policy, account.NewFactors
+// beside it, both handed to authui.New as they are, over a real SQLite database
+// migrated with the users table, the outbox and account.Migrations.
+//
+// Every other probe here hands the module a fake service, which proves what the
+// handlers do with an answer and nothing about whether the account package
+// gives that answer. This one walks the whole flow against it: sign-up and the
+// address it refuses twice, the verification code, sign-in with and without
+// remember-me, the reset code and the password it changes, the password
+// confirmation, two-factor setup with a real authenticator code, the challenge
+// refusing a wrong code and taking a right one, and a recovery code spent once.
+//
+// It requires the SQLite connector the skeleton requires, by published tag like
+// the rest, and skips like the compile gate when the tags are not to be had.
+func TestTheFlowRunsOnTheAccountPackage(t *testing.T) {
+	out := runAgainstPublishedKit(t, accountFlowProbe, "github.com/arandu-io/hesape/database/connectors/sqlite "+publishedSQLite)
+
+	for _, want := range []string{
+		"register: status=303 location=/auth/verify code=true",
+		"register again: status=303 location=/auth/register",
+		"register again screen: errors=email",
+		"register short: errors=password,password_confirmation",
+		"register no name: errors=name",
+		"verify: status=303 location=/auth/login",
+		"verify screen: status=Your address is confirmed. Welcome.",
+		"verified: true",
+		"login: status=303 location=/ remembered=false",
+		"login remember: status=303 location=/ remembered=true",
+		"login wrong: status=303 location=/auth/login",
+		"login wrong screen: errors=email",
+		"reset request: status=303 location=/auth/password/reset code=true",
+		"reset: status=303 location=/auth/login",
+		"login old password: status=303 location=/auth/login",
+		"login new password: status=303 location=/",
+		"confirm: status=303",
+		"setup: secret=true",
+		"setup confirm: recovery-codes=8",
+		"login with factor: status=303 location=/auth/two-factor/challenge",
+		"challenge wrong: status=303 location=/auth/two-factor/challenge",
+		"challenge right: status=303 location=/ signed-in=true",
+		"recovery: status=303 location=/ signed-in=true",
+		"recovery spent: status=303 location=/auth/two-factor/recovery",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit on the account package did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// publishedSQLite is the SQLite connector the flow probe migrates and runs on:
+// the one the skeleton requires, so the probe's database is a new project's.
+const publishedSQLite = "v0.11.0"
+
+// accountFlowProbe is the program TestTheFlowRunsOnTheAccountPackage runs.
+const accountFlowProbe = `package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"sort"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/mail"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/cache"
+	"github.com/arandu-io/hesape/database"
+	_ "github.com/arandu-io/hesape/database/connectors/sqlite"
+	"github.com/arandu-io/hesape/database/migrations"
+	"github.com/arandu-io/hesape/database/model"
+	"github.com/arandu-io/hesape/database/schema"
+	"github.com/arandu-io/hesape/events"
+	hhttp "github.com/arandu-io/hesape/http"
+	"github.com/arandu-io/hesape/onetime"
+	"github.com/arandu-io/hesape/otp"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+// userPolicy is the skeleton's user policy, written over *models.User.
+type userPolicy struct{}
+
+func (userPolicy) Can(_ context.Context, s auth.Subject, a auth.Action, u *models.User) error {
+	if u.TenantID != "" && u.TenantID != s.Tenant {
+		return fmt.Errorf("another tenant")
+	}
+	switch {
+	case a == account.ActionUserCreate && s.IsGuest() && len(u.Roles) == 0:
+		return nil
+	case a == account.ActionUserNamesPublic && s.Tenant != "":
+		return nil
+	case (a == account.ActionUserView || a == account.ActionUserUpdate) && s.ID != "" && s.ID == u.ID:
+		return nil
+	}
+	return fmt.Errorf("insufficient role for %s", a)
+}
+
+// createUsers is the skeleton's users table, both of its migrations at once.
+type createUsers struct{ migrations.BaseMigration }
+
+func (createUsers) GetName() string { return "create_users" }
+func (createUsers) Up(ctx context.Context, conn migrations.Connection) error {
+	return conn.Schema().Create(ctx, "users", func(table *schema.Blueprint) {
+		table.String("id").Primary()
+		table.String("tenant_id")
+		table.String("email")
+		table.Text("password")
+		table.Text("roles")
+		table.Timestamp("created_at")
+		table.String("name").Nullable()
+		table.Timestamp("verified_at").Nullable()
+		table.Unique([]string{"tenant_id", "email"})
+	})
+}
+
+// codes keeps the last code issued for each purpose, as the mailbox would.
+type codes struct {
+	onetime.CodeStore
+	last map[string]string
+}
+
+func (c *codes) Issue(ctx context.Context, purpose, subject string) (string, error) {
+	code, err := c.CodeStore.Issue(ctx, purpose, subject)
+	c.last[purpose] = code
+	return code, err
+}
+
+type outbox struct{}
+
+func (outbox) Name() string                             { return "probe" }
+func (outbox) Send(context.Context, mail.Message) error { return nil }
+
+type bodies struct{}
+
+func (bodies) RenderToString(string, any) (string, error) { return "body", nil }
+
+var (
+	secret        string
+	recoveryCodes string
+)
+
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	for _, name := range []string{
+		"auth.login", "auth.register", "auth.verify", "auth.passwords.email", "auth.passwords.reset",
+		"auth.passwords.confirm", "auth.two-factor.challenge", "auth.two-factor.recovery",
+		"auth.two-factor.setup", "auth.two-factor.recovery-codes",
+	} {
+		view.Register(name, func(w io.Writer, data any) error {
+			page := data.(authui.AuthPage)
+			if page.SecretKey != "" {
+				secret = page.SecretKey
+			}
+			if page.RecoveryCodesText != "" {
+				recoveryCodes = page.RecoveryCodesText
+			}
+			var fields []string
+			for field := range page.Page.Errors {
+				fields = append(fields, field)
+			}
+			sort.Strings(fields)
+			_, err := fmt.Fprintf(w, "status=%s|errors=%s", page.Status, strings.Join(fields, ","))
+			return err
+		})
+	}
+
+	ctx := context.Background()
+	raw, err := sql.Open("sqlite", ":memory:")
+	must(err)
+	raw.SetMaxOpenConns(1)
+	db := database.Wrap(raw, database.DialectSQLite)
+	conn := database.ForMigrations(database.NewConnection(raw, "", "", map[string]any{"driver": "sqlite", "name": "sqlite"}))
+	all := append([]migrations.Migration{createUsers{}}, events.NewModule().Migrations()...)
+	for _, m := range append(all, account.Migrations()...) {
+		must(m.Up(ctx, conn))
+	}
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	query := func() *model.Builder { return models.Users(db) }
+	users, err := account.NewUsers(account.Config{DB: db, Query: query, Policy: account.PolicyOf(userPolicy{})})
+	must(err)
+	factors, err := account.NewFactors(db, appKey, cache.NewArrayStore(), nil, users)
+	must(err)
+	store, err := onetime.New(cache.NewArrayStore(), appKey, onetime.Config{})
+	must(err)
+	issued := &codes{CodeStore: store, last: map[string]string{}}
+	mailer := mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	flash := session.NewFlash(appKey, false)
+
+	mount := func(module *authui.Module) http.Handler {
+		router := fhttp.NewRouter().WithFlash(flash)
+		module.Routes(router)
+		app := middleware.Flash(flash)(router)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			app.ServeHTTP(w, r.WithContext(hhttp.WithAppName(r.Context(), "Probe")))
+		})
+	}
+	newModule := func(u authui.Users) *authui.Module {
+		return authui.New(u, factors, issued, sessions, session.NewCSRF(appKey, time.Hour), mailer,
+			appKey, authui.FixedTenant("tenant-a"), false)
+	}
+	kit := mount(newModule(users))
+
+	type browser struct{ jar map[string]*http.Cookie }
+	send := func(app http.Handler, b *browser, method, path string, form url.Values) *http.Response {
+		var body io.Reader
+		if form != nil {
+			body = strings.NewReader(form.Encode())
+		}
+		r := httptest.NewRequest(method, path, body)
+		r.Header.Set("Accept", "text/html")
+		r.Header.Set("Referer", path)
+		if form != nil {
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		for _, c := range b.jar {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		res := w.Result()
+		for _, c := range res.Cookies() {
+			if c.MaxAge < 0 {
+				delete(b.jar, c.Name)
+			} else {
+				b.jar[c.Name] = c
+			}
+		}
+		return res
+	}
+	screen := func(app http.Handler, b *browser, path string) string {
+		res := send(app, b, "GET", path, nil)
+		text, _ := io.ReadAll(res.Body)
+		return string(text)
+	}
+	field := func(text, name string) string {
+		for _, part := range strings.Split(text, "|") {
+			if value, ok := strings.CutPrefix(part, name+"="); ok {
+				return value
+			}
+		}
+		return ""
+	}
+	remembered := func(b *browser) bool {
+		for _, c := range b.jar {
+			if c.MaxAge > int(time.Hour/time.Second) {
+				return true
+			}
+		}
+		return false
+	}
+	signedIn := func(b *browser) bool {
+		_, err := sessions.Load(ctx, (&http.Request{Header: http.Header{"Cookie": cookieHeader(b.jar)}}))
+		return err == nil
+	}
+	fresh := func() *browser { return &browser{jar: map[string]*http.Cookie{}} }
+	at := func(res *http.Response) string { return fmt.Sprintf("status=%d location=%s", res.StatusCode, res.Header.Get("Location")) }
+
+	const email, first, second = "ada@example.test", "a-first-password-long", "a-second-password-long"
+
+	// Sign-up, the address taken, and a password the policy refuses.
+	b := fresh()
+	res := send(kit, b, "POST", "/auth/register", url.Values{"name": {"Ada"}, "email": {email},
+		"password": {first}, "password_confirmation": {first}})
+	fmt.Printf("register: %s code=%t\n", at(res), issued.last["verify-email"] != "")
+	res = send(kit, b, "POST", "/auth/register", url.Values{"name": {"Ada"}, "email": {email},
+		"password": {first}, "password_confirmation": {first}})
+	fmt.Printf("register again: %s\n", at(res))
+	fmt.Printf("register again screen: errors=%s\n", field(screen(kit, b, "/auth/register"), "errors"))
+	send(kit, b, "POST", "/auth/register", url.Values{"name": {"Bo"}, "email": {"bo@example.test"},
+		"password": {"short"}, "password_confirmation": {"other"}})
+	fmt.Printf("register short: errors=%s\n", field(screen(kit, b, "/auth/register"), "errors"))
+	send(kit, b, "POST", "/auth/register", url.Values{"email": {"cy@example.test"},
+		"password": {first}, "password_confirmation": {first}})
+	fmt.Printf("register no name: errors=%s\n", field(screen(kit, b, "/auth/register"), "errors"))
+
+	// The verification code.
+	res = send(kit, b, "POST", "/auth/verify/confirm", url.Values{"email": {email}, "email_code": {issued.last["verify-email"]}})
+	fmt.Printf("verify: %s\n", at(res))
+	fmt.Printf("verify screen: status=%s\n", field(screen(kit, b, "/auth/login"), "status"))
+	verified, err := users.Lookup(ctx, "tenant-a", email)
+	must(err)
+	fmt.Printf("verified: %t\n", verified.IsVerified())
+
+	// Sign-in, with and without remember-me, and a wrong password.
+	b = fresh()
+	res = send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {first}})
+	fmt.Printf("login: %s remembered=%t\n", at(res), remembered(b))
+	b = fresh()
+	res = send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {first}, "remember": {"1"}})
+	fmt.Printf("login remember: %s remembered=%t\n", at(res), remembered(b))
+	b = fresh()
+	res = send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {"not-the-password"}})
+	fmt.Printf("login wrong: %s\n", at(res))
+	fmt.Printf("login wrong screen: errors=%s\n", field(screen(kit, b, "/auth/login"), "errors"))
+
+	// The reset code, and the password it changes.
+	b = fresh()
+	res = send(kit, b, "POST", "/auth/password/email", url.Values{"email": {email}})
+	fmt.Printf("reset request: %s code=%t\n", at(res), issued.last["reset-password"] != "")
+	res = send(kit, b, "POST", "/auth/password/update", url.Values{"email": {email},
+		"email_code": {issued.last["reset-password"]}, "password": {second}, "password_confirmation": {second}})
+	fmt.Printf("reset: %s\n", at(res))
+	b = fresh()
+	res = send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {first}})
+	fmt.Printf("login old password: %s\n", at(res))
+	b = fresh()
+	res = send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {second}})
+	fmt.Printf("login new password: %s\n", at(res))
+
+	// The password confirmed, and the second factor set up with a real code.
+	res = send(kit, b, "POST", "/auth/password/confirm", url.Values{"password": {second}})
+	fmt.Printf("confirm: status=%d\n", res.StatusCode)
+	send(kit, b, "POST", "/auth/two-factor/setup", url.Values{})
+	fmt.Printf("setup: secret=%t\n", secret != "")
+	key, err := otp.DecodeSecret(secret)
+	must(err)
+	code := func(at time.Time) string {
+		c, err := otp.Default().Generate(key, at)
+		must(err)
+		return c
+	}
+	send(kit, b, "POST", "/auth/two-factor/setup/confirm", url.Values{"authenticator_code": {code(time.Now().Add(-30 * time.Second))}})
+	fmt.Printf("setup confirm: recovery-codes=%d\n", len(strings.Fields(recoveryCodes)))
+
+	// The challenge: a wrong code goes back, a right one signs in.
+	b = fresh()
+	res = send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {second}})
+	fmt.Printf("login with factor: %s\n", at(res))
+	res = send(kit, b, "POST", "/auth/two-factor/challenge", url.Values{"authenticator_code": {"000000"}})
+	fmt.Printf("challenge wrong: %s\n", at(res))
+	res = send(kit, b, "POST", "/auth/two-factor/challenge", url.Values{"authenticator_code": {code(time.Now().Add(30 * time.Second))}})
+	fmt.Printf("challenge right: %s signed-in=%t\n", at(res), signedIn(b))
+
+	// A recovery code signs in once.
+	spend := strings.Fields(recoveryCodes)[0]
+	b = fresh()
+	send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {second}})
+	res = send(kit, b, "POST", "/auth/two-factor/recovery", url.Values{"recovery_code": {spend}})
+	fmt.Printf("recovery: %s signed-in=%t\n", at(res), signedIn(b))
+	b = fresh()
+	send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {second}})
+	res = send(kit, b, "POST", "/auth/two-factor/recovery", url.Values{"recovery_code": {spend}})
+	fmt.Printf("recovery spent: %s\n", at(res))
+}
+
+func cookieHeader(jar map[string]*http.Cookie) []string {
+	var parts []string
+	for _, c := range jar {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return []string{strings.Join(parts, "; ")}
 }
 `

@@ -13,13 +13,12 @@ import (
 
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/qr"
 	"github.com/arandu-io/hesape/validation"
-
-	models "example.test/project/app/Models"
 )
 
 const (
@@ -70,10 +69,10 @@ func (in recoveryCodeRequest) LogValue() slog.Value {
 	return slog.GroupValue(slog.Bool("code_supplied", in.Code != ""))
 }
 
-func (m *Module) writePending(w http.ResponseWriter, u models.User, remember bool) error {
+func (m *Module) writePending(w http.ResponseWriter, u account.Account, remember bool) error {
 	payload, err := json.Marshal(pendingSignIn{
-		Tenant: u.TenantID, UserID: u.ID,
-		PasswordFingerprint: u.PasswordFingerprint(), Remember: remember,
+		Tenant: u.AccountTenant(), UserID: u.AccountID(),
+		PasswordFingerprint: account.Fingerprint(u.PasswordHash()), Remember: remember,
 	})
 	if err != nil {
 		return err
@@ -87,25 +86,25 @@ func (m *Module) writePending(w http.ResponseWriter, u models.User, remember boo
 	return nil
 }
 
-func (m *Module) readPending(r *http.Request) (models.User, bool, error) {
+func (m *Module) readPending(r *http.Request) (account.Account, bool, error) {
 	cookie, err := r.Cookie(pendingPurpose)
 	if err != nil {
-		return models.User{}, false, err
+		return nil, false, err
 	}
 	encoded, err := m.signer.Verify(pendingPurpose, cookie.Value)
 	if err != nil {
-		return models.User{}, false, err
+		return nil, false, err
 	}
 	var pending pendingSignIn
 	if err := json.Unmarshal([]byte(encoded), &pending); err != nil || pending.Tenant == "" || pending.UserID == "" || pending.PasswordFingerprint == "" {
-		return models.User{}, false, errors.New("invalid pending sign-in")
+		return nil, false, errors.New("invalid pending sign-in")
 	}
 	u, err := m.users.FindForAuthentication(r.Context(), pending.Tenant, pending.UserID)
 	if err != nil {
-		return models.User{}, false, err
+		return nil, false, err
 	}
-	if subtle.ConstantTimeCompare([]byte(u.PasswordFingerprint()), []byte(pending.PasswordFingerprint)) != 1 {
-		return models.User{}, false, errors.New("password changed during pending sign-in")
+	if subtle.ConstantTimeCompare([]byte(account.Fingerprint(u.PasswordHash())), []byte(pending.PasswordFingerprint)) != 1 {
+		return nil, false, errors.New("password changed during pending sign-in")
 	}
 	return u, pending.Remember, nil
 }
@@ -146,7 +145,7 @@ func (m *Module) verifyTwoFactorChallenge(ctx *hhttp.Context) error {
 	if in.Code == "" {
 		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
-	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, in.Code); err != nil {
+	if err := m.factors.VerifyAuthenticator(r.Context(), u.AccountTenant(), u.AccountID(), in.Code); err != nil {
 		if m.challengeLocked(w, r, err) {
 			return nil
 		}
@@ -187,7 +186,7 @@ func (m *Module) verifyRecoveryChallenge(ctx *hhttp.Context) error {
 	if in.Code == "" {
 		return validation.Errors{"recovery_code": {"that recovery code is not valid"}}
 	}
-	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, in.Code); err != nil {
+	if err := m.factors.ConsumeRecovery(r.Context(), u.AccountTenant(), u.AccountID(), in.Code); err != nil {
 		if m.challengeLocked(w, r, err) {
 			return nil
 		}

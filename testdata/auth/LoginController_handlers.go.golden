@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/hashing"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
@@ -106,7 +107,7 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 		return nil
 	}
 
-	required, err := m.factors.Required(r.Context(), u.TenantID, u.ID)
+	required, err := m.factors.Required(r.Context(), u.AccountTenant(), u.AccountID())
 	if err != nil {
 		log.For(r.Context()).Error("checking the second factor", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -161,15 +162,22 @@ func wrongPassword(err error) bool {
 // v0.21.0 on hesape v0.50.1 or earlier. Each sign-in through it rewrites one,
 // so their number only shrinks; an application that never ran that pair has
 // none and can delete it today.
-func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, typed, trimmed string) (models.User, error) {
-	var found models.User
+func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, typed, trimmed string) (account.Account, error) {
+	var found account.Account
 	_, err := nativeauth.NewTimebox().Call(func(box nativeauth.Timebox) (any, error) {
 		u, lookupErr := m.users.Lookup(r.Context(), tenant, email)
-		stored := u.Password
-		if lookupErr != nil || stored == "" {
+		if lookupErr == nil && u == nil {
+			lookupErr = nativeauth.ErrInvalidCredentials
+		}
+		stored := ""
+		if lookupErr == nil {
+			stored = u.PasswordHash()
+		}
+		hasPassword := stored != ""
+		if !hasPassword {
 			stored = trimmedDecoy()
 		}
-		if hashing.Check(trimmed, stored) != nil || lookupErr != nil || u.Password == "" {
+		if hashing.Check(trimmed, stored) != nil || lookupErr != nil || !hasPassword {
 			return nil, nativeauth.ErrInvalidCredentials
 		}
 		found = u
@@ -177,15 +185,16 @@ func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, typed, tr
 		return nil, nil
 	}, trimmedTimebox)
 	if err != nil {
-		return models.User{}, err
+		return nil, err
 	}
 
-	u, err := m.users.ResetPassword(r.Context(), found.TenantID, found.ID, found.Email, found.PasswordFingerprint(), typed)
+	u, err := m.users.ResetPassword(r.Context(), found.AccountTenant(), found.AccountID(), found.AccountEmail(),
+		account.Fingerprint(found.PasswordHash()), typed)
 	if err != nil {
-		return models.User{}, fmt.Errorf("storing the password as typed: %w", err)
+		return nil, fmt.Errorf("storing the password as typed: %w", err)
 	}
 	log.For(r.Context()).Info("login credentials verified in their trimmed form, password stored as typed",
-		"user_id", u.ID, "tenant", u.TenantID)
+		"user_id", u.AccountID(), "tenant", u.AccountTenant())
 	return u, nil
 }
 
@@ -203,7 +212,7 @@ var trimmedDecoy = sync.OnceValue(func() string {
 
 // finishSignIn is the only session-creation seam in the published flow. It is
 // called after password-only success or after a factor succeeds, never between.
-func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u models.User, remember bool) {
+func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u account.Account, remember bool) {
 	old := m.sessions.IDFromRequest(r)
 	if _, err := m.sessions.Rotate(r.Context(), w, old, subjectOf(u), session.Remember(remember)); err != nil {
 		log.For(r.Context()).Error("starting session", "error", err)
@@ -214,8 +223,19 @@ func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u models.U
 	redirect(w, r, m.sessions.TakeIntended(w, r, "/"))
 }
 
-func subjectOf(u models.User) nativeauth.Subject {
-	return nativeauth.Subject{ID: u.ID, Tenant: u.TenantID, Roles: u.Roles, Verified: u.Verified()}
+// subjectOf is the session subject of an account, built from what is stored
+// and nothing a request carried.
+//
+// The roles are this application's column and not one the account package
+// reads, so they are the one thing taken from the model itself. The account
+// package answers the application's *models.User, built by its users query;
+// anything else is given no roles rather than a guess at them.
+func subjectOf(u account.Account) nativeauth.Subject {
+	subject := nativeauth.Subject{ID: u.AccountID(), Tenant: u.AccountTenant(), Verified: u.IsVerified()}
+	if user, ok := u.(*models.User); ok {
+		subject.Roles = append([]string(nil), user.Roles...)
+	}
+	return subject
 }
 
 // doLogout destroys the session on the server, not only in the browser.

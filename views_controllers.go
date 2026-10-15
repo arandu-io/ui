@@ -99,11 +99,10 @@ import (
 	"github.com/arandu-io/framework/security"
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/encryption"
 	"github.com/arandu-io/hesape/onetime"
 	"github.com/arandu-io/hesape/session"
-
-	models "{{ .ModulePath }}/app/Models"
 )
 
 // TenantResolver decides which application tenant owns a guest request.
@@ -120,30 +119,45 @@ type UserNames interface {
 	PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error)
 }
 
-// Users is the application-owned authentication interface consumed by these
-// controllers. Its implementation owns policies, Model queries and writes.
+// Users is what these controllers ask of the application's accounts: the part
+// of *account.Users the screens call. bootstrap/app.go builds that with
+// account.NewUsers over the application's users query and user policy, and
+// hands it to New.
+//
+// Every method answers an account.Account, which is the application's
+// *models.User built by its own users query. The handlers read it through the
+// six readers the model implements, and only subjectOf looks past them.
 type Users interface {
 	UserNames
-	VerifyCredentials(context.Context, string, string, string, string) (models.User, error)
-	Register(context.Context, string, string, string, string) (models.User, error)
-	FindForAuthentication(context.Context, string, string) (models.User, error)
-	Lookup(context.Context, string, string) (models.User, error)
-	MarkVerified(context.Context, string, string, string) (models.User, bool, error)
-	ResetPassword(context.Context, string, string, string, string, string) (models.User, error)
-	ConfirmPassword(context.Context, nativeauth.Subject, string, string) error
+	VerifyCredentials(ctx context.Context, tenant, email, password, client string) (account.Account, error)
+	Register(ctx context.Context, tenant string, registration account.Registration) (account.Account, error)
+	FindForAuthentication(ctx context.Context, tenant, userID string) (account.Account, error)
+	Lookup(ctx context.Context, tenant, email string) (account.Account, error)
+	MarkVerified(ctx context.Context, tenant, userID, capturedEmail string) (account.Account, bool, error)
+	ResetPassword(ctx context.Context, tenant, userID, capturedEmail, capturedFingerprint, newPassword string) (account.Account, error)
+	ConfirmPassword(ctx context.Context, subject nativeauth.Subject, password, client string) error
 }
 
-// Factors is the application-owned second-factor interface. Hesape supplies
-// the algorithms and contracts; the application supplies policy and storage.
+// Factors is what these controllers ask of the authenticator second factor:
+// the part of *account.Factors the screens call, built by account.NewFactors.
+// It counts every code against the account's attempt budget, so nothing here
+// checks a code itself.
 type Factors interface {
-	Required(context.Context, string, string) (bool, error)
-	Begin(context.Context, nativeauth.Subject, string) (twofactor.Provisioning, error)
-	Confirm(context.Context, nativeauth.Subject, string) ([]string, error)
-	Disable(context.Context, nativeauth.Subject) error
-	RegenerateRecoveryCodes(context.Context, nativeauth.Subject) ([]string, error)
-	VerifyAuthenticator(context.Context, string, string, string) error
-	ConsumeRecovery(context.Context, string, string, string) error
+	Required(ctx context.Context, tenant, userID string) (bool, error)
+	Begin(ctx context.Context, actor nativeauth.Subject, issuer string) (twofactor.Provisioning, error)
+	Confirm(ctx context.Context, actor nativeauth.Subject, code string) ([]string, error)
+	Disable(ctx context.Context, actor nativeauth.Subject) error
+	RegenerateRecoveryCodes(ctx context.Context, actor nativeauth.Subject) ([]string, error)
+	VerifyAuthenticator(ctx context.Context, tenant, userID, code string) error
+	ConsumeRecovery(ctx context.Context, tenant, userID, code string) error
 }
+
+// Compile-time proof that the account package answers both interfaces, so a
+// method renamed there is a build error here rather than a nil at run time.
+var (
+	_ Users   = (*account.Users)(nil)
+	_ Factors = (*account.Factors)(nil)
+)
 
 // Module registers application-owned authentication screens and no schema.
 type Module struct {
@@ -282,6 +296,7 @@ import (
 	"sync"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/hashing"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
@@ -378,7 +393,7 @@ func (m *Module) doLogin(ctx *hhttp.Context) error {
 		return nil
 	}
 
-	required, err := m.factors.Required(r.Context(), u.TenantID, u.ID)
+	required, err := m.factors.Required(r.Context(), u.AccountTenant(), u.AccountID())
 	if err != nil {
 		log.For(r.Context()).Error("checking the second factor", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -433,15 +448,22 @@ func wrongPassword(err error) bool {
 // v0.21.0 on hesape v0.50.1 or earlier. Each sign-in through it rewrites one,
 // so their number only shrinks; an application that never ran that pair has
 // none and can delete it today.
-func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, typed, trimmed string) (models.User, error) {
-	var found models.User
+func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, typed, trimmed string) (account.Account, error) {
+	var found account.Account
 	_, err := nativeauth.NewTimebox().Call(func(box nativeauth.Timebox) (any, error) {
 		u, lookupErr := m.users.Lookup(r.Context(), tenant, email)
-		stored := u.Password
-		if lookupErr != nil || stored == "" {
+		if lookupErr == nil && u == nil {
+			lookupErr = nativeauth.ErrInvalidCredentials
+		}
+		stored := ""
+		if lookupErr == nil {
+			stored = u.PasswordHash()
+		}
+		hasPassword := stored != ""
+		if !hasPassword {
 			stored = trimmedDecoy()
 		}
-		if hashing.Check(trimmed, stored) != nil || lookupErr != nil || u.Password == "" {
+		if hashing.Check(trimmed, stored) != nil || lookupErr != nil || !hasPassword {
 			return nil, nativeauth.ErrInvalidCredentials
 		}
 		found = u
@@ -449,15 +471,16 @@ func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, typed, tr
 		return nil, nil
 	}, trimmedTimebox)
 	if err != nil {
-		return models.User{}, err
+		return nil, err
 	}
 
-	u, err := m.users.ResetPassword(r.Context(), found.TenantID, found.ID, found.Email, found.PasswordFingerprint(), typed)
+	u, err := m.users.ResetPassword(r.Context(), found.AccountTenant(), found.AccountID(), found.AccountEmail(),
+		account.Fingerprint(found.PasswordHash()), typed)
 	if err != nil {
-		return models.User{}, fmt.Errorf("storing the password as typed: %w", err)
+		return nil, fmt.Errorf("storing the password as typed: %w", err)
 	}
 	log.For(r.Context()).Info("login credentials verified in their trimmed form, password stored as typed",
-		"user_id", u.ID, "tenant", u.TenantID)
+		"user_id", u.AccountID(), "tenant", u.AccountTenant())
 	return u, nil
 }
 
@@ -475,7 +498,7 @@ var trimmedDecoy = sync.OnceValue(func() string {
 
 // finishSignIn is the only session-creation seam in the published flow. It is
 // called after password-only success or after a factor succeeds, never between.
-func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u models.User, remember bool) {
+func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u account.Account, remember bool) {
 	old := m.sessions.IDFromRequest(r)
 	if _, err := m.sessions.Rotate(r.Context(), w, old, subjectOf(u), session.Remember(remember)); err != nil {
 		log.For(r.Context()).Error("starting session", "error", err)
@@ -486,8 +509,19 @@ func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u models.U
 	redirect(w, r, m.sessions.TakeIntended(w, r, "/"))
 }
 
-func subjectOf(u models.User) nativeauth.Subject {
-	return nativeauth.Subject{ID: u.ID, Tenant: u.TenantID, Roles: u.Roles, Verified: u.Verified()}
+// subjectOf is the session subject of an account, built from what is stored
+// and nothing a request carried.
+//
+// The roles are this application's column and not one the account package
+// reads, so they are the one thing taken from the model itself. The account
+// package answers the application's *models.User, built by its users query;
+// anything else is given no roles rather than a guess at them.
+func subjectOf(u account.Account) nativeauth.Subject {
+	subject := nativeauth.Subject{ID: u.AccountID(), Tenant: u.AccountTenant(), Verified: u.IsVerified()}
+	if user, ok := u.(*models.User); ok {
+		subject.Roles = append([]string(nil), user.Roles...)
+	}
+	return subject
 }
 
 // doLogout destroys the session on the server, not only in the browser.

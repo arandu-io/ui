@@ -260,9 +260,21 @@ the framework's. The import:
 
     authui "%s/app/Http/Controllers/Auth"
 
+The screens call the account rules of github.com/arandu-io/hesape/auth/account
+(hesape v0.60.0 or later), built over this project's users query and user
+policy, with the second factor counting codes in the store the rate limit
+counts in:
+
+    users, err := account.NewUsers(account.Config{
+        DB:     db,
+        Query:  func() *model.Builder { return models.Users(db).Base() },
+        Policy: account.PolicyOf(policies.UserPolicy{}),
+    })
+    factors, err := account.NewFactors(db, fw.App.Key, limitStore.GetStore(), nil, users)
+
 and, in the k.Register(...) list:
 
-    authui.New(userService, twoFactorService, emailCodes, sessions, csrf,
+    authui.New(users, factors, emailCodes, sessions, csrf,
         mailer, fw.App.Key,
         authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure),
 
@@ -273,10 +285,10 @@ everywhere but APP_ENV=dev -- so the three cannot disagree.
 
 The landing page is published too, because a page renders with the type of its
 layout and this command replaces the layout. It is built in the same file, and
-it takes the application-owned user service and tenant so the header can greet by name rather
+it takes the account rules and the tenant so the header can greet by name rather
 than by the id in the session:
 
-    controllers.NewHomeController(userService, cfg.Auth.Tenant),
+    controllers.NewHomeController(users, cfg.Auth.Tenant),
 
 Neither constructor takes the application name. The framework puts APP_NAME on
 every request, and the screens, the messages and the landing page read it
@@ -289,8 +301,9 @@ routes/web.go, as a new project's already does:
     r.Action("GET", "/{$}", d.Home.Index, middleware.LoadSubject(d.Sessions)).Name("home")
 
 Remove any former framework authentication module registration before adding
-this one: both answer the same paths, and native account policy and storage now
-belong to the application services passed above.
+this one: both answer the same paths. A project that still has
+app/Services/UserService.go and TwoFactorService.go deletes them as hesape's
+UPGRADE.md for v0.60.0 says; the account rules passed above replace both.
 
 Every view is its own Go package, and so is the script under resources/js. A
 package nobody imports registers nothing -- so bootstrap/app.go needs these
@@ -327,8 +340,10 @@ open, what a confirmed address is allowed to do. What the sign-up form asks for
 is one of them -- the registrationAsks line in RegisterController.go says
 whether it asks for a password twice, once, or not at all, and the form and the
 validation both read it, so they cannot drift apart. It ships asking twice.
-Switching it off entirely leaves the credential to your own user service, which
-must store an absent password rather than the hash of an empty one.
+Switching it off entirely leaves the credential to Users.Register, which must
+store an absent password rather than the hash of an empty one -- and the account
+package's refuses a registration without a password, so that needs a Users of
+your own in front of it.
 
 Required routes remain outside the marked custom block so --force can carry
 security fixes; application-specific routes placed inside that block survive a

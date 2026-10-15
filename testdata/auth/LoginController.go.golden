@@ -13,11 +13,10 @@ import (
 	"github.com/arandu-io/framework/security"
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/encryption"
 	"github.com/arandu-io/hesape/onetime"
 	"github.com/arandu-io/hesape/session"
-
-	models "example.test/project/app/Models"
 )
 
 // TenantResolver decides which application tenant owns a guest request.
@@ -34,30 +33,45 @@ type UserNames interface {
 	PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error)
 }
 
-// Users is the application-owned authentication interface consumed by these
-// controllers. Its implementation owns policies, Model queries and writes.
+// Users is what these controllers ask of the application's accounts: the part
+// of *account.Users the screens call. bootstrap/app.go builds that with
+// account.NewUsers over the application's users query and user policy, and
+// hands it to New.
+//
+// Every method answers an account.Account, which is the application's
+// *models.User built by its own users query. The handlers read it through the
+// six readers the model implements, and only subjectOf looks past them.
 type Users interface {
 	UserNames
-	VerifyCredentials(context.Context, string, string, string, string) (models.User, error)
-	Register(context.Context, string, string, string, string) (models.User, error)
-	FindForAuthentication(context.Context, string, string) (models.User, error)
-	Lookup(context.Context, string, string) (models.User, error)
-	MarkVerified(context.Context, string, string, string) (models.User, bool, error)
-	ResetPassword(context.Context, string, string, string, string, string) (models.User, error)
-	ConfirmPassword(context.Context, nativeauth.Subject, string, string) error
+	VerifyCredentials(ctx context.Context, tenant, email, password, client string) (account.Account, error)
+	Register(ctx context.Context, tenant string, registration account.Registration) (account.Account, error)
+	FindForAuthentication(ctx context.Context, tenant, userID string) (account.Account, error)
+	Lookup(ctx context.Context, tenant, email string) (account.Account, error)
+	MarkVerified(ctx context.Context, tenant, userID, capturedEmail string) (account.Account, bool, error)
+	ResetPassword(ctx context.Context, tenant, userID, capturedEmail, capturedFingerprint, newPassword string) (account.Account, error)
+	ConfirmPassword(ctx context.Context, subject nativeauth.Subject, password, client string) error
 }
 
-// Factors is the application-owned second-factor interface. Hesape supplies
-// the algorithms and contracts; the application supplies policy and storage.
+// Factors is what these controllers ask of the authenticator second factor:
+// the part of *account.Factors the screens call, built by account.NewFactors.
+// It counts every code against the account's attempt budget, so nothing here
+// checks a code itself.
 type Factors interface {
-	Required(context.Context, string, string) (bool, error)
-	Begin(context.Context, nativeauth.Subject, string) (twofactor.Provisioning, error)
-	Confirm(context.Context, nativeauth.Subject, string) ([]string, error)
-	Disable(context.Context, nativeauth.Subject) error
-	RegenerateRecoveryCodes(context.Context, nativeauth.Subject) ([]string, error)
-	VerifyAuthenticator(context.Context, string, string, string) error
-	ConsumeRecovery(context.Context, string, string, string) error
+	Required(ctx context.Context, tenant, userID string) (bool, error)
+	Begin(ctx context.Context, actor nativeauth.Subject, issuer string) (twofactor.Provisioning, error)
+	Confirm(ctx context.Context, actor nativeauth.Subject, code string) ([]string, error)
+	Disable(ctx context.Context, actor nativeauth.Subject) error
+	RegenerateRecoveryCodes(ctx context.Context, actor nativeauth.Subject) ([]string, error)
+	VerifyAuthenticator(ctx context.Context, tenant, userID, code string) error
+	ConsumeRecovery(ctx context.Context, tenant, userID, code string) error
 }
+
+// Compile-time proof that the account package answers both interfaces, so a
+// method renamed there is a build error here rather than a nil at run time.
+var (
+	_ Users   = (*account.Users)(nil)
+	_ Factors = (*account.Factors)(nil)
+)
 
 // Module registers application-owned authentication screens and no schema.
 type Module struct {

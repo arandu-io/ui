@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/hashing"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
@@ -19,8 +20,6 @@ import (
 	"github.com/arandu-io/hesape/validation"
 
 	appmail "{{ .ModulePath }}/app/Mail"
-	models "{{ .ModulePath }}/app/Models"
-	services "{{ .ModulePath }}/app/Services"
 )
 
 const (
@@ -50,7 +49,9 @@ const (
 	// NoPassword asks for no password at all, for an application where an
 	// address or a telephone number is the identity and a single-use code is
 	// the proof. Nothing is validated here, and Users.Register is left to
-	// decide what a new account has to carry.
+	// decide what a new account has to carry -- and account.Users refuses a
+	// registration without a password, so this needs a Users of the
+	// application's own in front of it.
 	NoPassword
 )
 
@@ -208,9 +209,10 @@ func (m *Module) doRegister(ctx *hhttp.Context) error {
 		return errs
 	}
 
-	u, err := m.users.Register(r.Context(), m.tenant(r), in.Name, in.Email, in.Password)
+	u, err := m.users.Register(r.Context(), m.tenant(r),
+		account.Registration{Name: in.Name, Email: in.Email, Password: in.Password})
 	if err != nil {
-		if errors.Is(err, services.ErrEmailTaken) {
+		if errors.Is(err, account.ErrEmailTaken) {
 			return validation.Errors{"email": {"that address is already registered. Sign in instead."}}
 		}
 		// The application's own rules answer the same way as the ones above:
@@ -252,7 +254,7 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), in.Code) != nil {
 		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
-	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
+	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.AccountTenant(), u.AccountID(), u.AccountEmail())
 	if err != nil {
 		log.For(r.Context()).Error("marking an address verified", "error", err)
 		return validation.Errors{"email_code": {"that code is not valid"}}
@@ -261,7 +263,7 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 	if firstVerification {
 		status = "Your address is confirmed. Welcome."
 	}
-	m.notify(w, r, "/auth/login", status, url.Values{"email": {u.Email}})
+	m.notify(w, r, "/auth/login", status, url.Values{"email": {u.AccountEmail()}})
 	return nil
 }
 
@@ -273,7 +275,7 @@ func (m *Module) resendVerification(ctx *hhttp.Context) error {
 	if err := ctx.Bind(&in); err != nil {
 		return err
 	}
-	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil && !u.Verified() {
+	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil && !u.IsVerified() {
 		if err := m.sendVerification(r, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
 			log.For(r.Context()).Error("resending the verification code", "error", err)
 		}
@@ -282,18 +284,18 @@ func (m *Module) resendVerification(ctx *hhttp.Context) error {
 	return nil
 }
 
-func (m *Module) sendVerification(r *http.Request, u models.User) error {
+func (m *Module) sendVerification(r *http.Request, u account.Account) error {
 	code, err := m.codes.Issue(r.Context(), verifyPurpose, emailCodeSubject(u))
 	if err != nil {
 		return err
 	}
 	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
-		Name: firstWord(u.Name), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
+		Name: firstWord(u.AccountName()), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
 	})
 }
 
-func emailCodeSubject(u models.User) string {
-	return u.TenantID + "\x00" + u.ID + "\x00" + services.NormalizeEmail(u.Email)
+func emailCodeSubject(u account.Account) string {
+	return u.AccountTenant() + "\x00" + u.AccountID() + "\x00" + account.NormalizeEmail(u.AccountEmail())
 }
 
 func first(messages []string) string {
@@ -325,12 +327,11 @@ import (
 
 	"github.com/arandu-io/framework/mail"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/validation"
 	"github.com/arandu-io/hesape/view"
-
-	models "{{ .ModulePath }}/app/Models"
 )
 
 type ChromeProps struct {
@@ -459,8 +460,8 @@ func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 }
 
-func mailAddress(u models.User) mail.Address {
-	return mail.Address{Email: u.Email, Name: u.Name}
+func mailAddress(u account.Account) mail.Address {
+	return mail.Address{Email: u.AccountEmail(), Name: u.AccountName()}
 }
 `
 
@@ -479,14 +480,13 @@ import (
 	"strings"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	hmiddleware "github.com/arandu-io/hesape/routing/middleware"
 	"github.com/arandu-io/hesape/validation"
 
 	appmail "{{ .ModulePath }}/app/Mail"
-	models "{{ .ModulePath }}/app/Models"
-	services "{{ .ModulePath }}/app/Services"
 )
 
 const (
@@ -552,18 +552,19 @@ func (m *Module) sendPasswordCode(ctx *hhttp.Context) error {
 	return nil
 }
 
-func (m *Module) sendPasswordReset(r *http.Request, u models.User) error {
+func (m *Module) sendPasswordReset(r *http.Request, u account.Account) error {
 	code, err := m.codes.Issue(r.Context(), resetPurpose, resetCodeSubject(u))
 	if err != nil {
 		return err
 	}
 	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.PasswordReset{
-		Name: firstWord(u.Name), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
+		Name: firstWord(u.AccountName()), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
 	})
 }
 
-func resetCodeSubject(u models.User) string {
-	return u.TenantID + "\x00" + u.ID + "\x00" + services.NormalizeEmail(u.Email) + "\x00" + u.PasswordFingerprint()
+func resetCodeSubject(u account.Account) string {
+	return u.AccountTenant() + "\x00" + u.AccountID() + "\x00" + account.NormalizeEmail(u.AccountEmail()) +
+		"\x00" + account.Fingerprint(u.PasswordHash())
 }
 
 func (m *Module) showPasswordReset(w http.ResponseWriter, r *http.Request) {
@@ -598,9 +599,9 @@ func (m *Module) updatePassword(ctx *hhttp.Context) error {
 	if err != nil || m.codes.Consume(r.Context(), resetPurpose, resetCodeSubject(u), in.Code) != nil {
 		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
-	capturedEmail := u.Email
-	capturedPasswordFingerprint := u.PasswordFingerprint()
-	u, err = m.users.ResetPassword(r.Context(), u.TenantID, u.ID, capturedEmail, capturedPasswordFingerprint, in.Password)
+	capturedEmail := u.AccountEmail()
+	capturedPasswordFingerprint := account.Fingerprint(u.PasswordHash())
+	u, err = m.users.ResetPassword(r.Context(), u.AccountTenant(), u.AccountID(), capturedEmail, capturedPasswordFingerprint, in.Password)
 	if err != nil {
 		log.For(r.Context()).Error("writing the new password", "error", err)
 		return validation.Errors{"email_code": {"that code is not valid"}}
@@ -608,7 +609,7 @@ func (m *Module) updatePassword(ctx *hhttp.Context) error {
 	if err := m.sessions.DestroyOthers(r.Context(), subjectOf(u), ""); err != nil {
 		log.For(r.Context()).Error("signing the account's other sessions out", "error", err)
 	}
-	m.notify(w, r, "/auth/login", "Your password has been changed. Sign in with it.", url.Values{"email": {u.Email}})
+	m.notify(w, r, "/auth/login", "Your password has been changed. Sign in with it.", url.Values{"email": {u.AccountEmail()}})
 	return nil
 }
 
@@ -675,13 +676,12 @@ import (
 
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/qr"
 	"github.com/arandu-io/hesape/validation"
-
-	models "{{ .ModulePath }}/app/Models"
 )
 
 const (
@@ -732,10 +732,10 @@ func (in recoveryCodeRequest) LogValue() slog.Value {
 	return slog.GroupValue(slog.Bool("code_supplied", in.Code != ""))
 }
 
-func (m *Module) writePending(w http.ResponseWriter, u models.User, remember bool) error {
+func (m *Module) writePending(w http.ResponseWriter, u account.Account, remember bool) error {
 	payload, err := json.Marshal(pendingSignIn{
-		Tenant: u.TenantID, UserID: u.ID,
-		PasswordFingerprint: u.PasswordFingerprint(), Remember: remember,
+		Tenant: u.AccountTenant(), UserID: u.AccountID(),
+		PasswordFingerprint: account.Fingerprint(u.PasswordHash()), Remember: remember,
 	})
 	if err != nil {
 		return err
@@ -749,25 +749,25 @@ func (m *Module) writePending(w http.ResponseWriter, u models.User, remember boo
 	return nil
 }
 
-func (m *Module) readPending(r *http.Request) (models.User, bool, error) {
+func (m *Module) readPending(r *http.Request) (account.Account, bool, error) {
 	cookie, err := r.Cookie(pendingPurpose)
 	if err != nil {
-		return models.User{}, false, err
+		return nil, false, err
 	}
 	encoded, err := m.signer.Verify(pendingPurpose, cookie.Value)
 	if err != nil {
-		return models.User{}, false, err
+		return nil, false, err
 	}
 	var pending pendingSignIn
 	if err := json.Unmarshal([]byte(encoded), &pending); err != nil || pending.Tenant == "" || pending.UserID == "" || pending.PasswordFingerprint == "" {
-		return models.User{}, false, errors.New("invalid pending sign-in")
+		return nil, false, errors.New("invalid pending sign-in")
 	}
 	u, err := m.users.FindForAuthentication(r.Context(), pending.Tenant, pending.UserID)
 	if err != nil {
-		return models.User{}, false, err
+		return nil, false, err
 	}
-	if subtle.ConstantTimeCompare([]byte(u.PasswordFingerprint()), []byte(pending.PasswordFingerprint)) != 1 {
-		return models.User{}, false, errors.New("password changed during pending sign-in")
+	if subtle.ConstantTimeCompare([]byte(account.Fingerprint(u.PasswordHash())), []byte(pending.PasswordFingerprint)) != 1 {
+		return nil, false, errors.New("password changed during pending sign-in")
 	}
 	return u, pending.Remember, nil
 }
@@ -808,7 +808,7 @@ func (m *Module) verifyTwoFactorChallenge(ctx *hhttp.Context) error {
 	if in.Code == "" {
 		return validation.Errors{"authenticator_code": {"that code is not valid"}}
 	}
-	if err := m.factors.VerifyAuthenticator(r.Context(), u.TenantID, u.ID, in.Code); err != nil {
+	if err := m.factors.VerifyAuthenticator(r.Context(), u.AccountTenant(), u.AccountID(), in.Code); err != nil {
 		if m.challengeLocked(w, r, err) {
 			return nil
 		}
@@ -849,7 +849,7 @@ func (m *Module) verifyRecoveryChallenge(ctx *hhttp.Context) error {
 	if in.Code == "" {
 		return validation.Errors{"recovery_code": {"that recovery code is not valid"}}
 	}
-	if err := m.factors.ConsumeRecovery(r.Context(), u.TenantID, u.ID, in.Code); err != nil {
+	if err := m.factors.ConsumeRecovery(r.Context(), u.AccountTenant(), u.AccountID(), in.Code); err != nil {
 		if m.challengeLocked(w, r, err) {
 			return nil
 		}

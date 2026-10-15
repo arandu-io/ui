@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/hashing"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
@@ -14,8 +15,6 @@ import (
 	"github.com/arandu-io/hesape/validation"
 
 	appmail "example.test/project/app/Mail"
-	models "example.test/project/app/Models"
-	services "example.test/project/app/Services"
 )
 
 const (
@@ -45,7 +44,9 @@ const (
 	// NoPassword asks for no password at all, for an application where an
 	// address or a telephone number is the identity and a single-use code is
 	// the proof. Nothing is validated here, and Users.Register is left to
-	// decide what a new account has to carry.
+	// decide what a new account has to carry -- and account.Users refuses a
+	// registration without a password, so this needs a Users of the
+	// application's own in front of it.
 	NoPassword
 )
 
@@ -203,9 +204,10 @@ func (m *Module) doRegister(ctx *hhttp.Context) error {
 		return errs
 	}
 
-	u, err := m.users.Register(r.Context(), m.tenant(r), in.Name, in.Email, in.Password)
+	u, err := m.users.Register(r.Context(), m.tenant(r),
+		account.Registration{Name: in.Name, Email: in.Email, Password: in.Password})
 	if err != nil {
-		if errors.Is(err, services.ErrEmailTaken) {
+		if errors.Is(err, account.ErrEmailTaken) {
 			return validation.Errors{"email": {"that address is already registered. Sign in instead."}}
 		}
 		// The application's own rules answer the same way as the ones above:
@@ -247,7 +249,7 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), in.Code) != nil {
 		return validation.Errors{"email_code": {"that code is not valid"}}
 	}
-	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.TenantID, u.ID, u.Email)
+	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.AccountTenant(), u.AccountID(), u.AccountEmail())
 	if err != nil {
 		log.For(r.Context()).Error("marking an address verified", "error", err)
 		return validation.Errors{"email_code": {"that code is not valid"}}
@@ -256,7 +258,7 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 	if firstVerification {
 		status = "Your address is confirmed. Welcome."
 	}
-	m.notify(w, r, "/auth/login", status, url.Values{"email": {u.Email}})
+	m.notify(w, r, "/auth/login", status, url.Values{"email": {u.AccountEmail()}})
 	return nil
 }
 
@@ -268,7 +270,7 @@ func (m *Module) resendVerification(ctx *hhttp.Context) error {
 	if err := ctx.Bind(&in); err != nil {
 		return err
 	}
-	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil && !u.Verified() {
+	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil && !u.IsVerified() {
 		if err := m.sendVerification(r, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
 			log.For(r.Context()).Error("resending the verification code", "error", err)
 		}
@@ -277,18 +279,18 @@ func (m *Module) resendVerification(ctx *hhttp.Context) error {
 	return nil
 }
 
-func (m *Module) sendVerification(r *http.Request, u models.User) error {
+func (m *Module) sendVerification(r *http.Request, u account.Account) error {
 	code, err := m.codes.Issue(r.Context(), verifyPurpose, emailCodeSubject(u))
 	if err != nil {
 		return err
 	}
 	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
-		Name: firstWord(u.Name), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
+		Name: firstWord(u.AccountName()), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
 	})
 }
 
-func emailCodeSubject(u models.User) string {
-	return u.TenantID + "\x00" + u.ID + "\x00" + services.NormalizeEmail(u.Email)
+func emailCodeSubject(u account.Account) string {
+	return u.AccountTenant() + "\x00" + u.AccountID() + "\x00" + account.NormalizeEmail(u.AccountEmail())
 }
 
 func first(messages []string) string {

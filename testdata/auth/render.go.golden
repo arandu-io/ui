@@ -9,12 +9,11 @@ import (
 
 	"github.com/arandu-io/framework/mail"
 	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	"github.com/arandu-io/hesape/validation"
 	"github.com/arandu-io/hesape/view"
-
-	models "example.test/project/app/Models"
 )
 
 type ChromeProps struct {
@@ -143,6 +142,6 @@ func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 }
 
-func mailAddress(u models.User) mail.Address {
-	return mail.Address{Email: u.Email, Name: u.Name}
+func mailAddress(u account.Account) mail.Address {
+	return mail.Address{Email: u.AccountEmail(), Name: u.AccountName()}
 }
