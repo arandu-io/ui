@@ -11,6 +11,32 @@ project receives, not about this repository's code.
 
 ---
 
+## v0.24.2 — a password stored trimmed signs in without being rewritten
+
+`verifyTrimmedPassword` in `app/Http/Controllers/Auth/LoginController_handlers.go`
+stored the password as typed through `Users.ResetPassword` when the trimmed
+form matched. That rewrote the hash of anybody whose keyboard added a space at
+the end: the next sign-in without the space was refused, and a
+`PasswordReset` event was stored for a change nobody asked for. And
+`ResetPassword` refuses an account `Hooks.Admit` refuses as a spent link,
+which the handler answered with a 500 where a wrong password goes back to the
+form: an oracle for a refused account's password.
+
+It now asks `Users.VerifyCredentials` again with the trimmed form and writes
+nothing. The service's throttle, timebox and `Hooks.Admit` hold the second
+form as they hold the first, so a password typed with spaces and wrong both
+ways counts as two attempts; every refusal on that path but a lock is the
+usual message; a match signs in, into the second factor when one is on, and
+leaves the stored hash as it was.
+
+The file is kept by a plain republish. Publish it again with `auth --force`,
+which carries its custom block over, or replace the function by hand with the
+one in this release and change its call in `doLogin` to
+`m.verifyTrimmedPassword(r, tenant, in.Email, trimmed)`; `sync` and
+`hesape/hashing` leave the imports when nothing else in the file uses them.
+
+---
+
 ## v0.24.0 — the published controllers call `hesape/auth/account`
 
 The account rules each project carried as a copy -- `UserService`,
