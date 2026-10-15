@@ -278,6 +278,11 @@ and, in the k.Register(...) list:
         mailer, fw.App.Key,
         authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure),
 
+A sign-up form that asks for more than a name, an address and a password --
+a document number, a phone -- adds .WithRegistration(read) to that call: read
+binds the extra fields into the registration's Extra, and account.Hooks.Prepare
+stores them.
+
 The last argument is whether the cookies the module writes itself carry Secure.
 cfg.Framework.Session.Secure is the decision the session cookie and the flash
 already follow -- SESSION_SECURE_COOKIE when it is set, and otherwise Secure

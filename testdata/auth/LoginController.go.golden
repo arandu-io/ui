@@ -85,6 +85,11 @@ type Module struct {
 	flash    *session.Flash
 	tenant   TenantResolver
 	secure   bool
+
+	// registration reads what this application's sign-up form adds to the
+	// three fields the kit reads. Nil is the form the kit publishes. See
+	// WithRegistration.
+	registration RegistrationReader
 }
 
 // New returns the authentication screen module.

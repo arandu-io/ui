@@ -2729,6 +2729,10 @@ func main() {
 // confirmation, two-factor setup with a real authenticator code, the challenge
 // refusing a wrong code and taking a right one, and a recovery code spent once.
 //
+// A second module over the same tables carries WithRegistration, with a sign-up
+// form that asks a document number instead of a name, completed by
+// account.Hooks.Prepare from the registration's Extra.
+//
 // It requires the SQLite connector the skeleton requires, by published tag like
 // the rest, and skips like the compile gate when the tags are not to be had.
 func TestTheFlowRunsOnTheAccountPackage(t *testing.T) {
@@ -2759,6 +2763,9 @@ func TestTheFlowRunsOnTheAccountPackage(t *testing.T) {
 		"challenge right: status=303 location=/ signed-in=true",
 		"recovery: status=303 location=/ signed-in=true",
 		"recovery spent: status=303 location=/auth/two-factor/recovery",
+		"seam screen: errors=document",
+		"seam register: status=303 location=/auth/verify",
+		"seam name: Holder of 123.456.789-09",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the published kit on the account package did not answer %q; it printed:\n%s", want, out)
@@ -2802,6 +2809,7 @@ import (
 	"github.com/arandu-io/hesape/onetime"
 	"github.com/arandu-io/hesape/otp"
 	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/validation"
 	"github.com/arandu-io/hesape/view"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
@@ -2865,6 +2873,23 @@ type bodies struct{}
 
 func (bodies) RenderToString(string, any) (string, error) { return "body", nil }
 
+// person is what the document form adds, carried in Registration.Extra.
+type person struct{ Document string }
+
+func readPerson(ctx *hhttp.Context, registration account.Registration) (account.Registration, error) {
+	var in struct {
+		Document string ` + "`form:\"document\"`" + `
+	}
+	if err := ctx.Bind(&in); err != nil {
+		return registration, err
+	}
+	if in.Document == "" {
+		return registration, validation.Errors{"document": {"type your document number"}}
+	}
+	registration.Extra = person{Document: in.Document}
+	return registration, nil
+}
+
 var (
 	secret        string
 	recoveryCodes string
@@ -2925,6 +2950,17 @@ func main() {
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	flash := session.NewFlash(appKey, false)
 
+	// The person the document form registers gets a name from Prepare, which
+	// reads what the form's reader left in Extra.
+	seamUsers, err := account.NewUsers(account.Config{DB: db, Query: query, Policy: account.PolicyOf(userPolicy{}),
+		Hooks: account.Hooks{Prepare: func(_ context.Context, registration *account.Registration, _ account.Account) error {
+			if p, ok := registration.Extra.(person); ok && registration.Name == "" {
+				registration.Name = "Holder of " + p.Document
+			}
+			return nil
+		}}})
+	must(err)
+
 	mount := func(module *authui.Module) http.Handler {
 		router := fhttp.NewRouter().WithFlash(flash)
 		module.Routes(router)
@@ -2938,6 +2974,7 @@ func main() {
 			appKey, authui.FixedTenant("tenant-a"), false)
 	}
 	kit := mount(newModule(users))
+	seam := mount(newModule(seamUsers).WithRegistration(readPerson))
 
 	type browser struct{ jar map[string]*http.Cookie }
 	send := func(app http.Handler, b *browser, method, path string, form url.Values) *http.Response {
@@ -3080,6 +3117,18 @@ func main() {
 	send(kit, b, "POST", "/auth/login", url.Values{"email": {email}, "password": {second}})
 	res = send(kit, b, "POST", "/auth/two-factor/recovery", url.Values{"recovery_code": {spend}})
 	fmt.Printf("recovery spent: %s\n", at(res))
+
+	// The registration seam: a form with a document number and no name.
+	b = fresh()
+	send(seam, b, "POST", "/auth/register", url.Values{"email": {"doc@example.test"},
+		"password": {first}, "password_confirmation": {first}})
+	fmt.Printf("seam screen: errors=%s\n", field(screen(seam, b, "/auth/register"), "errors"))
+	res = send(seam, b, "POST", "/auth/register", url.Values{"email": {"doc@example.test"}, "document": {"123.456.789-09"},
+		"password": {first}, "password_confirmation": {first}})
+	fmt.Printf("seam register: %s\n", at(res))
+	holder, err := users.Lookup(ctx, "tenant-a", "doc@example.test")
+	must(err)
+	fmt.Printf("seam name: %s\n", holder.AccountName())
 }
 
 func cookieHeader(jar map[string]*http.Cookie) []string {

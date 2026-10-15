@@ -161,6 +161,40 @@ func (in resendRequest) LogValue() slog.Value {
 	return slog.GroupValue(slog.Bool("email_supplied", in.Email != ""))
 }
 
+// RegistrationReader reads what this application's sign-up form asks beyond
+// the address and the password, into the registration Users.Register is
+// handed.
+//
+// It is given the request, to bind its own fields with ctx.Bind into a struct
+// of its own, and the registration the kit read: the name, the address and
+// the password as the form sent them. It returns that registration with what
+// it read -- a document number, a phone -- in Extra, where account.Hooks.Prepare
+// reads it; it may change the name, or leave it empty for Prepare to give one
+// when the form asks for none.
+//
+// It refuses the form by returning validation.Errors, keyed by the names of
+// the inputs on the sign-up screen, and those are drawn beside the kit's own.
+// Any other error is answered as a failure of the server.
+type RegistrationReader func(ctx *hhttp.Context, registration account.Registration) (account.Registration, error)
+
+// WithRegistration says this application's sign-up form asks for more than the
+// kit's, and how to read it.
+//
+// The kit still binds and checks the address and the password, against
+// passwordPolicy and registrationAsks, so the checklist on the screen and the
+// refusal stay one rule. Everything else the form asks -- the name among it --
+// is read's to check, because a form that asks a document number instead of a
+// name is one where an empty name is right. The fields are drawn by the
+// project's own register.kyse.go, and what was typed into them comes back in
+// the flash with the rest when the form is refused.
+//
+// Nil, which is what New leaves, is the form the kit publishes: a name, an
+// address and a password, each required.
+func (m *Module) WithRegistration(read RegistrationReader) *Module {
+	m.registration = read
+	return m
+}
+
 func (m *Module) showRegister(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.register", AuthPage{
 		Page:                   m.page(r, "Create an account"),
@@ -188,7 +222,7 @@ func (m *Module) doRegister(ctx *hhttp.Context) error {
 	}
 
 	errs := validation.Errors{}
-	if in.Name == "" {
+	if in.Name == "" && m.registration == nil {
 		errs["name"] = []string{"type your name"}
 	}
 	if in.Email == "" {
@@ -200,12 +234,36 @@ func (m *Module) doRegister(ctx *hhttp.Context) error {
 	if registrationAsks.asksForConfirmation() && in.Password != in.PasswordConfirmation {
 		errs["password_confirmation"] = []string{"the two passwords do not match"}
 	}
+
+	registration := account.Registration{Name: in.Name, Email: in.Email, Password: in.Password}
+	if m.registration != nil {
+		// The application's own fields are read even when the kit's refused,
+		// so a person sees every message at once rather than one form at a
+		// time. The address and the password stay the kit's: a reader that
+		// changed them would hand Register what this form did not check.
+		read, err := m.registration(ctx, registration)
+		var invalid validation.Errors
+		switch {
+		case errors.As(err, &invalid):
+			for field, messages := range invalid {
+				if _, taken := errs[field]; !taken {
+					errs[field] = messages
+				}
+			}
+		case err != nil:
+			log.For(r.Context()).Error("reading the registration form", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return nil
+		default:
+			read.Email, read.Password = registration.Email, registration.Password
+			registration = read
+		}
+	}
 	if errs.Any() {
 		return errs
 	}
 
-	u, err := m.users.Register(r.Context(), m.tenant(r),
-		account.Registration{Name: in.Name, Email: in.Email, Password: in.Password})
+	u, err := m.users.Register(r.Context(), m.tenant(r), registration)
 	if err != nil {
 		if errors.Is(err, account.ErrEmailTaken) {
 			return validation.Errors{"email": {"that address is already registered. Sign in instead."}}
