@@ -196,9 +196,8 @@ the value the session cookie and the kernel's flash follow, and the pending
 two-factor cookie takes it. `TestTheWiringPassesTheOneSecureDecision` holds the
 printed argument and `TestThePendingCookieCarriesTheSecureNewWasGiven` reads the
 cookie off a running module. The compile and run gates pin framework v0.60.0, hesape v0.73.0 and kyse
-v0.35.0. Skeleton v0.35.1 requires kyse v0.35.0 and older framework and hesape;
-the two leads are in `ahead`, because the printed wiring is the `bootstrap/app.go`
-builder, which the skeleton in that layout (ADR-0182) carries. When the kit needs a module
+v0.41.0, the versions skeleton v0.36.0 -- the first in the `bootstrap/app.go`
+builder layout (ADR-0182) -- requires, so `ahead` is empty. When the kit needs a module
 newer than the named skeleton's, `ahead` in `publish_internal_test.go` names the
 lead and its reason, and the pin check fails the day a named skeleton catches
 up.
