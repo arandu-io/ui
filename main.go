@@ -253,43 +253,33 @@ func publishAuth(args []string) error {
 // in the same process.
 //
 // It is written for the layout where bootstrap/ holds app.go and nothing else:
-// the services are built in the provider under app/Providers, and app.go lists
-// that provider's modules in WithProviders. No line of it names another file
+// the module is listed in the WithProviders chain of its Configure, built from
+// the provider's services and the drivers. No line of it names another file
 // under bootstrap/.
 //
 // Printed and not written. One line in a file the person reads beats a generator
-// that edits a provider or bootstrap/app.go behind their back.
+// that edits bootstrap/app.go behind their back.
 const wiring = `
-Two edits, so these screens answer /auth/login instead of the framework's: the
-provider builds the module, and bootstrap/app.go lists it. Nothing else under
-bootstrap/ is touched -- it holds app.go and nothing else.
-
-In app/Providers/AppServiceProvider.go, the import:
+Two edits in bootstrap/app.go, so these screens answer /auth/login instead of
+the framework's. Nothing else under bootstrap/ is touched -- it holds app.go
+and nothing else. The import:
 
     authui "%s/app/Http/Controllers/Auth"
 
-a field of AppServiceProvider, beside Users and TwoFactor:
+and, in Configure, in the WithProviders(...) list, before app:
 
-    Auth *authui.Module
-
-and, in NewAppServiceProvider, once p.Users, p.TwoFactor and p.EmailCodes are
-built and before it returns:
-
-    p.Auth = authui.New(p.Users, p.TwoFactor, p.EmailCodes, d.Sessions, d.CSRF,
-        d.Mail, cfg.Framework.App.Key,
-        authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure)
-
-Then, in bootstrap/app.go, in the WithProviders(...) list, before app:
-
-    app.Auth,
+    authui.New(app.Users, app.TwoFactor, app.EmailCodes, drivers.Sessions, drivers.CSRF,
+        drivers.Mail, cfg.Framework.App.Key,
+        authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure),
 
 The screens call the account rules of github.com/arandu-io/hesape/auth/account,
-which a new project's provider already builds as p.Users and p.TwoFactor with
-account.NewUsers and account.NewFactors: the users query, the user policy, and
-the second factor counting codes in the store the rate limit counts in. A
-project that still keeps app/Services/UserService.go and TwoFactorService.go
-deletes them as hesape's UPGRADE.md for v0.60.0 says; the account rules replace
-both.
+which a new project's provider in app/Providers already builds as Users and
+TwoFactor with account.NewUsers and account.NewFactors: the users query, the
+user policy, and the second factor counting codes in the store the rate limit
+counts in. EmailCodes is the provider's code store, and Sessions, CSRF and Mail
+are the drivers the framework built from the configuration. A project that
+still keeps app/Services/UserService.go and TwoFactorService.go deletes them as
+hesape's UPGRADE.md for v0.60.0 says; the account rules replace both.
 
 A sign-up form that asks for more than a name, an address and a password --
 a document number, a phone -- adds .WithRegistration(read) to that call: read
@@ -311,7 +301,8 @@ by name rather than by the id in the session:
 
 Neither constructor takes the application name. The framework puts APP_NAME on
 every request, and the screens, the messages and the landing page read it
-there. A provider that passes cfg.App.Name to either one drops that argument.
+there. A provider or a bootstrap/app.go that passes cfg.App.Name to either one
+drops that argument.
 
 It reads who is signed in off the request, so GET / has to carry LoadSubject in
 routes/web.go, the routes WithRouting hands the router, as a new project's

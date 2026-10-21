@@ -595,8 +595,7 @@ func constructorContract(t *testing.T, source, function string) []string {
 
 // callFromWiring is one call out of the instructions the command prints, parsed.
 //
-// The instructions are Go the person is told to paste into the provider and
-// bootstrap/app.go, so
+// The instructions are Go the person is told to paste into bootstrap/app.go, so
 // they are read as Go here rather than matched as text: an argument added to a
 // constructor and not to the instruction is a difference of one comma, and
 // nobody reviewing a paragraph of prose sees it.
@@ -716,16 +715,16 @@ func printedBlock(t *testing.T, start string) string {
 
 // TestThePrintedWiringCompilesInTheBuilderLayout lays the snippets the command
 // prints into a project shaped as the skeleton is -- bootstrap/ holding app.go
-// and nothing else, the services built in app/Providers, the provider's
-// modules listed in WithProviders -- and builds it against the published
-// framework.
+// and nothing else, whose Configure lists the modules in WithProviders, with
+// the services built by the provider under app/Providers -- and builds it
+// against the published framework.
 //
 // The snippets are cut out of the printed text, never retyped here: a copy of
 // the instruction kept in the test compiles the copy. What surrounds them is
 // the skeleton's provider and app.go reduced to what the snippets name, so an
 // instruction that still names the former layout -- a Build taking deps, the
 // k.Register list, fw.App.Key, a limit store -- does not compile, and neither
-// does one that names a field the drivers do not carry.
+// does one that names a field the drivers or the provider do not carry.
 func TestThePrintedWiringCompilesInTheBuilderLayout(t *testing.T) {
 	tool, err := exec.LookPath("go")
 	if err != nil {
@@ -733,9 +732,7 @@ func TestThePrintedWiringCompilesInTheBuilderLayout(t *testing.T) {
 	}
 
 	importLine := printedBlock(t, `authui "`)
-	field := printedBlock(t, "Auth *authui.Module")
-	build := printedBlock(t, "p.Auth = authui.New(")
-	listed := printedBlock(t, "app.Auth,")
+	listed := printedBlock(t, "    authui.New(")
 
 	root := t.TempDir()
 	layPublishedKit(t, root)
@@ -752,27 +749,15 @@ type Config struct {
 	writeInto(t, filepath.Join(root, "app", "Providers", "AppServiceProvider.go"), []byte(`package providers
 
 import (
-	"github.com/arandu-io/framework/foundation"
 	"github.com/arandu-io/framework/http"
 	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/onetime"
-
-	appconfig "`+authSpec().ModulePath+`/config"
-	`+importLine+`
 )
 
 type AppServiceProvider struct {
 	Users      *account.Users
 	TwoFactor  *account.Factors
 	EmailCodes onetime.CodeStore
-
-	`+field+`
-}
-
-func NewAppServiceProvider(cfg appconfig.Config, d *foundation.Drivers) (*AppServiceProvider, error) {
-	p := &AppServiceProvider{}
-	`+build+`
-	return p, nil
 }
 
 func (*AppServiceProvider) Name() string { return "app" }
@@ -785,9 +770,11 @@ import (
 	"github.com/arandu-io/framework/foundation"
 
 	providers "`+authSpec().ModulePath+`/app/Providers"
+	appconfig "`+authSpec().ModulePath+`/config"
+	`+importLine+`
 )
 
-func Configure(drivers *foundation.Drivers, app *providers.AppServiceProvider) *foundation.ApplicationBuilder {
+func Configure(cfg appconfig.Config, drivers *foundation.Drivers, app *providers.AppServiceProvider) *foundation.ApplicationBuilder {
 	return foundation.Configure(drivers).
 		WithProviders(
 			`+listed+`

@@ -239,8 +239,8 @@ func olderThan(a, b [3]int) bool {
 //
 // Refused rather than raised here. A published file is the project's, and this
 // kit does not edit a project's configuration behind its back for the same
-// reason it prints the wiring instead of writing it into the provider or
-// bootstrap/app.go: one line somebody reads beats a file that changed while
+// reason it prints the wiring instead of writing it into bootstrap/app.go:
+// one line somebody reads beats a file that changed while
 // they were not looking.
 func checkAruFloor(root string) error {
 	body, err := os.ReadFile(filepath.Join(root, aruFile))
@@ -445,9 +445,9 @@ func checkCarriedBlockNamesOnlyWhatHomeControllerDeclares(root string, files []F
 			"as it stands would stop the project building.\n\n"+
 			"In the block, read the name off the request:\n\n"+
 			"    appName := hhttp.AppNameFrom(ctx.Ctx())\n\n"+
-			"and write appName where it says c.appName, then run the command again. A provider that passes\n"+
-			"cfg.App.Name to controllers.NewHomeController, and with --force to authui.New as well, drops it: the\n"+
-			"wiring printed at the end shows both calls without it. Nothing has been written.",
+			"and write appName where it says c.appName, then run the command again. Where the provider\n"+
+			"passes cfg.App.Name to controllers.NewHomeController, and with --force where bootstrap/app.go passes it\n"+
+			"to authui.New, drop it: the wiring printed at the end shows both calls without it. Nothing has been written.",
 			path, strings.Join(stale, ", "))
 	}
 	return nil
