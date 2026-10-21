@@ -120,9 +120,9 @@ type UserNames interface {
 }
 
 // Users is what these controllers ask of the application's accounts: the part
-// of *account.Users the screens call. bootstrap/app.go builds that with
-// account.NewUsers over the application's users query and user policy, and
-// hands it to New.
+// of *account.Users the screens call. The application's provider builds that
+// with account.NewUsers over its users query and user policy, and hands it to
+// New.
 //
 // Every method answers an account.Account, which is the application's
 // *models.User built by its own users query. The handlers read it through the
@@ -184,7 +184,7 @@ type Module struct {
 
 // New returns the authentication screen module.
 //
-// csrf is kept for the call bootstrap/app.go already makes, and no screen
+// csrf is kept for the call the provider already makes, and no screen
 // issues a token with it: each draws the one CSRFProtect put on the request
 // context.
 //
@@ -541,7 +541,7 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 // The constructor takes the application-owned name reader and the tenant, and
 // nothing else. That is the signature the skeleton declares, and it has to be:
 // this file is in `replaced`, so a publish overwrites it with no flag at all,
-// and a constructor here that the project's bootstrap/app.go does not call is a
+// and a constructor here that the project's provider does not call is a
 // build that breaks on a command whose whole promise is that it can be run
 // again.
 //
@@ -550,7 +550,7 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 // signed in is on the request, CSRFProtect put the token there too, and the
 // framework puts APP_NAME there before every route; the page reads all three
 // off the request it is answering. The kit took the two collaborators once, and
-// publishing it into a project whose bootstrap/app.go called the three-argument
+// publishing it into a project whose wiring called the three-argument
 // constructor left that project unable to compile. The name is read inside the
 // custom block, never above it: a variable declared above that an older block
 // carried over does not use is a build that breaks.
@@ -582,13 +582,14 @@ type HomeController struct {
 	// had somewhere to make it.
 	//
 	// The tenant is whose rows are read. It comes from the configuration,
-	// through bootstrap/app.go, and never from the request.
+	// through the provider that builds this controller, and never from the
+	// request.
 	people authui.UserNames
 	tenant string
 }
 
-// NewHomeController returns the controller. bootstrap/app.go builds it and hands
-// it to the routes.
+// NewHomeController returns the controller. The application's provider builds
+// it and hands it to the routes.
 //
 // There is no session store, no CSRF issuer and no application name here: the
 // route puts who is signed in on the request, the middleware that protects

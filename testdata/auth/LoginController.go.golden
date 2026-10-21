@@ -34,9 +34,9 @@ type UserNames interface {
 }
 
 // Users is what these controllers ask of the application's accounts: the part
-// of *account.Users the screens call. bootstrap/app.go builds that with
-// account.NewUsers over the application's users query and user policy, and
-// hands it to New.
+// of *account.Users the screens call. The application's provider builds that
+// with account.NewUsers over its users query and user policy, and hands it to
+// New.
 //
 // Every method answers an account.Account, which is the application's
 // *models.User built by its own users query. The handlers read it through the
@@ -98,7 +98,7 @@ type Module struct {
 
 // New returns the authentication screen module.
 //
-// csrf is kept for the call bootstrap/app.go already makes, and no screen
+// csrf is kept for the call the provider already makes, and no screen
 // issues a token with it: each draws the one CSRFProtect put on the request
 // context.
 //

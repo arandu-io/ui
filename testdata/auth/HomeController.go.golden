@@ -22,13 +22,14 @@ type HomeController struct {
 	// had somewhere to make it.
 	//
 	// The tenant is whose rows are read. It comes from the configuration,
-	// through bootstrap/app.go, and never from the request.
+	// through the provider that builds this controller, and never from the
+	// request.
 	people authui.UserNames
 	tenant string
 }
 
-// NewHomeController returns the controller. bootstrap/app.go builds it and hands
-// it to the routes.
+// NewHomeController returns the controller. The application's provider builds
+// it and hands it to the routes.
 //
 // There is no session store, no CSRF issuer and no application name here: the
 // route puts who is signed in on the request, the middleware that protects
