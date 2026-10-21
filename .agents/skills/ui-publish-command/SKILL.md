@@ -137,22 +137,31 @@ likely to be edited — the wording of the message a project sends.
 
 ## What it prints, and why it prints rather than writes
 
-After the files, the command prints the wiring: an import line, the
-`authui.New(...)` call to put in `k.Register(...)`, the
-`controllers.NewHomeController(...)` call, and one blank import per directory of
-views. One line in a file the person reads beats a generator that edits
+After the files, the command prints the wiring for the layout where
+`bootstrap/` holds `app.go` and nothing else: the import, the `Auth` field and
+the `p.Auth = authui.New(...)` statement for `app/Providers/AppServiceProvider.go`,
+the `app.Auth,` line for the `WithProviders(...)` list in `bootstrap/app.go`,
+the `controllers.NewHomeController(...)` call the provider makes, and one blank
+import per directory of views for the import block of `bootstrap/app.go`. One
+line in a file the person reads beats a generator that edits a provider or
 `bootstrap/app.go` behind their back, whose output nobody can then explain.
 
 Two things about that text are checked by the suite rather than by review,
 because both have shipped wrong:
 
-- `wiring` is a `const` in `main.go:250` rather than a literal inside the
+- `wiring` is a `const` in `main.go:262` rather than a literal inside the
   `Printf`, so a test can read it.
   `TestTheWiringThisCommandPrintsCallsTheConstructorItPublishes` at
-  `publish_internal_test.go:647` parses both the printed call and the published
+  `publish_internal_test.go:648` parses both the printed call and the published
   constructor and compares the arity. It shipped with three parameters emitted
   and five passed. `TestTheWiringPassesTheOneSecureDecision` holds the last
   argument of `authui.New` to `cfg.Framework.Session.Secure`.
+- `TestThePrintedWiringCompilesInTheBuilderLayout` cuts the four snippets out
+  of the printed text, lays them into a provider and an `app.go` shaped as the
+  skeleton's, and builds them against the pinned framework, so an instruction
+  that still names the former layout -- a `Build` taking deps, `k.Register`,
+  `fw.App.Key` -- does not compile. `TestTheKitNamesNoFileUnderBootstrapButAppGo`
+  refuses any other file under `bootstrap/` in the wiring or a published file.
 - The blank-import block is computed by `blankImports` in `main.go:73` from what
   `AuthViews` actually writes, never typed out. A view added to the kit cannot
   ship with an instruction that does not mention it — which is how a project
@@ -203,7 +212,7 @@ so a refusal never leaves a half-published tree:
   custom block of v0.22.1 and earlier titles the page with. The file is
   replaced on every run and its block is carried with or without `--force`, so
   no flag gets past it; the message says what to write in the block instead and
-  which two calls in `bootstrap/app.go` drop `cfg.App.Name`.
+  which two calls in the provider drop `cfg.App.Name`.
 
 `TestNothingIsWrittenIntoAProjectThatCannotCompileTheseScreens`,
 `TestNothingIsWrittenBesideHandlersThatDrawTheirOwnRefusals`,

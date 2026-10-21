@@ -107,7 +107,7 @@ result names a name in `goneHomeControllerNames` — today `c.appName`, which th
 block of v0.22.1 and earlier titles the page with. The file is replaced on every
 run and its block is carried with or without `--force`, so no flag gets past
 it: the message says to read `hhttp.AppNameFrom(ctx.Ctx())` in the block and
-to drop `cfg.App.Name` from the two calls in `bootstrap/app.go`.
+to drop `cfg.App.Name` from the two calls in the provider.
 
 `--dry-run` is exempt from all four, and the split is the point: it is asked what
 would be written and answers that, which is why the counts below still measure
@@ -138,7 +138,7 @@ a fixture under `testdata/retired/`, taken from the golden file at the tag.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 110 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 112 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 1 file retired, removed by `--force` while it is still the kit's bytes, and 3 fixtures, one per version published | `sed -n '/^var retired/,/^}/p' publish.go \| grep -c 'Path:'` and `ls testdata/retired \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 10 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
@@ -319,7 +319,7 @@ them is missing by accident; each was considered and refused.
 | importing the CLI's renderer | a 40-line copy in `publish.go`. Importing it would make this module depend on the CLI, and the point of publishing from here is that the CLI is not in the way |
 | writing a merge that keeps custom blocks | `publish.Merge` from `hesape/publish`. There were two implementations of that algorithm and they answered the same question, so there is one |
 | a preset argument — `auth bootstrap`, `auth tailwind` | one set of screens. `auth` with an extra word is refused rather than ignored, because a flag typed after an ignored word is switched off silently |
-| a generator that edits `bootstrap/app.go` | text printed to the terminal for a person to paste. One line somebody reads beats a file edited behind their back |
+| a generator that edits a provider or `bootstrap/app.go` | text printed to the terminal for a person to paste. One line somebody reads beats a file edited behind their back |
 | `os.WriteFile` over an existing file | `write` in `publish.go`, which reads the file first and hands it to `publish.Merge` to carry the custom blocks over. It used to stat and overwrite, and it ate people's work |
 | a `_test.go` beside the code with no `_internal` suffix | `tests/test-layout-guard.sh`, which fails the build. This is a `package main`, so its tests are internal and the suffix says so |
 

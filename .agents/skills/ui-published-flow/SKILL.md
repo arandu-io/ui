@@ -333,7 +333,7 @@ migrate. `TestTheTenantDoesNotComeFromTheRequestBody` at
 
 `HomeController.go` is in `replaced`: publishing overwrites it with **no flag at
 all**. So the moment the kit's constructor stops matching the one a project's
-`bootstrap/app.go` calls, publishing into that project breaks its build — and
+provider calls, publishing into that project breaks its build — and
 neither repository notices, because each compiles on its own. This shipped: three
 parameters emitted, five passed.
 
