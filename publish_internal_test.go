@@ -420,12 +420,12 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 		}
 		params := constructorNames(t, source, "NewHomeController")
 		if want := []string{"authui.UserNames", "string"}; !slices.Equal(params, want) {
-			t.Errorf("NewHomeController takes %v and bootstrap/app.go calls it with (userService, tenant) %v", params, want)
+			t.Errorf("NewHomeController takes %v and the provider calls it with (p.Users, tenant) %v", params, want)
 		}
 		for _, refused := range []string{"*security.SessionStore", "*security.CSRF"} {
 			if slices.Contains(params, refused) {
 				t.Errorf("NewHomeController takes %s, which the page reads off the request instead; "+
-					"bootstrap/app.go does not pass one, so publishing breaks the build", refused)
+					"the provider does not pass one, so publishing breaks the build", refused)
 			}
 		}
 		// And the service the id in a session is turned into a name with. Without
@@ -443,7 +443,7 @@ func TestTheLandingPageIsGivenWhatItReads(t *testing.T) {
 // TestTheLandingPageGreetsTheSubjectLoadSubjectPutOnTheRequest runs the
 // published HomeController the way the skeleton mounts it: GET / behind
 // middleware.LoadSubject, the whole router behind CSRFProtect, and the
-// controller built with the two arguments bootstrap/app.go passes.
+// controller built with the two arguments the provider passes.
 //
 // A guest has to get the welcome screen with the guest half of the header and a
 // token to post with. Somebody signed in has to get the home screen, greeted by
@@ -595,7 +595,8 @@ func constructorContract(t *testing.T, source, function string) []string {
 
 // callFromWiring is one call out of the instructions the command prints, parsed.
 //
-// The instructions are Go the person is told to paste into bootstrap/app.go, so
+// The instructions are Go the person is told to paste into the provider and
+// bootstrap/app.go, so
 // they are read as Go here rather than matched as text: an argument added to a
 // constructor and not to the instruction is a difference of one comma, and
 // nobody reviewing a paragraph of prose sees it.
@@ -637,7 +638,7 @@ func callFromWiring(t *testing.T, name string) *ast.CallExpr {
 //
 // HomeController.go is in `replaced`: publishing overwrites it with no flag at
 // all. So the constructor the kit emits and the call the person is told to write
-// in bootstrap/app.go are one fact stated twice, and they shipped disagreeing --
+// in the provider are one fact stated twice, and they shipped disagreeing --
 // three parameters emitted, five passed by the project this kit was proved
 // against. Running the publisher there broke the build, which is the one thing a
 // command whose promise is "run it again" must not do.
@@ -679,6 +680,156 @@ func TestTheWiringPassesTheOneSecureDecision(t *testing.T) {
 		t.Errorf("the printed wiring passes %s as the module's secure, and the session cookie and the "+
 			"kernel's flash follow cfg.Framework.Session.Secure: the pending cookie and the flash the module "+
 			"builds would be Secure by a different rule", got)
+	}
+}
+
+// printedWiring is the wiring as the command prints it into a project whose
+// module path is the one the golden files are rendered with.
+func printedWiring() string {
+	return fmt.Sprintf(wiring, authSpec().ModulePath, blankImports(authSpec().ModulePath))
+}
+
+// printedBlock returns the indented block of the printed wiring whose lines
+// contain start, with the four spaces of indentation taken off: one snippet the
+// person is told to paste, exactly as it is printed.
+func printedBlock(t *testing.T, start string) string {
+	t.Helper()
+
+	printed := printedWiring()
+	at := strings.Index(printed, start)
+	if at < 0 {
+		t.Fatalf("the wiring this command prints never says %q, so nobody is told to write it", start)
+	}
+	lines := strings.Split(printed[strings.LastIndex(printed[:at], "\n")+1:], "\n")
+	var block []string
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "    ") {
+			break
+		}
+		block = append(block, strings.TrimPrefix(line, "    "))
+	}
+	if len(block) == 0 {
+		t.Fatalf("%q in the printed wiring is not an indented snippet, so it is prose nobody can paste", start)
+	}
+	return strings.Join(block, "\n")
+}
+
+// TestThePrintedWiringCompilesInTheBuilderLayout lays the snippets the command
+// prints into a project shaped as the skeleton is -- bootstrap/ holding app.go
+// and nothing else, the services built in app/Providers, the provider's
+// modules listed in WithProviders -- and builds it against the published
+// framework.
+//
+// The snippets are cut out of the printed text, never retyped here: a copy of
+// the instruction kept in the test compiles the copy. What surrounds them is
+// the skeleton's provider and app.go reduced to what the snippets name, so an
+// instruction that still names the former layout -- a Build taking deps, the
+// k.Register list, fw.App.Key, a limit store -- does not compile, and neither
+// does one that names a field the drivers do not carry.
+func TestThePrintedWiringCompilesInTheBuilderLayout(t *testing.T) {
+	tool, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go is not on PATH, so nothing here was compiled and this is not a pass")
+	}
+
+	importLine := printedBlock(t, `authui "`)
+	field := printedBlock(t, "Auth *authui.Module")
+	build := printedBlock(t, "p.Auth = authui.New(")
+	listed := printedBlock(t, "app.Auth,")
+
+	root := t.TempDir()
+	layPublishedKit(t, root)
+	writeInto(t, filepath.Join(root, "config", "app.go"), []byte(`package config
+
+import "github.com/arandu-io/framework/foundation/bootstrap"
+
+type Config struct {
+	bootstrap.Settings
+
+	Auth struct{ Tenant string }
+}
+`))
+	writeInto(t, filepath.Join(root, "app", "Providers", "AppServiceProvider.go"), []byte(`package providers
+
+import (
+	"github.com/arandu-io/framework/foundation"
+	"github.com/arandu-io/framework/http"
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/onetime"
+
+	appconfig "`+authSpec().ModulePath+`/config"
+	`+importLine+`
+)
+
+type AppServiceProvider struct {
+	Users      *account.Users
+	TwoFactor  *account.Factors
+	EmailCodes onetime.CodeStore
+
+	`+field+`
+}
+
+func NewAppServiceProvider(cfg appconfig.Config, d *foundation.Drivers) (*AppServiceProvider, error) {
+	p := &AppServiceProvider{}
+	`+build+`
+	return p, nil
+}
+
+func (*AppServiceProvider) Name() string { return "app" }
+
+func (*AppServiceProvider) Routes(*http.Router) {}
+`))
+	writeInto(t, filepath.Join(root, "bootstrap", "app.go"), []byte(`package bootstrap
+
+import (
+	"github.com/arandu-io/framework/foundation"
+
+	providers "`+authSpec().ModulePath+`/app/Providers"
+)
+
+func Configure(drivers *foundation.Drivers, app *providers.AppServiceProvider) *foundation.ApplicationBuilder {
+	return foundation.Configure(drivers).
+		WithProviders(
+			`+listed+`
+			app,
+		)
+}
+`))
+	downloadPublishedKit(t, tool, root)
+
+	cmd := exec.Command(tool, "build", "./...")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off", "GOTOOLCHAIN=local")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the wiring this command prints does not compile in the builder layout against framework %s: "+
+			"somebody who pastes it gets a project that does not build.\n\n`go build ./...` said:\n%s\n(%v)",
+			publishedFramework, out, err)
+	}
+}
+
+// TestTheKitNamesNoFileUnderBootstrapButAppGo holds the layout the kit writes
+// for: bootstrap/ holds app.go and nothing else, so neither the printed wiring
+// nor a published file may send anybody to another file there -- that file is
+// one the project no longer has, or one it should not.
+func TestTheKitNamesNoFileUnderBootstrapButAppGo(t *testing.T) {
+	sources := map[string]string{"the printed wiring": printedWiring()}
+	for _, f := range mustGenerateAuth(t) {
+		sources[filepath.ToSlash(f.Path)] = string(f.Content)
+	}
+	for name, source := range sources {
+		for _, word := range strings.FieldsFunc(source, func(r rune) bool {
+			return r == ' ' || r == '\n' || r == '\t' || r == '(' || r == ')' || r == ',' || r == '`' || r == '"'
+		}) {
+			at := strings.Index(word, "bootstrap/")
+			if at < 0 {
+				continue
+			}
+			rest := strings.TrimRight(word[at+len("bootstrap/"):], ".:;")
+			if rest != "" && rest != "app.go" {
+				t.Errorf("%s names %s: bootstrap/ holds app.go and nothing else, so that file is not one the project has",
+					name, word)
+			}
+		}
 	}
 }
 
@@ -760,7 +911,7 @@ func main() {
 // The drift this catches survived because nobody ran the publisher against the
 // projects it publishes into. HomeController.go is replaced without a flag, so
 // the moment the kit's constructor stops matching the one a project's
-// bootstrap/app.go calls, publishing into that project breaks its build -- and
+// provider calls, publishing into that project breaks its build -- and
 // nothing in either repository noticed, because each one compiles on its own.
 //
 // Go interfaces are structural: `UserNames` and `authui.UserNames` are not a
@@ -785,7 +936,7 @@ func TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes(t *testing.T) {
 			got := constructorContract(t, string(source), "NewHomeController")
 			if !slices.Equal(got, want) {
 				t.Errorf("%s builds its landing page with NewHomeController%v and this kit publishes NewHomeController%v.\n"+
-					"Publishing into that project replaces the file and leaves bootstrap/app.go calling a constructor "+
+					"Publishing into that project replaces the file and leaves the provider calling a constructor "+
 					"that no longer exists: the build breaks, with no flag having been passed.", project, got, want)
 			}
 		})
