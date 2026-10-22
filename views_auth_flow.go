@@ -392,6 +392,7 @@ const authRenderTemplate = `package authui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -401,6 +402,7 @@ import (
 	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
+	"github.com/arandu-io/hesape/session"
 	"github.com/arandu-io/hesape/validation"
 	"github.com/arandu-io/hesape/view"
 )
@@ -448,8 +450,22 @@ func SignedInName(ctx context.Context, people UserNames, tenant, id string) stri
 	return names[id]
 }
 
+// page is the chrome of a screen, drawn for whoever the session says is
+// signed in.
+//
+// A request with no session, or with one that ended, is a visitor, and that is
+// said nowhere: it is most requests to these screens. Any other failure to
+// read the session is drawn as a visitor too, which is the closed way to fail,
+// and is logged: the account could not be read again (hhttp.ErrSubjectUnresolved,
+// the database is down), a session holds roles and no resolver was installed to
+// read them (hhttp.ErrNoSubjectResolver), or the session store itself failed.
+// The person signed in a minute ago is shown signed out, and the log is the one
+// place that says why.
 func (m *Module) page(r *http.Request, title string) view.Page {
 	subject, err := m.sessions.Load(r.Context(), r)
+	if err != nil && !errors.Is(err, session.ErrNoSession) && !errors.Is(err, session.ErrExpired) {
+		log.For(r.Context()).Error("reading the session for the screen; drawn for a visitor", "error", err)
+	}
 	return Chrome(ChromeProps{
 		Title: title, Path: r.URL.Path,
 		Authenticated: err == nil,

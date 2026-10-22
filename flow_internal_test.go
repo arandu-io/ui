@@ -3892,3 +3892,112 @@ func main() {
 	fmt.Printf("builds none: status=%d written=%d\n", status, len(backend.written))
 }
 `
+
+// TestAScreenSaysWhyItCouldNotReadTheSessionAndDrawsAVisitor draws one screen
+// for a visitor, for a signed-in person, and for a signed-in person whose
+// account the session store could not read again.
+//
+// Every screen of the kit draws its header from the session, and the session
+// store now reads the account afresh on every request. When that read fails --
+// the database is down -- the store refuses rather than answering the roles the
+// session was opened with, and the screen draws the visitor's header, which is
+// the closed way to fail. It used to do so without a word: a person signed in a
+// minute ago was shown as signed out and nothing in the log said why. The
+// failure is logged now, and the ordinary visitor -- no session at all -- is
+// not, because a line for every signed-out page would bury the one that
+// matters.
+func TestAScreenSaysWhyItCouldNotReadTheSessionAndDrawsAVisitor(t *testing.T) {
+	out := runAgainstPublishedKit(t, unresolvedSessionProbe)
+
+	for _, want := range []string{
+		"visitor: status=200 authenticated=false name= logged=false",
+		"signed in: status=200 authenticated=true name=Ada logged=false",
+		"unresolved: status=200 authenticated=false name= logged=true database=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// unresolvedSessionProbe draws the reset request screen, which no guard stands
+// in front of, with no session, with one, and with one the resolver cannot read.
+const unresolvedSessionProbe = `package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
+
+type users struct{ authui.Users }
+
+func (users) PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error) {
+	return map[string]string{"user-a": "Ada"}, nil
+}
+
+func main() {
+	var logged bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+
+	view.Register("auth.passwords.email", func(w io.Writer, data any) error {
+		page := data.(authui.AuthPage)
+		_, err := fmt.Fprintf(w, "authenticated=%t name=%s", page.Authenticated, page.UserName)
+		return err
+	})
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false, security.NewMemoryBackend())
+	var unreadable error
+	sessions.ResolveSubjects(func(_ context.Context, who nativeauth.Subject) (nativeauth.Subject, error) {
+		if unreadable != nil {
+			return nativeauth.Subject{}, unreadable
+		}
+		return nativeauth.Subject{ID: who.ID, Tenant: who.Tenant}, nil
+	})
+	module := authui.New(users{}, nil, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
+
+	signedIn := httptest.NewRecorder()
+	if _, err := sessions.Rotate(context.Background(), signedIn, "",
+		nativeauth.Subject{ID: "user-a", Tenant: "tenant-a"}, security.Remember(false)); err != nil {
+		panic(err)
+	}
+	draw := func(label string, cookies []*http.Cookie) {
+		logged.Reset()
+		r := httptest.NewRequest(http.MethodGet, "/auth/password", nil)
+		r.Header.Set("Accept", "text/html")
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		fmt.Printf("%s: status=%d %s logged=%t database=%t\n", label, w.Code, w.Body.String(),
+			logged.Len() > 0, strings.Contains(logged.String(), "the database is down"))
+	}
+
+	draw("visitor", nil)
+	draw("signed in", signedIn.Result().Cookies())
+	unreadable = errors.New("the database is down")
+	draw("unresolved", signedIn.Result().Cookies())
+}
+`
