@@ -269,6 +269,7 @@ func (m *Module) beginTwoFactorSetup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	noStore(w)
 	m.screen(w, r, "auth.two-factor.setup", AuthPage{
 		Page:      m.page(r, "Set up two-factor authentication"),
 		QRCodeSVG: svg, SecretKey: otp.EncodeSecret(provisioning.Secret),
@@ -339,7 +340,15 @@ func (m *Module) regenerateRecoveryCodes(w http.ResponseWriter, r *http.Request)
 }
 
 func (m *Module) showRecoveryCodes(w http.ResponseWriter, r *http.Request, codes []string) {
+	noStore(w)
 	m.screen(w, r, "auth.two-factor.recovery-codes", AuthPage{
 		Page: m.page(r, "Recovery codes"), RecoveryCodesText: strings.Join(codes, "\n"),
 	})
+}
+
+// noStore says no cache may keep this answer: the authenticator secret and the
+// recovery codes are credentials, and a page a browser or a proxy keeps is one
+// the back button, a shared computer or a cache can show to somebody else.
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, private")
 }

@@ -3177,3 +3177,123 @@ func cookieHeader(jar map[string]*http.Cookie) []string {
 	return []string{strings.Join(parts, "; ")}
 }
 `
+
+// TestTheScreensThatShowASecondFactorSecretAreNeverCached runs the three
+// answers that carry second-factor key material -- the setup screen with the
+// authenticator secret and its QR code, and the recovery codes shown after a
+// confirmation and after a regeneration -- and reads their Cache-Control.
+//
+// Each is a credential on a page. A page a browser or a proxy keeps is one the
+// back button, a shared computer or a cache can show again to somebody else.
+func TestTheScreensThatShowASecondFactorSecretAreNeverCached(t *testing.T) {
+	out := runAgainstPublishedKit(t, noStoreProbe)
+
+	for _, want := range []string{
+		"setup: status=200 no-store=true",
+		"confirm: status=200 no-store=true",
+		"regenerate: status=200 no-store=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// noStoreProbe signs a session in, confirms its password and asks for each of
+// the three answers that show a second-factor secret.
+const noStoreProbe = `package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/security"
+	twofactor "github.com/arandu-io/hesape/2fa"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
+
+type users struct{ authui.Users }
+
+func (users) ConfirmPassword(context.Context, nativeauth.Subject, string, string) error { return nil }
+func (users) PublicNames(context.Context, nativeauth.Subject, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+type factors struct{ authui.Factors }
+
+func (factors) Begin(context.Context, nativeauth.Subject, string) (twofactor.Provisioning, error) {
+	return twofactor.Provisioning{Issuer: "Probe", Account: "a@example.test",
+		Secret: []byte("0123456789abcdefghij")}, nil
+}
+func (factors) Confirm(context.Context, nativeauth.Subject, string) ([]string, error) {
+	return []string{"one", "two"}, nil
+}
+func (factors) RegenerateRecoveryCodes(context.Context, nativeauth.Subject) ([]string, error) {
+	return []string{"three", "four"}, nil
+}
+
+func main() {
+	for _, name := range []string{"auth.two-factor.setup", "auth.two-factor.recovery-codes"} {
+		view.Register(name, func(w io.Writer, data any) error {
+			_, err := io.WriteString(w, data.(authui.AuthPage).Title)
+			return err
+		})
+	}
+
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	module := authui.New(users{}, factors{}, nil, sessions, security.NewCSRF(appKey, time.Hour), nil,
+		appKey, authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter().WithRenderer(view.NewRenderer())
+	module.Routes(router)
+
+	signedIn := httptest.NewRecorder()
+	if _, err := sessions.Rotate(context.Background(), signedIn, "",
+		security.Subject{ID: "user-a", Tenant: "tenant-a"}, security.Remember(false)); err != nil {
+		panic(err)
+	}
+	cookies := signedIn.Result().Cookies()
+	post := func(path string, form url.Values) *http.Response {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Accept", "text/html")
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		res := w.Result()
+		for _, c := range res.Cookies() {
+			for i := range cookies {
+				if cookies[i].Name == c.Name {
+					cookies[i] = c
+				}
+			}
+		}
+		return res
+	}
+	noStore := func(res *http.Response) bool {
+		return strings.Contains(res.Header.Get("Cache-Control"), "no-store")
+	}
+
+	post("/auth/password/confirm", url.Values{"password": {"a-password-long-enough"}})
+	res := post("/auth/two-factor/setup", url.Values{})
+	fmt.Printf("setup: status=%d no-store=%t\n", res.StatusCode, noStore(res))
+	res = post("/auth/two-factor/setup/confirm", url.Values{"authenticator_code": {"123456"}})
+	fmt.Printf("confirm: status=%d no-store=%t\n", res.StatusCode, noStore(res))
+	res = post("/auth/two-factor/recovery-codes", url.Values{})
+	fmt.Printf("regenerate: status=%d no-store=%t\n", res.StatusCode, noStore(res))
+}
+`
