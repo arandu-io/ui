@@ -308,8 +308,11 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 		return validation.Errors{"email_code": {"type the code from your email"}}
 	}
 	u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email)
-	if err != nil || m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), in.Code) != nil {
-		return validation.Errors{"email_code": {"that code is not valid"}}
+	if err == nil {
+		err = m.codes.Consume(r.Context(), verifyPurpose, emailCodeSubject(u), in.Code)
+	}
+	if err != nil {
+		return codeRefused(err)
 	}
 	_, firstVerification, err := m.users.MarkVerified(r.Context(), u.AccountTenant(), u.AccountID(), u.AccountEmail())
 	if err != nil {
@@ -362,6 +365,26 @@ func (m *Module) sendVerification(ctx context.Context, u account.Account) error 
 
 func emailCodeSubject(u account.Account) string {
 	return u.AccountTenant() + "\x00" + u.AccountID() + "\x00" + account.NormalizeEmail(u.AccountEmail())
+}
+
+// codeRefused is what a code form says when its code was not accepted.
+//
+// The code store counts wrong codes per purpose and address across every code
+// it issues, and once they are spent it refuses every code, the right one
+// included, until its window closes (onetime.ErrTooManyFailures). A new code
+// does not help then, so the form says to wait rather than calling the code
+// wrong.
+//
+// Only an address with an account and a code outstanding gets there, and only
+// after the store's budget of wrong codes, twenty by default, which the
+// address budget of throttleCodeForm lets through in no less than two hours: the
+// sentence costs whoever probes for accounts that long per address. Everything
+// else -- no account, no code outstanding, a wrong code -- is one sentence.
+func codeRefused(err error) validation.Errors {
+	if errors.Is(err, onetime.ErrTooManyFailures) {
+		return validation.Errors{"email_code": {"too many attempts, try again later"}}
+	}
+	return validation.Errors{"email_code": {"that code is not valid"}}
 }
 
 func first(messages []string) string {

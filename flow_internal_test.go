@@ -4001,3 +4001,102 @@ func main() {
 	draw("unresolved", signedIn.Result().Cookies())
 }
 `
+
+// TestACodeFormSaysWhenTheAddressHasSpentItsWrongCodes offers both code forms a
+// code after the code store has stopped taking any for that address.
+//
+// The code store counts wrong codes per purpose and address across every code
+// issued, and once they are spent it refuses every code, the right one
+// included, until its window closes: asking for another does not help. Told
+// "that code is not valid", the person asks for a new code, types it correctly,
+// and is told the same again. The forms say what is true instead: too many
+// attempts, try again later.
+func TestACodeFormSaysWhenTheAddressHasSpentItsWrongCodes(t *testing.T) {
+	out := runAgainstPublishedKit(t, spentCodesProbe)
+
+	for _, want := range []string{
+		"password.update spent: status=422 message=too many attempts, try again later",
+		"password.update wrong: status=422 message=that code is not valid",
+		"verify.confirm spent: status=422 message=too many attempts, try again later",
+		"verify.confirm wrong: status=422 message=that code is not valid",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// spentCodesProbe posts each code form as JSON, once against a code store that
+// answers onetime.ErrTooManyFailures and once against one that answers a wrong
+// code, and prints the message the form was refused with.
+const spentCodesProbe = `package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/onetime"
+	"github.com/arandu-io/hesape/session"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+type users struct{ authui.Users }
+
+func (users) Lookup(context.Context, string, string) (account.Account, error) { return owner, nil }
+
+type codes struct{ refusal error }
+
+func (codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (c *codes) Consume(context.Context, string, string, string) error { return c.refusal }
+
+func main() {
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false, security.NewMemoryBackend())
+	store := &codes{}
+	module := authui.New(users{}, nil, store, sessions, session.NewCSRF(appKey, time.Hour), nil,
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
+
+	const password = "a-password-long-enough"
+	for _, f := range []struct{ name, path string; form url.Values }{
+		{"password.update", "/auth/password/update", url.Values{"email": {owner.Email}, "email_code": {"123456"},
+			"password": {password}, "password_confirmation": {password}}},
+		{"verify.confirm", "/auth/verify/confirm", url.Values{"email": {owner.Email}, "email_code": {"123456"}}},
+	} {
+		for _, c := range []struct{ kind string; refusal error }{
+			{"spent", onetime.ErrTooManyFailures}, {"wrong", onetime.ErrInvalidCode},
+		} {
+			store.refusal = c.refusal
+			r := httptest.NewRequest(http.MethodPost, f.path, strings.NewReader(f.form.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Accept", "application/json")
+			r.Header.Set("Referer", f.path)
+			w := httptest.NewRecorder()
+			app.ServeHTTP(w, r)
+			var problem struct{ Errors map[string][]string ` + "`json:\"errors\"`" + ` }
+			_ = json.Unmarshal(w.Body.Bytes(), &problem)
+			message := strings.Join(problem.Errors["email_code"], "; ")
+			if message == "" {
+				message = w.Body.String()
+			}
+			fmt.Printf("%s %s: status=%d message=%s\n", f.name, c.kind, w.Code, message)
+		}
+	}
+}
+`
