@@ -294,6 +294,13 @@ cfg.Framework.Session.Secure is the decision the session cookie and the flash
 already follow -- SESSION_SECURE_COOKIE when it is set, and otherwise Secure
 everywhere but APP_ENV=dev -- so the three cannot disagree.
 
+drivers.Sessions reads each session's roles again on every request, through
+the resolver a project's provider installs with Sessions.ResolveSubjects from
+User.Subject in app/Models -- the method these screens sign people in with, so
+the subject has one builder. A provider that does not install one yet adds it
+as hesape's UPGRADE.md for v0.77.0 shows; without it, an account with roles
+cannot sign in, and the screens log why.
+
 The landing page is published too, because a page renders with the type of its
 layout and this command replaces the layout. The provider builds it for the
 routes, and it takes the account rules and the tenant so the header can greet

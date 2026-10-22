@@ -11,6 +11,47 @@ project receives, not about this repository's code.
 
 ---
 
+## v0.27.0 — the session subject is the account's, an unreadable session is logged, and spent codes say so
+
+Three changes in the published controllers, written for hesape v0.77.0, which
+reads a session's roles again on every request through a resolver the
+application installs:
+
+- The sign-in builds the session subject with the account's own `Subject()` --
+  `User.Subject` in `app/Models/User.go`, the method the session resolver calls
+  -- instead of `subjectOf`, the kit's copy of it. `LoginController_handlers.go`
+  asserts that `*models.User` has the method, so a model without it stops the
+  build; an account that answers no subject at run time is refused with a
+  logged 500 rather than signed in with a guess. The reset signs the account's
+  other sessions out through the same method.
+- `page()` in `render.go` logs a session it could not read --
+  `hhttp.ErrSubjectUnresolved` when the resolver failed,
+  `hhttp.ErrNoSubjectResolver` when a session holds roles and none is
+  installed, a store that is down -- and still draws the visitor's header. No
+  session and an ended one stay silent.
+- `/auth/password/update` and `/auth/verify/confirm` answer
+  `onetime.ErrTooManyFailures` with "too many attempts, try again later"
+  instead of "that code is not valid": once the address has spent its wrong
+  codes, a new code is refused too until the window closes.
+
+### What a republish does on its own
+
+Nothing: the four files live in the controllers, which a plain `auth` keeps.
+Publish with `auth --force`, which carries the custom blocks of
+`LoginController.go` and `LoginController_handlers.go` over, or copy
+`subjectAccount`, `sessionSubject`, `page` and `codeRefused` by hand.
+
+### The resolver
+
+The published files compile against hesape v0.76.0, the release skeleton
+v0.37.0 requires; `onetime.ErrTooManyFailures` is from it. Moving to hesape
+v0.77.0, which this release is tested against, means installing the session
+resolver in the provider, from `User.Subject`, as hesape's UPGRADE.md for
+v0.77.0 shows. Without it, `Rotate` refuses to sign in an account with roles,
+and the sign-in answers 500 with `hhttp.ErrNoSubjectResolver` in the log.
+
+---
+
 ## v0.26.0 — the code forms are limited and timed, and second-factor secrets are not cached
 
 Three changes in the published controllers, all security fixes:
