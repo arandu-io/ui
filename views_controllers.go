@@ -100,6 +100,7 @@ import (
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/cache"
 	"github.com/arandu-io/hesape/encryption"
 	"github.com/arandu-io/hesape/onetime"
 	"github.com/arandu-io/hesape/session"
@@ -167,6 +168,7 @@ type Module struct {
 	sessions *security.SessionStore
 	csrf     *session.CSRF
 	mailer   *mail.Mailer
+	limiter  *cache.RateLimiter
 	signer   *encryption.Signer
 	flash    *session.Flash
 	tenant   TenantResolver
@@ -188,6 +190,13 @@ type Module struct {
 // issues a token with it: each draws the one CSRFProtect put on the request
 // context.
 //
+// limiter counts the forms that send or check a one-time code, per client and
+// per address typed (see throttleCodeForm). Pass drivers.Limiter, which counts
+// in the cache store the application's own throttle counts in, so every
+// replica spends from one budget. Nil counts in this process alone: right for
+// a single process and for a test, and N replicas would each allow the whole
+// budget.
+//
 // secure is whether the cookies this module writes itself carry Secure: the
 // short pending cookie of a two-factor sign-in, and the flash it builds for a
 // router that was wired with none. Pass cfg.Framework.Session.Secure, the one
@@ -198,13 +207,16 @@ type Module struct {
 // on each screen, the signature of each message and the issuer an
 // authenticator app files a second factor under. A name passed in as well
 // would be a second answer to the same question.
-func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, tenant TenantResolver, secure bool) *Module {
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, limiter *cache.RateLimiter, appKey []byte, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
 	}
+	if limiter == nil {
+		limiter = cache.NewRateLimiter(cache.NewArrayStore())
+	}
 	return &Module{
 		users: users, factors: factors, codes: codes, sessions: sessions,
-		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
+		csrf: csrf, mailer: mailer, limiter: limiter, signer: encryption.NewSigner(appKey),
 		// Replaced in Routes by the router's flash when it carries one.
 		flash: session.NewFlash(appKey, secure),
 		tenant: tenant, secure: secure,
@@ -308,15 +320,19 @@ func flashOf(r *fhttp.Router) *session.Flash {
 const authHandlersTemplate = `package authui
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/cache"
 	hhttp "github.com/arandu-io/hesape/http"
 	"github.com/arandu-io/hesape/log"
 	hmiddleware "github.com/arandu-io/hesape/routing/middleware"
@@ -525,6 +541,65 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 // redirect answers HX-Redirect under htmx and a 303 with a Location otherwise.
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	hhttp.Redirect(w, r, to)
+}
+
+// The four forms that send or check a one-time code -- asking for a reset,
+// choosing the new password, confirming an address and asking for another
+// code -- are limited twice, apart from the application's own throttle: per
+// address typed and per client. Both are counted before anything is looked up,
+// so an address with no account runs out exactly when one with an account
+// does, and running out says nothing about which it is.
+//
+// The address budget is what bounds guessing. A code allows a few tries and
+// every new code starts its own, so whoever can ask for codes could otherwise
+// guess for as long as they kept asking. Ten an hour is two hundred and forty a
+// day against a million six-digit codes. It is also a budget somebody else can
+// spend on an address, which costs its owner an hour; lowering it lowers both.
+//
+// The client budget is what bounds walking a list of addresses from one place.
+// Raise either for a form your people really use more often than this.
+var (
+	codeFormLimitPerAddress = cache.PerHour(10)
+	codeFormLimitPerClient  = cache.PerMinutes(15, 30)
+)
+
+// throttleCodeForm counts one submission of the form named form against the
+// client that sent it and the address it carries, and refuses it under field
+// once either has spent its budget.
+//
+// It fails closed: a store that cannot count is logged and the form is
+// refused. The application's throttle lets a request through when its store is
+// down, because it guards volume; this one is what keeps a code from being
+// guessed, and letting the form through would take it away exactly then.
+func (m *Module) throttleCodeForm(w http.ResponseWriter, r *http.Request, form, field, email string) error {
+	limits := []cache.Limit{codeFormLimitPerClient.By("authui:" + form + ":" + hmiddleware.KeyByIP(r))}
+	if address := account.NormalizeEmail(email); address != "" {
+		// Hashed, so the cache keeps no address in a key.
+		sum := sha256.Sum256([]byte(m.tenant(r) + "\x00" + address))
+		limits = append(limits, codeFormLimitPerAddress.By("authui:"+form+":address:"+hex.EncodeToString(sum[:])))
+	}
+	for _, limit := range limits {
+		result, err := m.limiter.Attempt(r.Context(), limit)
+		if err != nil {
+			log.For(r.Context()).Error("counting a code form against its limit", "form", form, "error", err)
+			return validation.Errors{field: {"this form cannot be checked right now, try again in a minute"}}
+		}
+		if !result.OK {
+			seconds := int(result.RetryAfter/time.Second) + 1
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			return validation.Errors{field: {tooManyAttempts(seconds)}}
+		}
+	}
+	return nil
+}
+
+// tooManyAttempts is what a code form says once a budget is spent, in whole
+// minutes rounded up.
+func tooManyAttempts(seconds int) string {
+	if minutes := (seconds + 59) / 60; minutes > 1 {
+		return fmt.Sprintf("too many attempts, try again in %d minutes", minutes)
+	}
+	return "too many attempts, try again in a minute"
 }
 
 // arandu:begin custom

@@ -305,6 +305,9 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 	if err := ctx.Bind(&in); err != nil {
 		return err
 	}
+	if err := m.throttleCodeForm(w, r, "verify.confirm", "email_code", in.Email); err != nil {
+		return err
+	}
 	if in.Email == "" || in.Code == "" {
 		return validation.Errors{"email_code": {"type the code from your email"}}
 	}
@@ -331,6 +334,9 @@ func (m *Module) resendVerification(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
 	var in resendRequest
 	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if err := m.throttleCodeForm(w, r, "verify.resend", "email", in.Email); err != nil {
 		return err
 	}
 	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil && !u.IsVerified() {
@@ -601,6 +607,9 @@ func (m *Module) sendPasswordCode(ctx *hhttp.Context) error {
 	if err := ctx.Bind(&in); err != nil {
 		return err
 	}
+	if err := m.throttleCodeForm(w, r, "password.email", "email", in.Email); err != nil {
+		return err
+	}
 	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil {
 		if err := m.sendPasswordReset(r, u); err != nil {
 			log.For(r.Context()).Error("sending the password reset code", "error", err)
@@ -640,6 +649,9 @@ func (m *Module) updatePassword(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
 	var in passwordUpdateRequest
 	if err := ctx.Bind(&in); err != nil {
+		return err
+	}
+	if err := m.throttleCodeForm(w, r, "password.update", "email_code", in.Email); err != nil {
 		return err
 	}
 	if in.Code == "" {

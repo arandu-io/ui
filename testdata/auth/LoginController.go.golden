@@ -14,6 +14,7 @@ import (
 	twofactor "github.com/arandu-io/hesape/2fa"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/cache"
 	"github.com/arandu-io/hesape/encryption"
 	"github.com/arandu-io/hesape/onetime"
 	"github.com/arandu-io/hesape/session"
@@ -81,6 +82,7 @@ type Module struct {
 	sessions *security.SessionStore
 	csrf     *session.CSRF
 	mailer   *mail.Mailer
+	limiter  *cache.RateLimiter
 	signer   *encryption.Signer
 	flash    *session.Flash
 	tenant   TenantResolver
@@ -102,6 +104,13 @@ type Module struct {
 // issues a token with it: each draws the one CSRFProtect put on the request
 // context.
 //
+// limiter counts the forms that send or check a one-time code, per client and
+// per address typed (see throttleCodeForm). Pass drivers.Limiter, which counts
+// in the cache store the application's own throttle counts in, so every
+// replica spends from one budget. Nil counts in this process alone: right for
+// a single process and for a test, and N replicas would each allow the whole
+// budget.
+//
 // secure is whether the cookies this module writes itself carry Secure: the
 // short pending cookie of a two-factor sign-in, and the flash it builds for a
 // router that was wired with none. Pass cfg.Framework.Session.Secure, the one
@@ -112,13 +121,16 @@ type Module struct {
 // on each screen, the signature of each message and the issuer an
 // authenticator app files a second factor under. A name passed in as well
 // would be a second answer to the same question.
-func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, appKey []byte, tenant TenantResolver, secure bool) *Module {
+func New(users Users, factors Factors, codes onetime.CodeStore, sessions *security.SessionStore, csrf *session.CSRF, mailer *mail.Mailer, limiter *cache.RateLimiter, appKey []byte, tenant TenantResolver, secure bool) *Module {
 	if tenant == nil {
 		tenant = FixedTenant("")
 	}
+	if limiter == nil {
+		limiter = cache.NewRateLimiter(cache.NewArrayStore())
+	}
 	return &Module{
 		users: users, factors: factors, codes: codes, sessions: sessions,
-		csrf: csrf, mailer: mailer, signer: encryption.NewSigner(appKey),
+		csrf: csrf, mailer: mailer, limiter: limiter, signer: encryption.NewSigner(appKey),
 		// Replaced in Routes by the router's flash when it carries one.
 		flash:  session.NewFlash(appKey, secure),
 		tenant: tenant, secure: secure,

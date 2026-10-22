@@ -872,7 +872,7 @@ func main() {
 		sessions := security.NewSessionStore(appKey, time.Hour, false,
 			security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 		module := authui.New(users{}, factors{}, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-			appKey, authui.FixedTenant("tenant-a"), secure)
+			nil, appKey, authui.FixedTenant("tenant-a"), secure)
 		router := fhttp.NewRouter()
 		module.Routes(router)
 

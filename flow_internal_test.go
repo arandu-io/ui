@@ -1544,7 +1544,7 @@ func main() {
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	f := &factors{}
 	module := authui.New(users{}, f, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-		appKey, authui.FixedTenant("tenant-a"), false)
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 	app := middleware.Flash(session.NewFlash(appKey, false))(router)
@@ -1674,7 +1674,7 @@ func main() {
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	module := authui.New(users{}, factors{}, nil, sessions, security.NewCSRF(appKey, time.Hour), nil,
-		appKey, authui.FixedTenant("tenant-a"), false)
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 
@@ -1783,7 +1783,7 @@ func main() {
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	csrf := session.NewCSRF(appKey, time.Hour)
 	module := authui.New(users{}, nil, nil, sessions, csrf, nil,
-		appKey, authui.FixedTenant("tenant-a"), false)
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 	app := middleware.Flash(session.NewFlash(appKey, false))(
@@ -1925,7 +1925,7 @@ func main() {
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	module := authui.New(users{}, nil, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-		appKey, authui.FixedTenant("tenant-a"), false)
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
 	app := middleware.Flash(session.NewFlash(appKey, false))(router)
@@ -2062,7 +2062,7 @@ func main() {
 		sessions := security.NewSessionStore(moduleKey, time.Hour, false,
 			security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 		return authui.New(users{}, nil, nil, sessions, session.NewCSRF(moduleKey, time.Hour), nil,
-			moduleKey, authui.FixedTenant("tenant-a"), secure)
+			nil, moduleKey, authui.FixedTenant("tenant-a"), secure)
 	}
 
 	post := func(app http.Handler, path string, form url.Values) *httptest.ResponseRecorder {
@@ -2311,7 +2311,7 @@ func main() {
 	flash := session.NewFlash(appKey, false)
 	router := fhttp.NewRouter().WithFlash(flash)
 	authui.New(service, factors{}, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
-		appKey, authui.FixedTenant("tenant-a"), false).Routes(router)
+		nil, appKey, authui.FixedTenant("tenant-a"), false).Routes(router)
 	app := middleware.Flash(flash)(router)
 
 	send := func(r *http.Request, cookies []*http.Cookie) *httptest.ResponseRecorder {
@@ -2664,7 +2664,7 @@ func main() {
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	mailer := mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
 	module := authui.New(users{}, factors{}, codes{}, sessions, session.NewCSRF(appKey, time.Hour), mailer,
-		appKey, authui.FixedTenant("tenant-a"), false)
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
 	home := controllers.NewHomeController(users{}, "tenant-a")
 
 	router := fhttp.NewRouter().WithRenderer(view.NewRenderer())
@@ -3001,7 +3001,7 @@ func main() {
 	}
 	newModule := func(u authui.Users) *authui.Module {
 		return authui.New(u, factors, issued, sessions, session.NewCSRF(appKey, time.Hour), mailer,
-			appKey, authui.FixedTenant("tenant-a"), false)
+			nil, appKey, authui.FixedTenant("tenant-a"), false)
 	}
 	kit := mount(newModule(users))
 	seam := mount(newModule(seamUsers).WithRegistration(readPerson))
@@ -3178,6 +3178,317 @@ func cookieHeader(jar map[string]*http.Cookie) []string {
 }
 `
 
+// TestACodeIsGuessedAgainstOneBudgetPerAddressAndOnePerClient runs the two
+// forms that check a code the kit mailed -- the new password and the address
+// confirmation -- with a wrong code, over and over.
+//
+// A code allows a few tries and every new one starts its own, so whoever can
+// ask for codes could guess for as long as they kept asking: thousands of
+// guesses a day against one account. The address typed is what bounds that,
+// whichever client the guesses come from and however the address is spelled,
+// and it is counted before anything is looked up, so an address with no
+// account runs out exactly when one with an account does. The client is what
+// bounds walking a list of addresses from one place. A refused guess never
+// reaches the code store.
+func TestACodeIsGuessedAgainstOneBudgetPerAddressAndOnePerClient(t *testing.T) {
+	out := runAgainstPublishedKit(t, codeGuessProbe)
+
+	for _, want := range []string{
+		"password.update address registered: allowed=10 consumed=10 refused=303 retry-after=true",
+		"password.update address unregistered: allowed=10 consumed=0 refused=303 retry-after=true",
+		"password.update client: allowed=30 refused=303 retry-after=true",
+		"verify.confirm address registered: allowed=10 consumed=10 refused=303 retry-after=true",
+		"verify.confirm address unregistered: allowed=10 consumed=0 refused=303 retry-after=true",
+		"verify.confirm client: allowed=30 refused=303 retry-after=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// codeGuessProbe offers each code form a wrong code until it is refused: first
+// one address from a new client each time, spelled two ways, then one client
+// with a new address each time.
+const codeGuessProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/session"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+type users struct{ authui.Users }
+
+func (users) Lookup(_ context.Context, _, email string) (account.Account, error) {
+	if account.NormalizeEmail(email) == owner.Email {
+		return owner, nil
+	}
+	return nil, errors.New("no such account")
+}
+
+type codes struct{ consumed int }
+
+func (*codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (c *codes) Consume(context.Context, string, string, string) error {
+	c.consumed++
+	return errors.New("that is not the code")
+}
+
+func main() {
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	store := &codes{}
+	module := authui.New(users{}, nil, store, sessions, session.NewCSRF(appKey, time.Hour), nil,
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
+
+	post := func(path, client string, form url.Values) *http.Response {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", path)
+		r.RemoteAddr = client + ":40000"
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w.Result()
+	}
+	// until posts until the form is refused with a Retry-After, and returns how
+	// many it let through first and the refusal; a form that refuses nothing in
+	// fifty is answered as fifty allowed.
+	until := func(next func(i int) *http.Response) (int, *http.Response) {
+		var res *http.Response
+		for i := 0; i < 50; i++ {
+			if res = next(i); res.Header.Get("Retry-After") != "" {
+				return i, res
+			}
+		}
+		return 50, res
+	}
+
+	const password = "a-password-long-enough"
+	for _, f := range []struct {
+		name, path string
+		form       func(email string) url.Values
+	}{
+		{"password.update", "/auth/password/update", func(email string) url.Values {
+			return url.Values{"email": {email}, "email_code": {"000000"}, "password": {password},
+				"password_confirmation": {password}}
+		}},
+		{"verify.confirm", "/auth/verify/confirm", func(email string) url.Values {
+			return url.Values{"email": {email}, "email_code": {"000000"}}
+		}},
+	} {
+		for _, a := range []struct{ kind, email string }{
+			{"registered", owner.Email}, {"unregistered", "nobody@example.test"},
+		} {
+			store.consumed = 0
+			allowed, res := until(func(i int) *http.Response {
+				spelled := a.email
+				if i%2 == 1 {
+					spelled = "  " + strings.ToUpper(a.email)
+				}
+				return post(f.path, fmt.Sprintf("198.51.100.%d", i+1), f.form(spelled))
+			})
+			fmt.Printf("%s address %s: allowed=%d consumed=%d refused=%d retry-after=%t\n", f.name, a.kind,
+				allowed, store.consumed, res.StatusCode, res.Header.Get("Retry-After") != "")
+		}
+		allowed, res := until(func(i int) *http.Response {
+			return post(f.path, "203.0.113.7", f.form(fmt.Sprintf("guess-%d@example.test", i)))
+		})
+		fmt.Printf("%s client: allowed=%d refused=%d retry-after=%t\n", f.name, allowed, res.StatusCode,
+			res.Header.Get("Retry-After") != "")
+	}
+}
+`
+
+// TestAskingForACodeIsLimitedPerAddressAndPerClient runs the two forms that
+// mail a code -- the reset request and the verification resend -- through a
+// counter that records the keys it was asked to count, one that says every
+// budget is spent, and one that cannot count at all.
+//
+// They are limited like the forms that check a code: once per client and once
+// per address, the address counted the same however it is spelled. A spent
+// budget and a store that cannot count both refuse the form before anything is
+// looked up or mailed: the second is what keeps a cache outage from taking the
+// limit away. Ten real requests are not spent reaching a limit here: the
+// guessing probe already counts the same limits for real.
+func TestAskingForACodeIsLimitedPerAddressAndPerClient(t *testing.T) {
+	out := runAgainstPublishedKit(t, askForCodeLimitProbe)
+
+	for _, want := range []string{
+		"password.email keys: first=2 same-address-new-client=3",
+		"verify.resend keys: first=2 same-address-new-client=3",
+		"password.email spent: status=303 retry-after=true looked-up=false mailed=false",
+		"verify.resend spent: status=303 retry-after=true looked-up=false mailed=false",
+		"password.email uncounted: status=303 looked-up=false mailed=false",
+		"verify.resend uncounted: status=303 looked-up=false mailed=false",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// askForCodeLimitProbe counts the keys one address is limited by, then asks
+// once more with every budget spent and once with a store that cannot count.
+const askForCodeLimitProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/mail"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/cache"
+	"github.com/arandu-io/hesape/session"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+var (
+	mu       sync.Mutex
+	lookedUp int
+	sent     int
+)
+
+type users struct{ authui.Users }
+
+func (users) Lookup(_ context.Context, _, email string) (account.Account, error) {
+	mu.Lock()
+	lookedUp++
+	mu.Unlock()
+	if account.NormalizeEmail(email) == owner.Email {
+		return owner, nil
+	}
+	return nil, errors.New("no such account")
+}
+
+type codes struct{}
+
+func (codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (codes) Consume(context.Context, string, string, string) error  { return errors.New("unused") }
+
+type outbox struct{}
+
+func (outbox) Name() string { return "probe" }
+func (outbox) Send(context.Context, mail.Message) error {
+	mu.Lock()
+	sent++
+	mu.Unlock()
+	return nil
+}
+
+type bodies struct{}
+
+func (bodies) RenderToString(string, any) (string, error) { return "body", nil }
+
+// counter is the cache store the limiter counts in, with the keys it was asked
+// to count, a switch that answers every count as spent, and one that answers
+// every count with an error, as a store that went away does.
+type counter struct {
+	*cache.ArrayStore
+	full   bool
+	broken bool
+	keys   map[string]bool
+}
+
+func (c *counter) Increment(ctx context.Context, key string, delta int64, ttl time.Duration) (int64, error) {
+	c.keys[key] = true
+	if c.broken {
+		return 0, errors.New("the cache went away")
+	}
+	if c.full {
+		return 1 << 30, nil
+	}
+	return c.ArrayStore.Increment(ctx, key, delta, ttl)
+}
+
+func read(n *int) int {
+	mu.Lock()
+	defer mu.Unlock()
+	return *n
+}
+
+func main() {
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	mailer := mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
+	limits := &counter{ArrayStore: cache.NewArrayStore(), keys: map[string]bool{}}
+	module := authui.New(users{}, nil, codes{}, sessions, session.NewCSRF(appKey, time.Hour), mailer,
+		cache.NewRateLimiter(limits), appKey, authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
+
+	post := func(path, client, email string) *http.Response {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(url.Values{"email": {email}}.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", path)
+		r.RemoteAddr = client + ":40000"
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w.Result()
+	}
+
+	for _, f := range []struct{ name, path string }{
+		{"password.email", "/auth/password/email"}, {"verify.resend", "/auth/verify/resend"},
+	} {
+		limits.keys = map[string]bool{}
+		post(f.path, "203.0.113.1", "  Someone@Example.test")
+		first := len(limits.keys)
+		post(f.path, "203.0.113.2", "someone@example.test")
+		fmt.Printf("%s keys: first=%d same-address-new-client=%d\n", f.name, first, len(limits.keys))
+
+		limits.full = true
+		looked, mailed := read(&lookedUp), read(&sent)
+		res := post(f.path, "203.0.113.3", owner.Email)
+		limits.full = false
+		fmt.Printf("%s spent: status=%d retry-after=%t looked-up=%t mailed=%t\n", f.name, res.StatusCode,
+			res.Header.Get("Retry-After") != "", read(&lookedUp) != looked, read(&sent) != mailed)
+
+		limits.broken = true
+		looked, mailed = read(&lookedUp), read(&sent)
+		res = post(f.path, "203.0.113.4", owner.Email)
+		limits.broken = false
+		fmt.Printf("%s uncounted: status=%d looked-up=%t mailed=%t\n", f.name, res.StatusCode,
+			read(&lookedUp) != looked, read(&sent) != mailed)
+	}
+}
+`
+
 // TestTheScreensThatShowASecondFactorSecretAreNeverCached runs the three
 // answers that carry second-factor key material -- the setup screen with the
 // authenticator secret and its QR code, and the recovery codes shown after a
@@ -3255,7 +3566,7 @@ func main() {
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
 	module := authui.New(users{}, factors{}, nil, sessions, security.NewCSRF(appKey, time.Hour), nil,
-		appKey, authui.FixedTenant("tenant-a"), false)
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter().WithRenderer(view.NewRenderer())
 	module.Routes(router)
 

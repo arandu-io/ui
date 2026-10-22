@@ -269,16 +269,18 @@ and nothing else. The import:
 and, in Configure, in the WithProviders(...) list, before app:
 
     authui.New(app.Users, app.TwoFactor, app.EmailCodes, drivers.Sessions, drivers.CSRF,
-        drivers.Mail, cfg.Framework.App.Key,
+        drivers.Mail, drivers.Limiter, cfg.Framework.App.Key,
         authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure),
 
 The screens call the account rules of github.com/arandu-io/hesape/auth/account,
 which a new project's provider in app/Providers already builds as Users and
 TwoFactor with account.NewUsers and account.NewFactors: the users query, the
 user policy, and the second factor counting codes in the store the rate limit
-counts in. EmailCodes is the provider's code store, and Sessions, CSRF and Mail
-are the drivers the framework built from the configuration. A project that
-still keeps app/Services/UserService.go and TwoFactorService.go deletes them as
+counts in. EmailCodes is the provider's code store, and Sessions, CSRF, Mail
+and Limiter are the drivers the framework built from the configuration --
+Limiter counts the forms that send or check a code, per address and per client,
+in the store the application's own throttle counts in. A project that still
+keeps app/Services/UserService.go and TwoFactorService.go deletes them as
 hesape's UPGRADE.md for v0.60.0 says; the account rules replace both.
 
 A sign-up form that asks for more than a name, an address and a password --
