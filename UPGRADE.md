@@ -11,6 +11,46 @@ project receives, not about this repository's code.
 
 ---
 
+## v0.26.0 — the code forms are limited and timed, and second-factor secrets are not cached
+
+Three changes in the published controllers, all security fixes:
+
+- `/auth/password/email`, `/auth/password/update`, `/auth/verify/confirm` and
+  `/auth/verify/resend` count every submission per address typed (ten an hour)
+  and per client (thirty per fifteen minutes), before anything is looked up. A
+  code allows five tries and every new code started its own count, so the reset
+  allowed thousands of guesses a day against one account.
+- The reset request and the verification resend answer after the same second
+  whether the address has an account or not; the time no longer says which.
+- The two-factor setup screen and the recovery codes go out with
+  `Cache-Control: no-store, private`.
+
+### What a republish does on its own
+
+Nothing: all three live in the controllers, which a plain `auth` keeps. A
+project that wants them publishes with `auth --force`, which carries the custom
+blocks of `LoginController.go` and `LoginController_handlers.go` over, or copies
+the functions by hand.
+
+### `authui.New` takes the rate limiter
+
+`New` has a seventh argument, the `*cache.RateLimiter` the forms are counted
+in, after the mailer. After `auth --force`, add `drivers.Limiter` to the call in
+`bootstrap/app.go`:
+
+```go
+authui.New(app.Users, app.TwoFactor, app.EmailCodes, drivers.Sessions, drivers.CSRF,
+    drivers.Mail, drivers.Limiter, cfg.Framework.App.Key,
+    authui.FixedTenant(cfg.Auth.Tenant), cfg.Framework.Session.Secure),
+```
+
+Until it is added the project does not build, which is the point: `nil` is
+accepted and counts in the process alone, so every replica would allow the
+whole budget, and that is a choice to write down rather than a default to
+inherit.
+
+---
+
 ## v0.24.2 — a password stored trimmed signs in without being rewritten
 
 `verifyTrimmedPassword` in `app/Http/Controllers/Auth/LoginController_handlers.go`
