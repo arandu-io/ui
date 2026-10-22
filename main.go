@@ -318,7 +318,7 @@ before adding this one: both answer the same paths.
 A project whose bootstrap/ still holds more than app.go -- a Build that takes
 its services as arguments, console.go, migrate.go -- moves to the builder
 first, as the framework's UPGRADE.md for v0.59.0 says. These lines are written
-for the builder, and the framework release this kit compiles against is v0.60.0.
+for the builder, and the framework release this kit compiles against is v0.62.1.
 
 Every view is its own Go package, and so is the script under resources/js. A
 package nobody imports registers nothing -- so the import block of
