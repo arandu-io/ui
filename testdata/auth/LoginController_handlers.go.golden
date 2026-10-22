@@ -1,6 +1,7 @@
 package authui
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -281,6 +282,38 @@ func tooManyAttempts(seconds int) string {
 		return fmt.Sprintf("too many attempts, try again in %d minutes", minutes)
 	}
 	return "too many attempts, try again in a minute"
+}
+
+// codeRequestTime is how long asking for a code takes to answer, whether the
+// address has an account or not.
+//
+// An address with an account is looked up, issued a code and mailed; one
+// without is only looked up. Answered as soon as that work was done, the time
+// alone would say which addresses have accounts, whatever the sentence says.
+// Raise it if looking an account up and issuing a code take longer than this
+// here. A slow mailer does not need it raised: the message goes on being sent
+// after the answer.
+const codeRequestTime = time.Second
+
+// answerAfter runs work and returns when d has passed: not before, when work
+// was quick, and not later, when it was slow.
+//
+// Work that outlasts d goes on after the answer is written, under a context
+// the end of the request does not cancel, so a slow mailer delays a message
+// rather than telling the time. It must not touch the request or the response.
+func answerAfter(ctx context.Context, d time.Duration, work func(context.Context)) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		work(context.WithoutCancel(ctx))
+	}()
+	select {
+	case <-done:
+		<-timer.C
+	case <-timer.C:
+	}
 }
 
 // arandu:begin custom

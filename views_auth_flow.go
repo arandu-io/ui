@@ -6,6 +6,7 @@ package main
 const authRegisterControllerTemplate = `package authui
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -283,7 +284,7 @@ func (m *Module) doRegister(ctx *hhttp.Context) error {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return nil
 	}
-	if err := m.sendVerification(r, u); err != nil {
+	if err := m.sendVerification(r.Context(), u); err != nil {
 		log.For(r.Context()).Error("sending the verification code", "error", err)
 	}
 	redirect(w, r, "/auth/verify")
@@ -328,8 +329,9 @@ func (m *Module) verify(ctx *hhttp.Context) error {
 	return nil
 }
 
-// resendVerification does not reveal whether the address exists. The native
-// CodeStore applies expiry, cooldown, attempt limits and atomic consumption.
+// resendVerification does not reveal whether the address exists: it answers
+// with the same sentence, in the same time, either way. The native CodeStore
+// applies expiry, cooldown, attempt limits and atomic consumption.
 func (m *Module) resendVerification(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
 	var in resendRequest
@@ -339,22 +341,27 @@ func (m *Module) resendVerification(ctx *hhttp.Context) error {
 	if err := m.throttleCodeForm(w, r, "verify.resend", "email", in.Email); err != nil {
 		return err
 	}
-	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil && !u.IsVerified() {
-		if err := m.sendVerification(r, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
-			log.For(r.Context()).Error("resending the verification code", "error", err)
+	tenant := m.tenant(r)
+	answerAfter(r.Context(), codeRequestTime, func(detached context.Context) {
+		u, err := m.users.Lookup(detached, tenant, in.Email)
+		if err != nil || u.IsVerified() {
+			return
 		}
-	}
+		if err := m.sendVerification(detached, u); err != nil && !errors.Is(err, onetime.ErrCooldown) {
+			log.For(detached).Error("resending the verification code", "error", err)
+		}
+	})
 	m.notify(w, r, "/auth/verify", verificationSent, url.Values{"email": {in.Email}})
 	return nil
 }
 
-func (m *Module) sendVerification(r *http.Request, u account.Account) error {
-	code, err := m.codes.Issue(r.Context(), verifyPurpose, emailCodeSubject(u))
+func (m *Module) sendVerification(ctx context.Context, u account.Account) error {
+	code, err := m.codes.Issue(ctx, verifyPurpose, emailCodeSubject(u))
 	if err != nil {
 		return err
 	}
-	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.VerifyEmail{
-		Name: firstWord(u.AccountName()), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
+	return m.mailer.ToAddress(mailAddress(u)).Send(ctx, appmail.VerifyEmail{
+		Name: firstWord(u.AccountName()), Code: code, BrandName: hhttp.AppNameFrom(ctx),
 	})
 }
 
@@ -535,6 +542,7 @@ func mailAddress(u account.Account) mail.Address {
 const authPasswordControllerTemplate = `package authui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -601,6 +609,9 @@ func (m *Module) showPasswordRequest(w http.ResponseWriter, r *http.Request) {
 	m.screen(w, r, "auth.passwords.email", AuthPage{Page: m.page(r, "Reset your password")})
 }
 
+// sendPasswordCode mails a reset code to the address when it has an account,
+// and answers with the same sentence, in the same time, when it has none: see
+// codeRequestTime.
 func (m *Module) sendPasswordCode(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
 	var in passwordEmailRequest
@@ -610,22 +621,27 @@ func (m *Module) sendPasswordCode(ctx *hhttp.Context) error {
 	if err := m.throttleCodeForm(w, r, "password.email", "email", in.Email); err != nil {
 		return err
 	}
-	if u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email); err == nil {
-		if err := m.sendPasswordReset(r, u); err != nil {
-			log.For(r.Context()).Error("sending the password reset code", "error", err)
+	tenant := m.tenant(r)
+	answerAfter(r.Context(), codeRequestTime, func(detached context.Context) {
+		u, err := m.users.Lookup(detached, tenant, in.Email)
+		if err != nil {
+			return
 		}
-	}
+		if err := m.sendPasswordReset(detached, u); err != nil {
+			log.For(detached).Error("sending the password reset code", "error", err)
+		}
+	})
 	m.notify(w, r, "/auth/password/reset", codeSent, url.Values{"email": {in.Email}})
 	return nil
 }
 
-func (m *Module) sendPasswordReset(r *http.Request, u account.Account) error {
-	code, err := m.codes.Issue(r.Context(), resetPurpose, resetCodeSubject(u))
+func (m *Module) sendPasswordReset(ctx context.Context, u account.Account) error {
+	code, err := m.codes.Issue(ctx, resetPurpose, resetCodeSubject(u))
 	if err != nil {
 		return err
 	}
-	return m.mailer.ToAddress(mailAddress(u)).Send(r.Context(), appmail.PasswordReset{
-		Name: firstWord(u.AccountName()), Code: code, BrandName: hhttp.AppNameFrom(r.Context()),
+	return m.mailer.ToAddress(mailAddress(u)).Send(ctx, appmail.PasswordReset{
+		Name: firstWord(u.AccountName()), Code: code, BrandName: hhttp.AppNameFrom(ctx),
 	})
 }
 

@@ -343,7 +343,7 @@ func TestTheResetUsesOnlyPurposeBoundNativeCodes(t *testing.T) {
 			t.Errorf("the reset still publishes the legacy signed-link boundary %q", gone)
 		}
 	}
-	if !strings.Contains(source, `m.codes.Issue(r.Context(), resetPurpose, resetCodeSubject(u))`) ||
+	if !strings.Contains(source, `m.codes.Issue(ctx, resetPurpose, resetCodeSubject(u))`) ||
 		!strings.Contains(source, `resetPurpose = "reset-password"`) {
 		t.Error("password reset is not issued through the purpose-bound native CodeStore")
 	}
@@ -661,10 +661,10 @@ func TestNothingTheKitPublishesIsBrandedWithItsOwnName(t *testing.T) {
 			t.Errorf("%s carries no BrandName, so the view has nothing to draw but a literal", mailable)
 		}
 	}
-	if body := bodyOf(t, authFile(t, "RegisterController.go"), "sendVerification"); !strings.Contains(body, "BrandName: hhttp.AppNameFrom(r.Context())") {
+	if body := bodyOf(t, authFile(t, "RegisterController.go"), "sendVerification"); !strings.Contains(body, "BrandName: hhttp.AppNameFrom(ctx)") {
 		t.Error("the verification mail goes out without the application's name: the field exists and nobody fills it")
 	}
-	if body := bodyOf(t, authFile(t, "PasswordController.go"), "sendPasswordReset"); !strings.Contains(body, "BrandName: hhttp.AppNameFrom(r.Context())") {
+	if body := bodyOf(t, authFile(t, "PasswordController.go"), "sendPasswordReset"); !strings.Contains(body, "BrandName: hhttp.AppNameFrom(ctx)") {
 		t.Error("the reset mail goes out without the application's name: the field exists and nobody fills it")
 	}
 }
@@ -3485,6 +3485,169 @@ func main() {
 		limits.broken = false
 		fmt.Printf("%s uncounted: status=%d looked-up=%t mailed=%t\n", f.name, res.StatusCode,
 			read(&lookedUp) != looked, read(&sent) != mailed)
+	}
+}
+`
+
+// TestAskingForACodeSaysNothingAboutTheAddressInItsTime runs the two forms that
+// mail a code for an address with an account and one without, and with a
+// mailer that is quick and one that is slow.
+//
+// Both answer with the same sentence, and the sentence was never the leak: the
+// address with an account is issued a code and mailed before the answer, the
+// one without is not, and the difference is the time. Each answer has to take
+// as long as the others, the quick message has to be out before its answer and
+// the slow one has to be sent after it, rather than lost.
+func TestAskingForACodeSaysNothingAboutTheAddressInItsTime(t *testing.T) {
+	out := runAgainstPublishedKit(t, askForCodeTimeProbe)
+
+	for _, form := range []string{"password.email", "verify.resend"} {
+		line := regexp.MustCompile(form + ` time: registered=(\d+) unregistered=(\d+) slow=(\d+) ` +
+			`sent-before-answer=(\w+) slow-sent-after=(\w+)`).FindStringSubmatch(out)
+		if line == nil {
+			t.Errorf("the probe printed no timing for %s; it printed:\n%s", form, out)
+			continue
+		}
+		registered, _ := strconv.Atoi(line[1])
+		unregistered, _ := strconv.Atoi(line[2])
+		slow, _ := strconv.Atoi(line[3])
+		for _, c := range []struct {
+			name string
+			ms   int
+		}{{"an address with an account", registered}, {"an address with an account and a slow mailer", slow}} {
+			if d := c.ms - unregistered; d > 250 || d < -250 {
+				t.Errorf("%s answers %s in %dms and an address without one in %dms: the time says which "+
+					"addresses have accounts", form, c.name, c.ms, unregistered)
+			}
+		}
+		if line[4] != "true" {
+			t.Errorf("%s answered before a quick mailer had sent the code", form)
+		}
+		if line[5] != "true" {
+			t.Errorf("%s never sent the code the slow mailer was still sending when it answered", form)
+		}
+	}
+}
+
+// askForCodeTimeProbe times each form for an address with an account, one
+// without, and one with an account behind a mailer slower than the answer.
+const askForCodeTimeProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/mail"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/session"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+var (
+	mu    sync.Mutex
+	sent  int
+	delay time.Duration
+)
+
+type users struct{ authui.Users }
+
+func (users) Lookup(_ context.Context, _, email string) (account.Account, error) {
+	if account.NormalizeEmail(email) == owner.Email {
+		return owner, nil
+	}
+	return nil, errors.New("no such account")
+}
+
+type codes struct{}
+
+func (codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (codes) Consume(context.Context, string, string, string) error  { return errors.New("unused") }
+
+type outbox struct{}
+
+func (outbox) Name() string { return "probe" }
+func (outbox) Send(context.Context, mail.Message) error {
+	mu.Lock()
+	wait := delay
+	mu.Unlock()
+	time.Sleep(wait)
+	mu.Lock()
+	sent++
+	mu.Unlock()
+	return nil
+}
+
+type bodies struct{}
+
+func (bodies) RenderToString(string, any) (string, error) { return "body", nil }
+
+func sentSoFar() int {
+	mu.Lock()
+	defer mu.Unlock()
+	return sent
+}
+
+func slowMailer(d time.Duration) {
+	mu.Lock()
+	delay = d
+	mu.Unlock()
+}
+
+func main() {
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(appKey, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	mailer := mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
+	module := authui.New(users{}, nil, codes{}, sessions, session.NewCSRF(appKey, time.Hour), mailer,
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
+
+	post := func(path, email string) int {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(url.Values{"email": {email}}.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", path)
+		w := httptest.NewRecorder()
+		start := time.Now()
+		app.ServeHTTP(w, r)
+		return int(time.Since(start) / time.Millisecond)
+	}
+
+	for _, f := range []struct{ name, path string }{
+		{"password.email", "/auth/password/email"}, {"verify.resend", "/auth/verify/resend"},
+	} {
+		before := sentSoFar()
+		registered := post(f.path, owner.Email)
+		sentBeforeAnswer := sentSoFar() == before+1
+		unregistered := post(f.path, "nobody@example.test")
+
+		slowMailer(1500 * time.Millisecond)
+		before = sentSoFar()
+		slow := post(f.path, owner.Email)
+		deadline := time.Now().Add(4 * time.Second)
+		for sentSoFar() == before && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		slowSentAfter := sentSoFar() == before+1
+		slowMailer(0)
+
+		fmt.Printf("%s time: registered=%d unregistered=%d slow=%d sent-before-answer=%t slow-sent-after=%t\n",
+			f.name, registered, unregistered, slow, sentBeforeAnswer, slowSentAfter)
 	}
 }
 `
