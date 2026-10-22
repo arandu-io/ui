@@ -139,7 +139,7 @@ a fixture under `testdata/retired/`, taken from the golden file at the tag.
 | 29 files published by `auth` — 17 views, 11 plain Go and 1 script | `go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run \| wc -l)` |
 | 22 of those refreshed by `auth --views` — 17 views plus `page.go`, `render.go`, `HomeController.go` and the two under `resources/js/` | `(cd ../arandu && /tmp/ui auth --views --dry-run \| wc -l)` |
 | 29 golden files, byte for byte what is published | `find testdata -name '*.golden' \| wc -l` |
-| 116 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
+| 117 tests in 5 internal test files | `grep -h '^func Test' *_test.go \| wc -l` and `find . -maxdepth 1 -name '*_test.go' \| wc -l` |
 | 1 file retired, removed by `--force` while it is still the kit's bytes, and 3 fixtures, one per version published | `sed -n '/^var retired/,/^}/p' publish.go \| grep -c 'Path:'` and `ls testdata/retired \| wc -l` |
 | 23 routes mounted by the module it publishes, 9 for two-factor authentication, 10 of them controller actions | `grep -hE '^\tg\.(Get\|Post\|Action)\(' views_controllers.go views_auth_flow.go \| wc -l` and `grep -c '^\tg\.Action(' views_controllers.go` |
 | 1 dependency, the publishing engine, and that is a CI step | `awk '/^require/,0' go.mod \| grep -c 'github.com'` |
@@ -209,8 +209,10 @@ are the method sets of `*account.Users` and `*account.Factors`, asserted in
 `LoginController.go`, so a project hands `authui.New` what `account.NewUsers`
 and `account.NewFactors` return and keeps no user or second-factor service.
 Every method answers an `account.Account`; the handlers read its six readers,
-and `subjectOf` alone asserts `*models.User`, for the roles. The compile gate
-lays a `models.User` that implements `account.Account` and no `app/Services`,
+and the session subject is the one the account builds with `Subject()`, the
+method the skeleton's session resolver calls on every request, so there is one
+builder. The compile gate lays a `models.User` that implements
+`account.Account` and `Subject()`, and no `app/Services`,
 and `TestTheFlowRunsOnTheAccountPackage` runs the whole flow on the package over
 SQLite. Two options sit on the module: `WithRegistration` reads what a sign-up
 form adds into `account.Registration.Extra` for `Hooks.Prepare`, and

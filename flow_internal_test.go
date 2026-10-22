@@ -463,7 +463,7 @@ func TestAResetEndsTheAccountsOtherSessions(t *testing.T) {
 	if !strings.Contains(body, "m.sessions.DestroyOthers(") {
 		t.Fatal("a completed reset leaves every session of the account signed in")
 	}
-	if !strings.Contains(body, `DestroyOthers(r.Context(), subjectOf(u), "")`) {
+	if !strings.Contains(body, `DestroyOthers(r.Context(), subject, "")`) {
 		t.Error("the reset keeps a session: there is none on this request worth keeping, and the one that must " +
 			"stop working belongs to whoever forced the reset")
 	}
@@ -3769,5 +3769,126 @@ func main() {
 	fmt.Printf("confirm: status=%d no-store=%t\n", res.StatusCode, noStore(res))
 	res = post("/auth/two-factor/recovery-codes", url.Values{})
 	fmt.Printf("regenerate: status=%d no-store=%t\n", res.StatusCode, noStore(res))
+}
+`
+
+// TestTheSignedInSubjectIsTheOneTheAccountBuilds signs in two accounts through
+// the published form and reads the subject the session was written with.
+//
+// The session subject is built in one place, the application's account: the
+// skeleton's User.Subject, the method its session resolver reads again on every
+// request. The kit kept a builder of its own beside it, which copied the id,
+// the tenant, the verification and the roles field by field, so the subject a
+// sign-in wrote and the one every later request read were two functions that
+// could disagree. The first account here answers a subject that differs from
+// what its readers say -- verified, while IsVerified says not -- so the session
+// shows which of the two the sign-in asked. The second answers no subject at
+// all, and is refused rather than signed in with whatever the kit could guess.
+func TestTheSignedInSubjectIsTheOneTheAccountBuilds(t *testing.T) {
+	out := runAgainstPublishedKit(t, accountSubjectProbe)
+
+	for _, want := range []string{
+		"builds: status=303 written=1 id=user-a tenant=tenant-a verified=true",
+		"builds none: status=500 written=0",
+		"the account main.bare does not build its session subject",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// accountSubjectProbe signs in an account that builds its own subject and one
+// that does not, over a session backend that records what it is given.
+const accountSubjectProbe = `package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	nativeauth "github.com/arandu-io/hesape/auth"
+	"github.com/arandu-io/hesape/auth/account"
+	"github.com/arandu-io/hesape/session"
+
+	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
+)
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+// builds answers a subject that its readers would not have produced: verified,
+// while IsVerified, read off the stored row, says the address is not.
+type builds struct{ *models.User }
+
+func (b builds) Subject() nativeauth.Subject {
+	return nativeauth.Subject{ID: b.ID, Tenant: b.TenantID, Verified: true}
+}
+
+// bare is an account and nothing more: it answers no subject.
+type bare struct{ account.Account }
+
+var signingIn account.Account
+
+type users struct{ authui.Users }
+
+func (users) VerifyCredentials(context.Context, string, string, string, string) (account.Account, error) {
+	return signingIn, nil
+}
+
+type factors struct{ authui.Factors }
+
+func (factors) Required(context.Context, string, string) (bool, error) { return false, nil }
+
+// recording keeps every subject a session is written with.
+type recording struct {
+	security.SessionBackend
+	written []security.Subject
+}
+
+func (r *recording) Put(ctx context.Context, id string, s security.Subject, ttl time.Duration) error {
+	r.written = append(r.written, s)
+	return r.SessionBackend.Put(ctx, id, s, ttl)
+}
+
+func main() {
+	appKey := []byte("0123456789abcdef0123456789abcdef")
+	backend := &recording{SessionBackend: security.NewMemoryBackend()}
+	sessions := security.NewSessionStore(appKey, time.Hour, false, backend)
+	module := authui.New(users{}, factors{}, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
+		nil, appKey, authui.FixedTenant("tenant-a"), false)
+	router := fhttp.NewRouter()
+	module.Routes(router)
+	app := middleware.Flash(session.NewFlash(appKey, false))(router)
+
+	signIn := func() int {
+		form := url.Values{"email": {owner.Email}, "password": {"a-password-long-enough"}}
+		r := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", "/auth/login")
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	signingIn = builds{owner}
+	status := signIn()
+	fmt.Printf("builds: status=%d written=%d", status, len(backend.written))
+	for _, s := range backend.written {
+		fmt.Printf(" id=%s tenant=%s verified=%t", s.ID, s.Tenant, s.Verified)
+	}
+	fmt.Println()
+
+	backend.written = nil
+	signingIn = bare{owner}
+	status = signIn()
+	fmt.Printf("builds none: status=%d written=%d\n", status, len(backend.written))
 }
 `

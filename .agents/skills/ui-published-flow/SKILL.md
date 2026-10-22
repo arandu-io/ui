@@ -152,8 +152,10 @@ handler does not bind.
 build error here. Every method answers an `account.Account`: read it through
 `AccountID`, `AccountTenant`, `AccountEmail`, `AccountName`, `PasswordHash` and
 `IsVerified`, take fingerprints with `account.Fingerprint` and addresses through
-`account.NormalizeEmail`, and match `account.ErrEmailTaken`. Only `subjectOf`
-asserts `*models.User`, for the roles column the package does not read. A
+`account.NormalizeEmail`, and match `account.ErrEmailTaken`. The session subject is the
+account's own: `sessionSubject` asks it for `Subject()`, the method the skeleton's
+`User` declares and its session resolver calls on every request, and refuses an
+account without one. A
 handler that names `app/Services` again fails the compile gate, which lays no
 such package. What an application's sign-up form adds goes through
 `WithRegistration` into `account.Registration.Extra`, for `Hooks.Prepare`: the

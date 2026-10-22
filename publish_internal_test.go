@@ -1249,8 +1249,9 @@ func layPublishedKit(t *testing.T, root string) []string {
 
 // publishedUserModel is the one model a published file names, as a project
 // that moved to hesape/auth/account declares it: the skeleton's User, embedding
-// the model, with the six readers account.Account adds and nothing of the
-// deleted services -- no PasswordFingerprint, which is account.Fingerprint now.
+// the model, with the six readers account.Account adds, the Subject its session
+// subject is built by, and nothing of the deleted services -- no
+// PasswordFingerprint, which is account.Fingerprint now.
 //
 // It is written here rather than read from ../arandu on purpose: a sibling that
 // may be absent would make the compile gate skip, which is the thing it exists
@@ -1265,6 +1266,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/auth/account"
 	"github.com/arandu-io/hesape/database/model"
 )
@@ -1321,6 +1323,13 @@ func (u *User) AccountEmail() string  { return u.Email }
 func (u *User) AccountName() string   { return u.Name }
 func (u *User) PasswordHash() string  { return u.Password }
 func (u *User) IsVerified() bool      { return u.VerifiedAt != nil && !u.VerifiedAt.IsZero() }
+
+// Subject is the skeleton's: the session subject built only from what is stored.
+func (u User) Subject() auth.Subject {
+	return auth.Subject{
+		ID: u.ID, Tenant: u.TenantID, Roles: append([]string(nil), u.Roles...), Verified: u.IsVerified(),
+	}
+}
 
 var _ account.Account = (*User)(nil)
 `

@@ -41,7 +41,8 @@ type UserNames interface {
 //
 // Every method answers an account.Account, which is the application's
 // *models.User built by its own users query. The handlers read it through the
-// six readers the model implements, and only subjectOf looks past them.
+// six readers the model implements, and the session subject through its
+// Subject method (see subjectAccount).
 type Users interface {
 	UserNames
 	VerifyCredentials(ctx context.Context, tenant, email, password, client string) (account.Account, error)

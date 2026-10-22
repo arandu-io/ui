@@ -127,7 +127,8 @@ type UserNames interface {
 //
 // Every method answers an account.Account, which is the application's
 // *models.User built by its own users query. The handlers read it through the
-// six readers the model implements, and only subjectOf looks past them.
+// six readers the model implements, and the session subject through its
+// Subject method (see subjectAccount).
 type Users interface {
 	UserNames
 	VerifyCredentials(ctx context.Context, tenant, email, password, client string) (account.Account, error)
@@ -506,8 +507,12 @@ func (m *Module) verifyTrimmedPassword(r *http.Request, tenant, email, trimmed s
 // finishSignIn is the only session-creation seam in the published flow. It is
 // called after password-only success or after a factor succeeds, never between.
 func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u account.Account, remember bool) {
-	old := m.sessions.IDFromRequest(r)
-	if _, err := m.sessions.Rotate(r.Context(), w, old, subjectOf(u), session.Remember(remember)); err != nil {
+	subject, err := sessionSubject(u)
+	if err == nil {
+		old := m.sessions.IDFromRequest(r)
+		_, err = m.sessions.Rotate(r.Context(), w, old, subject, session.Remember(remember))
+	}
+	if err != nil {
 		log.For(r.Context()).Error("starting session", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -516,19 +521,32 @@ func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request, u account.
 	redirect(w, r, m.sessions.TakeIntended(w, r, "/"))
 }
 
-// subjectOf is the session subject of an account, built from what is stored
-// and nothing a request carried.
+// subjectAccount is an account that builds the session subject it signs in
+// as.
 //
-// The roles are this application's column and not one the account package
-// reads, so they are the one thing taken from the model itself. The account
-// package answers the application's *models.User, built by its users query;
-// anything else is given no roles rather than a guess at them.
-func subjectOf(u account.Account) nativeauth.Subject {
-	subject := nativeauth.Subject{ID: u.AccountID(), Tenant: u.AccountTenant(), Verified: u.IsVerified()}
-	if user, ok := u.(*models.User); ok {
-		subject.Roles = append([]string(nil), user.Roles...)
+// The application's *models.User is one: its Subject method is the one place
+// a subject is built from what is stored, and the session store's resolver
+// calls the same method again on every request. A second builder here would
+// be a second answer to who the person is and what they may do.
+type subjectAccount interface {
+	account.Account
+	Subject() nativeauth.Subject
+}
+
+// The users query of this application answers *models.User, so it has to
+// build its subject; a model without Subject is a build error here rather than
+// a refused sign-in.
+var _ subjectAccount = (*models.User)(nil)
+
+// sessionSubject is the subject the account builds for itself. An account
+// that builds none is refused, never given a subject guessed from its
+// readers.
+func sessionSubject(u account.Account) (nativeauth.Subject, error) {
+	built, ok := u.(subjectAccount)
+	if !ok {
+		return nativeauth.Subject{}, fmt.Errorf("the account %T does not build its session subject", u)
 	}
-	return subject
+	return built.Subject(), nil
 }
 
 // doLogout destroys the session on the server, not only in the browser.
