@@ -11,6 +11,57 @@ project receives, not about this repository's code.
 
 ---
 
+## v0.28.0 — the layout draws what an action flashed, in its toaster
+
+The published layout's `#toaster` was empty, and publishing replaces the
+skeleton's layout, which draws the sentence an action leaves with
+`ctx.With(hhttp.StatusKey, ...)` before redirecting. A project that ran `auth`
+lost that sentence on every page: a note created, saved or deleted said nothing.
+The tray now draws it, as the skeleton's does:
+
+    <div id="toaster" class="toaster" aria-live="polite">
+        {!! components.Toast(components.ToastProps{Page: ., Dismissible: true}) !!}
+    </div>
+
+The pages the kit draws carry the sentence too, so it reaches the tray on them:
+`screen()` in `render.go` copies the flash's messages onto the page beside its
+errors and what was typed, and `HomeController.Index` sets `Messages` on the
+chrome from `ctx.State()`. A screen's own status line -- "a code is on its
+way" -- stays where it was, a banner or a toast as the handler decides; it
+travels beside the form's messages and never as one of these, so it is not
+drawn twice.
+
+### hesape v0.78.0
+
+The layout hands itself to the toast, and `view.Layout` answers `Flashed`,
+`FieldError` and `OldOr` from hesape v0.78.0. Before it, `aru view:build`
+writes a layout that does not compile. A project on an earlier release runs
+`go get github.com/arandu-io/hesape@v0.78.0` first; skeleton v0.38.0 requires
+v0.77.0.
+
+### What a republish does on its own
+
+A plain `auth` replaces the layout, so the tray draws the toast on every page
+the application draws with `view.New`, which fills the messages. The kit's own
+pages need two more edits:
+
+- `render.go` is a controller, which a plain `auth` keeps. Publish with
+  `auth --force`, which carries the custom blocks of `LoginController.go` and
+  `LoginController_handlers.go` over, or add
+
+      data.Page.Messages = state.Messages
+
+  after `data.Page.Old = state.Old` in `screen()`.
+- The landing page's `Index` builds its page inside the custom block of
+  `HomeController.go`, which every run carries over, `--force` or not. Build the
+  chrome into a variable there and set
+
+      chrome.Messages = ctx.State().Messages
+
+  before handing it to `ctx.View`, as the published block now does.
+
+---
+
 ## v0.27.0 — the session subject is the account's, an unreadable session is logged, and spent codes say so
 
 Three changes in the published controllers, written for hesape v0.77.0, which
