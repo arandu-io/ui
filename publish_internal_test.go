@@ -1100,10 +1100,10 @@ func authFile(t *testing.T, name string) string {
 // drift apart, and TestTheNamedSkeletonIsTheOneANewProjectGets says when a newer
 // skeleton has been released.
 const (
-	publishedSkeleton  = "v0.37.0"
+	publishedSkeleton  = "v0.38.0"
 	publishedFramework = "v0.62.1"
 	publishedKyse      = "v0.41.0"
-	publishedHesape    = "v0.77.0"
+	publishedHesape    = "v0.78.0"
 )
 
 // ahead are the modules whose pin is newer than the one publishedSkeleton
@@ -1117,10 +1117,8 @@ const (
 // goes the day a named skeleton requires it -- a lead the skeleton caught up
 // with is a pin nobody checks against it any more.
 var ahead = map[string]string{
-	"github.com/arandu-io/hesape": "v0.77.0 reads a session's roles afresh on every request, through the resolver the " +
-		"application installs, and refuses to sign in a subject with roles without one; the published sign-in runs on that session store",
-	"github.com/arandu-io/framework": "v0.62.1 is the framework release projects move to beside hesape v0.77.0; the " +
-		"published Go needs nothing of it that v0.62.0 lacks, so the lead goes with the hesape one",
+	"github.com/arandu-io/hesape": "v0.78.0 puts Flashed, FieldError and OldOr on view.Layout, so the published layout " +
+		"hands itself to the toast in its tray and draws what an action left with ctx.With; on v0.77.0 that call does not compile",
 }
 
 // TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework is the gate
