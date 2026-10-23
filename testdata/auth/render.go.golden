@@ -111,8 +111,12 @@ func (m *Module) notify(w http.ResponseWriter, r *http.Request, to, notice strin
 // returned to the router, which sends the person back to it. What that attempt
 // left in the flash is put on the page here, for every screen at once -- the
 // messages by field, which the components ask for through view.Page.FieldError,
-// what was typed, which they start from through view.Page.OldOr, and a notice
-// another screen left, which becomes the status line.
+// what was typed, which they start from through view.Page.OldOr, a notice
+// another screen left, which becomes the status line, and what an action left
+// with ctx.With before redirecting here, which the layout draws in its toaster
+// through view.Page.Flashed. The notice travels in the flash beside the field
+// messages, and the sentence an action said as a flashed message of its own,
+// so the two never meet: the screen draws the first and the tray the second.
 //
 // The token every screen carries is the one CSRFProtect put on the request
 // context, issued for this visitor's session or for their guest cookie when
@@ -135,6 +139,7 @@ func (m *Module) screen(w http.ResponseWriter, r *http.Request, name string, dat
 		data.Page.Errors[field] = messages
 	}
 	data.Page.Old = state.Old
+	data.Page.Messages = state.Messages
 	data.Page.Path = r.URL.Path
 	data.Page.AppName = hhttp.AppNameFrom(r.Context())
 	data.Page.Token = token

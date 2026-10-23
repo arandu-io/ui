@@ -219,6 +219,41 @@ func TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault(t *testing.T) {
 	}
 }
 
+// TestTheLayoutDrawsTheFlashedStatusInItsToaster.
+//
+// An action that worked says so with ctx.With(hhttp.StatusKey, ...) and
+// redirects, and the page the browser lands on draws the sentence once. The
+// layout is the one place every page passes through, so it is where the toast
+// is drawn: a layout with an empty tray drops the sentence on every page of
+// the project, and publishing this layout replaces the skeleton's, which draws
+// it. The toast reads the layout itself as its page -- view.Layout answers
+// Flashed -- and with nothing flashed it draws nothing, so the call is
+// unconditional.
+//
+// Read from the markup with the kyse comments taken out, and only inside the
+// tray: a toast drawn anywhere else is not one the vendored script arms, and a
+// comment that names the call is not a call.
+func TestTheLayoutDrawsTheFlashedStatusInItsToaster(t *testing.T) {
+	const toast = `{!! components.Toast(components.ToastProps{Page: ., Dismissible: true}) !!}`
+
+	layout := viewBody([]byte(authView(t, "layouts/app.kyse.go")))
+	open := elementCarrying(t, layout, `id="toaster"`)
+	start := strings.Index(layout, open) + len(open)
+	end := strings.Index(layout[start:], "</div>")
+	if end < 0 {
+		t.Fatalf("the toaster is never closed:\n%s", layout[start:])
+	}
+	tray := layout[start : start+end]
+
+	if !strings.Contains(tray, toast) {
+		t.Errorf("the layout's toaster does not draw %s: a sentence an action left with ctx.With before "+
+			"redirecting is shown on no page of the project\n%s%s</div>", toast, open, tray)
+	}
+	if n := strings.Count(layout, "components.Toast("); n != 1 {
+		t.Errorf("the layout draws %d toasts, want 1: the flashed sentence is drawn once, in the tray", n)
+	}
+}
+
 // TestTheLayoutWiresTheTokenIntoHTMX is the regression guard for the single line
 // that breaks every write in an application when it goes missing -- and breaks it
 // in a way that reads like a session problem rather than a missing attribute.

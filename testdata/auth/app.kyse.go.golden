@@ -116,10 +116,21 @@ import "github.com/arandu-io/kyse/components"
 			@yield('content')
 		</main>
 
-		{{-- The tray flash messages land in. An endpoint that saves something
-		     answers with a toast fragment and hx-swap="beforeend" on this
-		     element; the vendored script arms whatever appears inside it. --}}
-		<div id="toaster" class="toaster" aria-live="polite"></div>
+		{{-- The tray flash messages land in, by either road an action takes. An
+		     action that redirects says what it did with ctx.With(hhttp.StatusKey,
+		     ...), and the toast below draws that sentence on the page the browser
+		     lands on -- a direct visit and a boosted navigation alike, since both
+		     get this whole document. With nothing flashed it draws nothing. An
+		     endpoint that answers in place returns a toast fragment with
+		     hx-swap="beforeend" on this element; the vendored script arms
+		     whatever appears inside it.
+
+		     The status line a screen of this kit draws is not here: another
+		     screen left it beside the form's messages, and the screen draws it
+		     where its handler decided, so one sentence is never said twice. --}}
+		<div id="toaster" class="toaster" aria-live="polite">
+			{!! components.Toast(components.ToastProps{Page: ., Dismissible: true}) !!}
+		</div>
 	</div>
 </body>
 </html>

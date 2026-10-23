@@ -95,19 +95,27 @@ func (c *HomeController) Index(ctx *hhttp.Context) error {
 		screen = "home"
 	}
 
+	// The chrome, from the one function that fills it. This used to be a
+	// view.Page literal written here, and a literal is a list of fields
+	// somebody can forget: this one forgot the name, the register link and the
+	// reset, on the screen everybody sees first.
+	chrome := authui.Chrome(authui.ChromeProps{
+		AppName:       appName,
+		Title:         appName,
+		Path:          ctx.Request.URL.Path,
+		Token:         token,
+		Authenticated: signedIn,
+		UserName:      name,
+	})
+
+	// What the action that redirected here said it did, with ctx.With. The
+	// layout draws it in its toaster, and it is read off this request because
+	// it is this request's: an action that saves something and sends the person
+	// to the front page says so on the front page.
+	chrome.Messages = ctx.State().Messages
+
 	return ctx.View(screen, authui.AuthPage{
-		// The chrome, from the one function that fills it. This used to be a
-		// view.Page literal written here, and a literal is a list of fields
-		// somebody can forget: this one forgot the name, the register link and
-		// the reset, on the screen everybody sees first.
-		Page: authui.Chrome(authui.ChromeProps{
-			AppName:       appName,
-			Title:         appName,
-			Path:          ctx.Request.URL.Path,
-			Token:         token,
-			Authenticated: signedIn,
-			UserName:      name,
-		}),
+		Page: chrome,
 
 		// Where a signed-in person is sent. It is the front page for this kit,
 		// because that is what doLogin redirects to and what this controller

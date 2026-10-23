@@ -2118,6 +2118,141 @@ func main() {
 }
 `
 
+// TestASentenceAnActionFlashedReachesThePageTheKitDraws.
+//
+// The layout draws, in its toaster, what the action that redirected left with
+// ctx.With(hhttp.StatusKey, ...), and it reads it from the page it is handed:
+// view.Layout.Flashed answers from view.Page.Messages. Every page the kit draws
+// fills that page itself rather than through view.New, so a page that left
+// Messages out draws an empty tray whatever the action said -- the sentence an
+// application's own form leaves before sending somebody to the landing page or
+// to the sign-in screen would vanish on exactly the pages this kit owns.
+//
+// And the kit's own notices stay where they were. A screen draws what another
+// screen of the kit left as its status line, a banner or a toast as the
+// handler decides, and that sentence travels in the flash beside the form's
+// messages rather than as a message of its own -- so it is never also in the
+// tray, and the person is not told the same thing twice on one page.
+func TestASentenceAnActionFlashedReachesThePageTheKitDraws(t *testing.T) {
+	out := runAgainstPublishedKit(t, flashedSentenceProbe)
+
+	for _, want := range []string{
+		"to sign-in: status=303",
+		"sign-in then: flashed=Profile saved. status=",
+		"to landing: status=303",
+		"landing then: flashed=Profile saved.",
+		"kit notice: status=303",
+		"kit notice then: flashed= status=If that address is registered, a code is on its way.",
+	} {
+		if !strings.Contains(out, want+"\n") {
+			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
+		}
+	}
+}
+
+// flashedSentenceProbe mounts the kit and the landing page beside an action
+// of the application's own that says what it did and redirects, and follows
+// the redirect to each page; then it asks for a reset code, which the kit
+// answers with a notice of its own.
+const flashedSentenceProbe = `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"time"
+
+	fhttp "github.com/arandu-io/framework/http"
+	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/security"
+	"github.com/arandu-io/hesape/auth/account"
+	hhttp "github.com/arandu-io/hesape/http"
+	"github.com/arandu-io/hesape/session"
+	"github.com/arandu-io/hesape/view"
+
+	controllers "example.test/project/app/Http/Controllers"
+	authui "example.test/project/app/Http/Controllers/Auth"
+)
+
+type users struct{ authui.Users }
+
+func (users) Lookup(context.Context, string, string) (account.Account, error) {
+	return nil, errors.New("no such account")
+}
+
+func main() {
+	draw := func(w io.Writer, data any) error {
+		page := data.(authui.AuthPage)
+		_, err := fmt.Fprintf(w, "flashed=%s status=%s", page.Flashed(hhttp.StatusKey), page.Status)
+		return err
+	}
+	view.Register("auth.login", draw)
+	view.Register("auth.passwords.reset", draw)
+	view.Register("welcome", func(w io.Writer, data any) error {
+		_, err := fmt.Fprintf(w, "flashed=%s", data.(authui.AuthPage).Flashed(hhttp.StatusKey))
+		return err
+	})
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	sessions := security.NewSessionStore(key, time.Hour, false,
+		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
+	module := authui.New(users{}, nil, nil, sessions, session.NewCSRF(key, time.Hour), nil,
+		nil, key, authui.FixedTenant("tenant-a"), false)
+
+	flash := session.NewFlash(key, false)
+	router := fhttp.NewRouter().WithFlash(flash).WithRenderer(view.NewRenderer())
+	module.Routes(router)
+	router.Action("GET", "/{$}", controllers.NewHomeController(nil, "tenant-a").Index)
+	saved := func(to string) func(*hhttp.Context) error {
+		return func(ctx *hhttp.Context) error {
+			return ctx.With(hhttp.StatusKey, "Profile saved.").Redirect(to)
+		}
+	}
+	router.Action("POST", "/profile/sign-in", saved("/auth/login"))
+	router.Action("POST", "/profile/landing", saved("/"))
+	app := middleware.Flash(flash)(router)
+
+	post := func(path string, form url.Values) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Referer", path)
+		r.Header.Set("Accept", "text/html")
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, r)
+		return w
+	}
+	follow := func(w *httptest.ResponseRecorder) string {
+		r := httptest.NewRequest(http.MethodGet, w.Header().Get("Location"), nil)
+		r.Header.Set("Accept", "text/html")
+		for _, c := range w.Result().Cookies() {
+			if c.MaxAge >= 0 {
+				r.AddCookie(c)
+			}
+		}
+		next := httptest.NewRecorder()
+		app.ServeHTTP(next, r)
+		return next.Body.String()
+	}
+
+	toSignIn := post("/profile/sign-in", nil)
+	fmt.Printf("to sign-in: status=%d\n", toSignIn.Code)
+	fmt.Printf("sign-in then: %s\n", follow(toSignIn))
+
+	toLanding := post("/profile/landing", nil)
+	fmt.Printf("to landing: status=%d\n", toLanding.Code)
+	fmt.Printf("landing then: %s\n", follow(toLanding))
+
+	notice := post("/auth/password/email", url.Values{"email": {"a@example.test"}})
+	fmt.Printf("kit notice: status=%d\n", notice.Code)
+	fmt.Printf("kit notice then: %s\n", follow(notice))
+}
+`
+
 // TestAPasswordStoredTrimmedSignsInWithoutBeingRewritten.
 //
 // ctx.Bind trimmed the password until hesape v0.50.2, so the kit's v0.21.0

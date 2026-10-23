@@ -458,7 +458,7 @@ func (p AuthPage) LogValue() slog.Value {
 // a frame and not a type, and the pages already in the project keep compiling.
 // That is the whole reason the kit can be installed in a project that has pages.
 //
-// Four things here are load-bearing and easy to delete by accident:
+// Five things here are load-bearing and easy to delete by accident:
 //
 //   - hx-headers on <body>: without it every hx-post fails the CSRF check, and
 //     the failure reads like a broken session rather than a missing attribute;
@@ -468,7 +468,11 @@ func (p AuthPage) LogValue() slog.Value {
 //   - the icon. This file replaces the skeleton's layout outright, so an element
 //     only the skeleton had is one the project loses without a word -- and a
 //     favicon silently back to the browser default is not something anybody
-//     notices, since /favicon.ico keeps answering 200 either way.
+//     notices, since /favicon.ico keeps answering 200 either way;
+//   - the toast in the tray, which draws what an action left with ctx.With
+//     before redirecting. It reads this file's own page through
+//     view.Layout.Flashed, so without it a form that worked says nothing on
+//     any page of the project, and nothing fails to say so.
 //
 // The head here is checked against the skeleton's, element by element, in
 // TestTheKitsLayoutKeepsWhatTheSkeletonsLayoutCarries.
@@ -609,10 +613,21 @@ import "github.com/arandu-io/kyse/components"
 			@yield('content')
 		</main>
 
-		{{-- The tray flash messages land in. An endpoint that saves something
-		     answers with a toast fragment and hx-swap="beforeend" on this
-		     element; the vendored script arms whatever appears inside it. --}}
-		<div id="toaster" class="toaster" aria-live="polite"></div>
+		{{-- The tray flash messages land in, by either road an action takes. An
+		     action that redirects says what it did with ctx.With(hhttp.StatusKey,
+		     ...), and the toast below draws that sentence on the page the browser
+		     lands on -- a direct visit and a boosted navigation alike, since both
+		     get this whole document. With nothing flashed it draws nothing. An
+		     endpoint that answers in place returns a toast fragment with
+		     hx-swap="beforeend" on this element; the vendored script arms
+		     whatever appears inside it.
+
+		     The status line a screen of this kit draws is not here: another
+		     screen left it beside the form's messages, and the screen draws it
+		     where its handler decided, so one sentence is never said twice. --}}
+		<div id="toaster" class="toaster" aria-live="polite">
+			{!! components.Toast(components.ToastProps{Page: ., Dismissible: true}) !!}
+		</div>
 	</div>
 </body>
 </html>

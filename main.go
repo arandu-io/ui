@@ -301,6 +301,15 @@ the subject has one builder. A provider that does not install one yet adds it
 as hesape's UPGRADE.md for v0.77.0 shows; without it, an account with roles
 cannot sign in, and the screens log why.
 
+The layout draws, in its toaster, the sentence an action leaves with
+ctx.With(hhttp.StatusKey, ...) before redirecting, on whatever page the browser
+lands on. It hands itself to the toast through view.Layout.Flashed, which is
+hesape v0.78.0: a project on an earlier release runs
+
+    go get github.com/arandu-io/hesape@v0.78.0
+
+before aru view:build.
+
 The landing page is published too, because a page renders with the type of its
 layout and this command replaces the layout. The provider builds it for the
 routes, and it takes the account rules and the tenant so the header can greet
