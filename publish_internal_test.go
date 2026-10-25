@@ -1100,10 +1100,10 @@ func authFile(t *testing.T, name string) string {
 // drift apart, and TestTheNamedSkeletonIsTheOneANewProjectGets says when a newer
 // skeleton has been released.
 const (
-	publishedSkeleton  = "v0.41.1"
-	publishedFramework = "v0.65.0"
-	publishedKyse      = "v0.43.1"
-	publishedHesape    = "v0.84.2"
+	publishedSkeleton  = "v0.42.0"
+	publishedFramework = "v0.66.0"
+	publishedKyse      = "v0.44.0"
+	publishedHesape    = "v0.85.0"
 )
 
 // ahead are the modules whose pin is newer than the one publishedSkeleton

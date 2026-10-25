@@ -1,5 +1,5 @@
 module github.com/arandu-io/ui
 
-go 1.26.0
+go 1.26.10
 
-require github.com/arandu-io/hesape v0.84.2
+require github.com/arandu-io/hesape v0.85.0
