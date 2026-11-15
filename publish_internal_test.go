@@ -1100,7 +1100,7 @@ func authFile(t *testing.T, name string) string {
 // drift apart, and TestTheNamedSkeletonIsTheOneANewProjectGets says when a newer
 // skeleton has been released.
 const (
-	publishedSkeleton  = "v0.42.0"
+	publishedSkeleton  = "v0.44.0"
 	publishedFramework = "v0.69.0"
 	publishedKyse      = "v0.53.0"
 	publishedHesape    = "v0.107.0"
