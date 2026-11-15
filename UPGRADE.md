@@ -11,6 +11,50 @@ project receives, not about this repository's code.
 
 ---
 
+## Unreleased -- the published screens speak YPY
+
+The layout and the screens this kit publishes use YPY as their request library:
+`ypy-*` attributes, `YPY-*` headers and the native behaviour, with no
+compatibility layer. The layout is one of the five files a republish replaces
+without a flag, so `go run github.com/arandu-io/ui@latest auth` is enough to
+move it, and a project that runs it first needs the releases below.
+
+**Before publishing**
+
+- `github.com/arandu-io/hesape` at the release that embeds `ypy.min.js` and
+  `ypy-csrf.min.js` (`view.Asset` panics on a name nothing registered, so the
+  new layout takes every page of an older runtime down), `framework` and `kyse`
+  at the releases of the same move, and an `aru` that compiles `ypy-*`.
+- Every `.kyse.go` the project wrote that carries an attribute, a header or an
+  event of the old library is converted first: `ypy check .` lists what breaks
+  and what only behaves differently, `ypy migrate --write .` converts the names.
+  `Context.IsYPY` replaces the method that carried the old library's name, and a
+  handler that compared `YPY-Target` with a bare id compares `Context.Targets(id)`
+  now: the header carries `tag#id`.
+
+**What the republished layout does differently**
+
+- The token is the `ypy-csrf` meta tag in the head, sent by the `ypy-csrf`
+  extension on every same-origin request that is not a GET. The layout no longer
+  carries it in a header attribute on `<body>`; a view of the project that
+  repeated that attribute drops it. A form still carries `@csrf`, which is what
+  a post without scripts uses.
+- The scripts load in this order: `ypy.min.js`, `ypy-csrf.min.js`, `ui.js`.
+- `<body ypy-boost:inherited="true">` replaces the bare boost attribute: YPY
+  passes an attribute to its descendants only when told to.
+- `<meta name="ypy-config" content='{"includeIndicatorCSS":false}'>` replaces the
+  old indicator setting, for the same reason: the policy is `style-src 'self'`.
+- The default swap is a morph, a `422` is swapped into its form and other `4xx`
+  and `5xx` answers follow YPY's error rules. The screens here answer a refused
+  form with a redirect, so none of this changes what a person sees on them; a
+  view of the project that asked for a fragment writes `ypy-error-swap="none"`
+  where an error must not replace what is on screen.
+- A script of the project that listened to the old events follows the names of
+  the YPY guide (`ypy:after:process`, `ypy:after:settle`, `ypy:before:request`,
+  `ypy:response:error`...) and reads the element from `event.target`.
+
+---
+
 ## v0.28.0 — the layout draws what an action flashed, in its toaster
 
 The published layout's `#toaster` was empty, and publishing replaces the

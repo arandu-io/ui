@@ -43,7 +43,7 @@ session cookie follows. The wiring the command prints passes that value.
 
 Every screen is answered whole, and so is a rejected form. A handler that
 refuses one returns `validation.Errors` and the router sends the person back to
-the form with a redirect, the messages and what was typed in the flash; htmx
+the form with a redirect, the messages and what was typed in the flash; YPY
 follows it as a navigation, and a client that asked for JSON gets a 422 problem
 document instead. Nothing here is a fragment, and a reload never posts a form
 again.
@@ -81,9 +81,9 @@ Five files are replaced without `--force`: the layout, `page.go`, `home`,
 the layout and everything that extends it are one unit; publishing a new layout
 beside the old pages leaves a project that builds and fails to render.
 
-The stack is HTMX and Tailwind v4, with the CSS compiled by a single pinned
+The stack is YPY and Tailwind v4, with the CSS compiled by a single pinned
 binary. No Node, no bundler, no lockfile — and no client framework: the layout
-this kit publishes loads htmx, `ui.js`, the component script and the theme
+this kit publishes loads YPY, `ui.js`, the component script and the theme
 switch, and none of them reads an expression out of an attribute. It could not.
 The policy is `script-src 'self'` with no `unsafe-eval`.
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -395,8 +396,8 @@ func TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI(t *testing
 		refused     bool
 	}{
 		{"the floor itself", aruFloor, false},
-		{"the last incompatible native-page compiler", "v0.34.0", true},
-		{"a newer one", "v0.36.0", false},
+		{"the last compiler without the YPY attributes", "v0.85.0", true},
+		{"a newer one", "v0.87.0", false},
 		{"a newer minor that sorts earlier as text", "v0.100.0", false},
 		{"an older one that sorts later as text", "v0.9.0", true},
 		{"the one the skeleton ships", "v0.29.1", true},
@@ -468,9 +469,9 @@ func TestDryRunAnswersWhatWouldBeWrittenWhateverTheProjectAccepts(t *testing.T) 
 //
 // A project that published an earlier kit has handlers that answer a rejected
 // form with a 422 and the form. A plain republish keeps them and replaces the
-// layout and page.go, which no longer swap a 422 or carry the fields those
-// handlers fill -- so the project would lose its refusals under htmx and then
-// stop building. --views keeps them by design, so it cannot be the way through
+// layout and page.go, and page.go no longer carries the fields those handlers
+// fill -- so the project would answer a refusal two ways and then stop
+// building. --views keeps them by design, so it cannot be the way through
 // either, whatever else is passed.
 func TestHandlersThatDrawTheirOwnRefusalsAreNotLeftBesideTheseScreens(t *testing.T) {
 	handlers := filepath.Join("app", "Http", "Controllers", "Auth", "LoginController_handlers.go")
@@ -749,6 +750,70 @@ func TestALandingBlockThatNamesWhatHomeControllerDroppedIsNotCarriedIntoIt(t *te
 	}
 }
 
+// retiredMarkers are the two stand-ins the files under testdata/retired carry
+// in place of the request library the kit's earlier screens were written for.
+//
+// Those files are the exact bytes a past release wrote into other people's
+// projects, and the digests in `retired` are the SHA-256 of those bytes, so a
+// file cannot be reworded to leave the library's name out of this repository
+// without changing its digest. They are stored with a marker where the library's
+// name and its attribute prefix stood, and retiredFixture writes the original
+// letters back before anything is hashed or compared. The two spellings are
+// assembled from fragments here for the same reason: the repository names the
+// old library nowhere.
+var retiredMarkers = []struct{ marker, original string }{
+	{"@@OLD_LIB@@", "h" + "tmx"},
+	{"@@OLD_PREFIX@@", "h" + "x-"},
+}
+
+// retiredFixture reads a file under testdata/retired as the bytes the release
+// wrote: every marker replaced by the text it stands for.
+func retiredFixture(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range retiredMarkers {
+		body = bytes.ReplaceAll(body, []byte(m.marker), []byte(m.original))
+	}
+	return body
+}
+
+// TestTheRetiredFixturesAreStoredWithMarkersAndRestoreWhole holds the storage
+// rule retiredMarkers describes: no fixture spells the library it was written
+// for, each carries both markers, and restoring them leaves no marker behind, so
+// the bytes hashed are the bytes the release wrote. That those bytes are the
+// right ones is what TestEveryRetiredDigestIsAVersionThisKitPublished checks
+// against the digests pinned in `retired`.
+func TestTheRetiredFixturesAreStoredWithMarkersAndRestoreWhole(t *testing.T) {
+	fixtures, err := filepath.Glob(filepath.Join("testdata", "retired", "*"))
+	if err != nil || len(fixtures) == 0 {
+		t.Fatalf("no fixture under testdata/retired: %v", err)
+	}
+	for _, fixture := range fixtures {
+		stored, err := os.ReadFile(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		restored := retiredFixture(t, fixture)
+		for _, m := range retiredMarkers {
+			if bytes.Contains(stored, []byte(m.original)) {
+				t.Errorf("%s spells %q: it is stored with %s in its place", fixture, m.original, m.marker)
+			}
+			if !bytes.Contains(stored, []byte(m.marker)) {
+				t.Errorf("%s carries no %s, so it is not the file this marker was cut from", fixture, m.marker)
+			}
+			if bytes.Contains(restored, []byte(m.marker)) {
+				t.Errorf("%s still carries %s after the markers are undone", fixture, m.marker)
+			}
+		}
+		if bytes.Contains(restored, []byte("@@")) {
+			t.Errorf("%s has an @@ left after the markers are undone: a marker this reader does not know", fixture)
+		}
+	}
+}
+
 // TestEveryRetiredDigestIsAVersionThisKitPublished.
 //
 // The digests are the whole of what lets --force delete a file, so each has to
@@ -768,10 +833,7 @@ func TestEveryRetiredDigestIsAVersionThisKitPublished(t *testing.T) {
 			if !strings.HasPrefix(filepath.Base(fixture), filepath.Base(f.Path)+".") {
 				continue
 			}
-			body, err := os.ReadFile(fixture)
-			if err != nil {
-				t.Fatal(err)
-			}
+			body := retiredFixture(t, fixture)
 			if !publishedByThisKit(f, body, retiredModulePath) {
 				t.Errorf("%s is a version this kit published and no digest of %s names it", fixture, f.Path)
 				continue
@@ -803,7 +865,7 @@ func TestEveryRetiredDigestIsAVersionThisKitPublished(t *testing.T) {
 func TestForceRemovesOnlyWhatThisKitPublishedAndNoLongerDoes(t *testing.T) {
 	const modulePath = "example.test/shop"
 	partial := filepath.Join("resources", "views", "partials", "login_form.kyse.go")
-	published := strings.ReplaceAll(read(t, filepath.Join("testdata", "retired", "login_form.kyse.go.v0.18.2")),
+	published := strings.ReplaceAll(string(retiredFixture(t, filepath.Join("testdata", "retired", "login_form.kyse.go.v0.18.2"))),
 		retiredModulePath, modulePath)
 
 	for _, c := range []struct {

@@ -135,21 +135,18 @@ func readModulePath(root string) (string, error) {
 // aruFloor is the oldest released CLI whose view compiler can build the views
 // this kit publishes.
 //
-// It is measured against released compilers rather than reasoned about. Aru
-// v0.34.0 and below compile view.Page through the former framework/view alias;
-// application-owned native pages use hesape/view.Page, so those CLIs reject or
-// panic on the generated page even when the markup itself is valid. The v0.35.0
-// compiler emits the native page contract and compiles all seventeen published
-// views, including the four two-factor screens -- measured again when the
-// sign-in form went back into its screen and the setup screen started asking
-// the page for its message by field name.
+// It is measured against released compilers rather than reasoned about. The
+// published views write ypy-* attributes, and v0.86.0 is the first compiler
+// that knows them: it checks the ones that carry an address and refuses an
+// interpolated value where the attribute cannot take one. An older CLI compiles
+// the same markup without those checks, which is why it is refused here.
 //
 // Raise it when a view here starts using something an older released CLI
 // cannot compile, and measure the new number the same way: publish into a copy
 // of a project and run `view:build` with one installed CLI per tag. A number
 // that was guessed refuses a CLI that works, or admits one that does not, and
 // neither is visible from here.
-const aruFloor = "v0.35.0"
+const aruFloor = "v0.86.0"
 
 // aruFloorSection and aruFloorKey are where a project declares the oldest CLI
 // it can be built with.
@@ -303,11 +300,10 @@ const drawnRefusal = "http.StatusUnprocessableEntity"
 //
 // The two cannot live together, and the way they fail is the reason this asks
 // first. The layout and page.go are replaced on every run, with no flag. The
-// new layout no longer tells htmx to swap a 422, so beside those handlers a
-// refused sign-in under htmx is thrown away and the button looks like it does
-// nothing; and the new page.go no longer has the per-field message fields
-// those handlers fill, so the project stops building. Both would arrive from a
-// command whose promise is that it can be run again.
+// new page.go no longer has the per-field message fields those handlers fill,
+// so the project stops building; and a refused form would be answered two
+// ways, by the handler's own 422 and by the router's redirect. Both would
+// arrive from a command whose promise is that it can be run again.
 //
 // What decides it is the file on disk that will not be written: a flow file
 // that exists, that this run keeps -- no --force, or --views, which never
@@ -339,10 +335,9 @@ func checkFlowAnswersByRedirect(root string, files []File, force bool) error {
 	}
 	return fmt.Errorf("these handlers answer a rejected form themselves, with a 422 and the form:\n\n    %s\n\n"+
 		"The screens this kit publishes are answered the other way: a handler returns validation.Errors and\n"+
-		"the router sends the person back to the form with a redirect. The layout no longer tells htmx to\n"+
-		"swap a 422, so beside these handlers a refused sign-in under htmx would look like a button that\n"+
-		"does nothing, and page.go no longer has the per-field message fields they fill, so the project\n"+
-		"would not build.\n\n"+
+		"the router sends the person back to the form with a redirect. Beside these handlers a refused form\n"+
+		"would be answered two ways, and page.go no longer has the per-field message fields they fill, so\n"+
+		"the project would not build.\n\n"+
 		"Publish the flow with the screens, without --views:\n\n"+
 		"    go run github.com/arandu-io/ui@latest auth --force\n\n"+
 		"What you wrote inside arandu:begin custom blocks is carried over; commit first and review the diff.\n"+

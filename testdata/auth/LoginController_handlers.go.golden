@@ -237,7 +237,7 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/auth/login")
 }
 
-// redirect answers HX-Redirect under htmx and a 303 with a Location otherwise.
+// redirect answers YPY-Redirect under YPY and a 303 with a Location otherwise.
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	hhttp.Redirect(w, r, to)
 }

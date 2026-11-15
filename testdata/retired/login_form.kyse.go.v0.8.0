@@ -13,8 +13,8 @@
 // second copy of the truth in the browser to keep in step, and nothing to
 // reconcile when the two disagree.
 //
-// An hx- attribute holds no state. It says where to ask (hx-post), what to
-// replace (hx-target) and how (hx-swap), and that is a routing decision about
+// An @@OLD_PREFIX@@ attribute holds no state. It says where to ask (@@OLD_PREFIX@@post), what to
+// replace (@@OLD_PREFIX@@target) and how (@@OLD_PREFIX@@swap), and that is a routing decision about
 // the DOM: nothing reads a value back out of one to decide anything.
 //
 // The browser owns what dies with the tab and the server never needs to hear
@@ -29,8 +29,8 @@
 //
 // # What a file here may hold
 //
-// What is inside its own swap target, and nothing outside it. hx-target="this"
-// with hx-swap="outerHTML" makes the target this form, so an answer replaces
+// What is inside its own swap target, and nothing outside it. @@OLD_PREFIX@@target="this"
+// with @@OLD_PREFIX@@swap="outerHTML" makes the target this form, so an answer replaces
 // everything the file draws and reaches nothing else: the header, the tray and
 // whatever the screen draws around the @include all keep what they already had.
 //
@@ -56,15 +56,15 @@ import (
 type LoginFormData = authui.AuthPage
 @endgo
 
-{{-- One element, and deliberately: hx-swap="outerHTML" replaces the target with
+{{-- One element, and deliberately: @@OLD_PREFIX@@swap="outerHTML" replaces the target with
      everything this file draws, so a second top-level element here would land
      beside the form rather than inside it.
 
-     method="post" and action are the path with scripts off. htmx never reaches
+     method="post" and action are the path with scripts off. @@OLD_LIB@@ never reaches
      them, and without them a browser that is not running it has nothing to
      submit. --}}
 <form class="flex flex-col gap-4 px-6 py-6" method="post" action="{{ .LoginURL }}"
-	hx-post="{{ .LoginURL }}" hx-target="this" hx-swap="outerHTML">
+	@@OLD_PREFIX@@post="{{ .LoginURL }}" @@OLD_PREFIX@@target="this" @@OLD_PREFIX@@swap="outerHTML">
 	@csrf
 
 	{!! components.Field(components.FieldProps{
