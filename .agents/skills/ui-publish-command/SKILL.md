@@ -36,7 +36,7 @@ go build -o /tmp/ui . && (cd ../arandu && /tmp/ui auth --dry-run)
 beside them, the two mailables in `app/Mail/`, and
 `app/Http/Controllers/HomeController.go`.
 
-`GenerateAuth` in `views_controllers.go:18` is the list of the ten Go files;
+`GenerateAuth` in `views_controllers.go:18` is the list of the nine Go files;
 `AuthViews` in `views.go:110` is the list of the seventeen views plus `page.go`.
 There are exactly 29 template constants, one per published file
 (`grep -ho 'const [a-zA-Z]*Template' views*.go | wc -l`), and 29 golden files
@@ -46,7 +46,7 @@ under `testdata/auth/`.
 
 ## The three states a file can be in
 
-`write` in `publish.go:510` reads the file on disk — it does not stat it — and
+`write` in `publish.go:563` reads the file on disk — it does not stat it — and
 that read is what decides:
 
 | state | when | reported as |
@@ -59,7 +59,7 @@ Publishing twice into the same project, with no flag, writes 5 and keeps 24.
 That is not a convenience. In kyse a page renders **with the type of its
 layout**, so the layout and everything that extends it are one unit; publishing
 a new layout beside the old pages leaves a project that builds and fails to
-render. `replaced` in `publish.go:502` spells the five out rather than inferring
+render. `replaced` in `publish.go:555` spells the five out rather than inferring
 them, so a sixth cannot join quietly:
 
 ```
@@ -87,9 +87,9 @@ naming two symbols it had never heard of. It is safe to include precisely
 because it is **not** in `replaced`: an existing one is kept and reported as
 kept, so adding it changed what a project *without* one gets and nothing else.
 
-`screensOnly` in `views.go:1410` is the filter, and
+`screensOnly` in `views.go:1451` is the filter, and
 `TestViewsOnlyPublishesTheScreensAndTheLayoutUnit` at
-`publish_write_internal_test.go:280` holds it to the list.
+`publish_write_internal_test.go:281` holds it to the list.
 
 ## The custom block
 
@@ -181,7 +181,7 @@ because both have shipped wrong:
    one new golden file per new published file.
 4. If it mounts a route, the route and its name go in the table of
    `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-   `flow_internal_test.go:1226`, which is exact and ordered on purpose.
+   `flow_internal_test.go:1236`, which is exact and ordered on purpose.
 5. Run the gates.
 
 ## What it refuses to publish into

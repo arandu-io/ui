@@ -91,9 +91,9 @@ If a screen needs something new, add the field to `authPageTemplate` **and fill
 it in from a handler in the same change.** A URL field read by a template and
 assigned by nobody renders `action=""`, which posts to the current URL and looks
 like it worked. `TestEveryAddressAScreenReadsIsFilledInSomewhere` in
-`flow_internal_test.go:560` fails on either half — read and never filled, filled
+`flow_internal_test.go:570` fails on either half — read and never filled, filled
 and never read — and `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` at
-`flow_internal_test.go:742` does the same for the messages: every field a
+`flow_internal_test.go:752` does the same for the messages: every field a
 handler rejects with needs an input of that `Name` on some screen, and a notice
 needs a screen that draws `.Status`.
 
@@ -121,13 +121,16 @@ markup error surfaces before somebody else's build.
 
 ## What kyse does not have
 
-`TestTheAuthViewsInventNoDirective` at `views_internal_test.go:244` reads every
+`TestTheAuthViewsInventNoDirective` at `views_internal_test.go:351` reads every
 view and fails on any of these:
 
 `@vite` `@auth` `@guest` `@error` `@can` `@props` `@stack` `@push` `@forelse`
 `@switch` `@fonts` `<x-`
 
-`TestTheAuthViewsReachForNoHelper` at `views_internal_test.go:279` fails on
+Of these only `@forelse` exists in kyse (`@forelse`/`@empty`/`@endforelse`); the
+test keeps it out of these views because none of them loops.
+
+`TestTheAuthViewsReachForNoHelper` at `views_internal_test.go:386` fails on
 `config(` `route(` `auth()` `__(` `old(` `session(` `Route::has`. Everything a
 screen shows came from the handler, in the struct. The guest branch of the
 navigation is `@if(!.SignedIn())`; a validation message is asked for by the
@@ -159,7 +162,7 @@ than guarded. A conditional attribute is `@if` around the whole attribute:
 ```
 
 `TestNoScreenInterpolatesWhereAnAttributeNameGoes` at
-`views_internal_test.go:312` holds every screen to it. The kit shipped exactly
+`views_internal_test.go:419` holds every screen to it. The kit shipped exactly
 one such site — a helper answering `checked` or nothing — and nothing could be
 injected through it; it was still wrong to publish, because these screens are
 what a project copies.
@@ -186,7 +189,7 @@ is drawn as an image and never run, and nothing in `page.go` names
 plus the semantic classes the stylesheet ships — `card`, `btn`, `input`,
 `field`. A class the stylesheet has never heard of renders as nothing at all,
 which looks like a broken build.
-`TestTheAuthViewsCarryNoBootstrap` at `views_internal_test.go:262` names the
+`TestTheAuthViewsCarryNoBootstrap` at `views_internal_test.go:369` names the
 ones that already got in once: `form-control`, `btn btn-`, `btn-primary`,
 `card-body`, `card-header`, `navbar-nav`, `col-md-`, `invalid-feedback`,
 `alert-success`.
@@ -231,8 +234,9 @@ element by element and skips when `../arandu` is not checked out.
 **A tag you add to the head is a requirement on every project that receives it.**
 `view.URL` panics on a name nothing registered — deliberately, because a
 plausible URL for a file the binary does not carry is a 404 on every page that
-nobody reads. Five names are embedded by the runtime and need nothing:
-`app.css`, `ypy.min.js`, `ui.js`, `basecoat.bundle.js` and `theme.js`. Any
+nobody reads. Six names are embedded by the runtime and need nothing:
+`app.css`, `ypy.min.js`, `ypy-csrf.min.js`, `ui.js`, `basecoat.bundle.js` and
+`theme.js`. Any
 other name has to be published by this kit with the package that registers it,
 the way `custom.js` is published with `resources/js/js.go`.
 `TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters` reads every
@@ -247,7 +251,7 @@ framework puts on every request and the handlers read with `hhttp.AppNameFrom`.
 The verification mail once carried the literal word, so every project running
 this command signed its first message to its own users with a name that was not
 theirs.
-`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:634`
+`TestNothingTheKitPublishesIsBrandedWithItsOwnName` at `flow_internal_test.go:644`
 searches every published file for it.
 
 ## Message bodies
@@ -265,6 +269,6 @@ custom block in kyse comment syntax:
 
 That block is the wording a project decided to send its own users, and a
 republish carries it over. `TestBothMessagesAreBuiltTheSameWay` at
-`flow_internal_test.go:668` fails if a mail view loses it. Both parts of both
+`flow_internal_test.go:678` fails if a mail view loses it. Both parts of both
 messages ship — a mail with no plain-text part is filed as spam more often and
 shows nothing in a client that cannot render HTML.

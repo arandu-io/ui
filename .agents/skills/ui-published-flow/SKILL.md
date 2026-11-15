@@ -64,7 +64,7 @@ form posts, and a second name for one address is a choice nobody can make
 correctly.
 
 `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-`flow_internal_test.go:1226` holds this table **exactly, order included, the
+`flow_internal_test.go:1236` holds this table **exactly, order included, the
 last column too**. A route added to the kit is therefore a row somebody wrote
 there, rather than a screen that quietly arrives unnamed — and a route that
 moved from `Action` back to `Post` is a handler that would have to draw its own
@@ -72,7 +72,7 @@ refusal.
 
 The application-owned module preserves the established authentication names:
 `auth.login` resolves to `/auth/login` and `auth.logout` to `/auth/logout`.
-`TestTheNamesSurviveTheSubstitution` at `flow_internal_test.go:1294`
+`TestTheNamesSurviveTheSubstitution` at `flow_internal_test.go:1304`
 compiles the published Go into a module of its own and asks. It also checks the
 two the guards redirect to — `auth.login` against `middleware.SignInPath`,
 `auth.password.confirm` against `middleware.PasswordConfirmPath` — because a
@@ -89,13 +89,13 @@ comments.
 fill it in here, in the same change.** A URL field read by a template and
 assigned by nobody renders `action=""`, which posts to the current URL and looks
 like it worked. `TestEveryAddressAScreenReadsIsFilledInSomewhere` at
-`flow_internal_test.go:560` fails on either half.
+`flow_internal_test.go:570` fails on either half.
 
 **3. If you added a route, add its row to the table** of
 `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` at
-`flow_internal_test.go:1226`, and make sure something draws the screen it serves.
+`flow_internal_test.go:1236`, and make sure something draws the screen it serves.
 `TestEveryScreenThisKitPublishesIsDrawnBySomething` at
-`flow_internal_test.go:899` parses every published Go file and requires each
+`flow_internal_test.go:909` parses every published Go file and requires each
 view to be named by one. The landing page shipped once with the Login and
 Register buttons on it, reachable by nothing, while the dashboard was drawn for
 guests and signed-in people alike.
@@ -123,7 +123,7 @@ file that does not build.
 
 It **compiles** in
 `TestEveryGoFileTheKitPublishesCompilesAgainstThePublishedFramework` at
-`publish_internal_test.go:1019`, which lays the ten Go files into a throwaway
+`publish_internal_test.go:1173`, which lays the ten Go files into a throwaway
 module requiring the framework by published tag — no `replace`, so it is the
 framework a person receives and not the checkout beside this one — and runs
 `go build`. That is the test that fails when a handler calls a symbol the
@@ -226,7 +226,7 @@ scripts are deferred and may never arrive. A handler must go through
 `YPY-Redirect` under YPY and a 303 with a `Location` otherwise. Setting the
 header directly gives a plain browser form post 200 and an empty body — a blank
 page. `TestTheRedirectSurvivesWithoutJavaScript` at
-`publish_internal_test.go:806` checks both exits.
+`publish_internal_test.go:945` checks both exits.
 
 **A password stored trimmed still signs in, and nothing is rewritten.** Bind
 trimmed the password until hesape v0.50.2, so one chosen with spaces at its
@@ -371,7 +371,7 @@ recovery codes. The QR code is an image: the setup screen spells out the
 `data:image/svg+xml;base64,` scheme and `AuthPage.QRCodeImage` answers the
 body, so no published Go names `html/template` or `template.HTML`. A type that serializes itself whole is one debug dump away from
 publishing them, so `MarshalJSON` and `LogValue` are written by hand.
-`TestNeitherTokenSurvivesBeingSerialized` at `flow_internal_test.go:1040`.
+`TestNeitherTokenSurvivesBeingSerialized` at `flow_internal_test.go:1050`.
 
 **The tenant does not come from the request body**, and the kit does not
 migrate. `TestTheTenantDoesNotComeFromTheRequestBody` at
@@ -395,12 +395,12 @@ Two checks stand there, and both must pass before a signature changes:
   `authui.New` is `cfg.Framework.Session.Secure`, the value the session cookie
   and the kernel's flash follow, and not the skeleton's own reading.
 - `TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes` at
-  `publish_internal_test.go:773` — the emitted constructor against the sibling
+  `publish_internal_test.go:912` — the emitted constructor against the sibling
   `../arandu` skeleton. It **skips** when that checkout is not beside this
   module, so a green run on a machine with only this repository proves nothing
   about it. Check the sibling out before changing a signature.
 
-When one does change, the `wiring` constant in `main.go:250` changes with it, in
+When one does change, the `wiring` constant in `main.go:262` changes with it, in
 the same commit.
 
 ## Two things the published code says about itself that are worth knowing
