@@ -61,7 +61,7 @@ func GenerateAuth(m Module) ([]File, error) {
 
 	// And the views, which are the point of the command: the screens every
 	// application has, at the paths people look for. Inside them it is kyse,
-	// Tailwind and HTMX -- typed markup, utilities and hypermedia.
+	// Tailwind and YPY -- typed markup, utilities and hypermedia.
 	views, err := AuthViews(m)
 	if err != nil {
 		return nil, err
@@ -557,7 +557,7 @@ func (m *Module) doLogout(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/auth/login")
 }
 
-// redirect answers HX-Redirect under htmx and a 303 with a Location otherwise.
+// redirect answers YPY-Redirect under YPY and a 303 with a Location otherwise.
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	hhttp.Redirect(w, r, to)
 }
@@ -732,7 +732,7 @@ var _ fhttp.Indexer = (*HomeController)(nil)
 // Index renders the landing page.
 //
 // The subject and the token are read above the custom block, and deliberately:
-// they are what the layout draws its navigation and its hx-headers from, so a
+// they are what the layout draws its navigation and its ypy-csrf meta tag from, so a
 // regeneration that carried over an edited block would otherwise carry over a
 // page that greets a signed-in visitor with a sign-in link.
 //
@@ -747,7 +747,7 @@ func (c *HomeController) Index(ctx *hhttp.Context) error {
 	subject, signedIn := ctx.User()
 
 	// The token reaches the markup twice: the hidden field of the sign-out form
-	// and the hx-headers attribute on <body>. A page rendered without one
+	// and the ypy-csrf meta tag in the head. A page rendered without one
 	// answers 200 and then refuses the next write with 419, which reads like a
 	// broken session rather than a missing field. CSRFProtect issued it for
 	// this request, bound to the session or, for a visitor with none, to their

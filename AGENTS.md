@@ -89,8 +89,8 @@ It also refuses a project whose flow still draws its own refusals.
 of them without `--force`, and all of them under `--views`, which never writes
 the flow — and refuses when one still names `http.StatusUnprocessableEntity`.
 Those are handlers from an earlier kit: beside the layout and `page.go` a run
-replaces, a refused sign-in under htmx would be thrown away and the project
-would stop building. The message names the files and `auth --force`.
+replaces, a refused form would be answered two ways and the project would
+stop building. The message names the files and `auth --force`.
 
 And it refuses a project that keeps a file naming what `page.go` no longer
 declares. `checkKeptFilesNameOnlyWhatPageDeclares` reads every published file
@@ -175,7 +175,7 @@ declaration the sign-up and reset screens hand the password box as
 `AuthPage.PasswordPolicy`, so the checklist and the refusal are one rule. The
 router answers: a 303 back to the
 Referer for a page, with the messages and what was typed (minus every secret) in
-the flash; `HX-Redirect` for htmx; a 422 problem document for a client that asked
+the flash; `YPY-Redirect` for YPY; a 422 problem document for a client that asked
 for JSON. No published handler writes a refusal status, and `Module.screen`
 draws every screen at 200 and puts what the flash carried on the page — the
 messages in `view.Page.Errors`, the typed input in `view.Page.Old`, a notice as
@@ -183,7 +183,7 @@ the status line — so the components ask the page by field name and no handler
 copies a message anywhere. A screen drawn after a form succeeded is reached by a
 redirect too, through `Module.notify`, so the form on it has an address a
 refusal can be sent back to and a reload never repeats the post. The layout
-leaves htmx's response handling at its default: teaching it to swap a 422 would
+leaves YPY's response handling at its default: teaching it to swap a 422 would
 be a second way to answer the same rejection.
 
 **One flash and one Secure decision.** The kernel's router carries the flash the
@@ -223,9 +223,9 @@ handler at once.
 | --- | --- |
 | `TestARejectedFormIsReturnedToTheRouter` | a published Go file that writes a refusal status or draws a refusal itself |
 | `TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy` | a route whose name, method or `Action` registration differs from the table — the last column is who answers a rejection |
-| `TestARejectedSignInGoesBackToTheFormInEveryTransport` | runs the published module: page, htmx and JSON answers to a refused sign-in, and the reset code reached by a redirect |
+| `TestARejectedSignInGoesBackToTheFormInEveryTransport` | runs the published module: page, YPY and JSON answers to a refused sign-in, and the reset code reached by a redirect |
 | `TestEveryMessageAScreenIsGivenHasSomewhereToBeDrawn` | a field a handler rejects with that no screen has an input for, or a notice no screen draws |
-| `TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault` | an `htmx-config` in the published layout that sets anything but `includeIndicatorStyles:false` |
+| `TestTheLayoutLeavesYPYResponseHandlingAtItsDefault` | an `ypy-config` in the published layout that sets anything but `includeIndicatorCSS:false` |
 | `TestEveryPublishedPageDrawsTheApplicationNameTheRequestCarries` | runs the published module and landing page: a screen, a message or the second-factor issuer that draws a name other than the one the framework put on the request, or any name when none is there |
 | `TestTheKitWritesItsNoticesWithTheRoutersFlash` | runs the published module: a notice or a refusal written with a flash other than the router's, or a router with no flash left without the module's |
 | `TestTheFlowRunsOnTheAccountPackage` | runs the published module on `account.NewUsers` and `account.NewFactors` over SQLite: sign-up, verification, sign-in with and without remember-me, reset, confirmation, two-factor setup, challenge and recovery, the `WithRegistration` seam and `WithRemember(false)` |
@@ -262,7 +262,7 @@ sections, `partials/` and `mail/` carry no layout, everything else under
 `publish_internal_test.go` reads the published bytes to hold each file to the
 kind its path claims. It also refuses a narrowed swap anywhere but in a
 fragment: an element carrying one asks the server for its own markup back, and a
-screen answering that hands htmx a whole document for a form-shaped hole — the
+screen answering that hands YPY a whole document for a form-shaped hole — the
 header, the navigation and a second toaster land inside the card, with a green
 build and a correct status. The kit shipped exactly that on `auth/login.kyse.go`,
 then moved the form to a partial of its own answered with a 422, and finally
@@ -271,15 +271,15 @@ and `TestTheKitPublishesNoFragmentAndAsksForNone` keeps the kit free of
 fragments.
 
 A narrowed swap has **two spellings**, and `narrowedSwap` in that file carries
-both. `hx-target=`/`hx-swap=` is the attribute a view writes; `HxTarget`/`HxSwap`
+both. `ypy-target=`/`ypy-swap=` is the attribute a view writes; `YpyTarget`/`YpySwap`
 is a prop of a kyse component, and
-`components.Button(components.ButtonProps{HxTarget: "#form"})` renders the
+`components.Button(components.ButtonProps{YpyTarget: "#form"})` renders the
 attribute into the served document while putting neither literal in the source.
 The gate read the attribute alone and passed that screen — silently, since
 nothing here renders a page. The props are read off the component library and
-are a closed set: `ButtonProps.HxTarget`, `ButtonProps.HxSwap` and
-`MenuItem.HxTarget` are every field there that renders one of the two.
-`HxPost`, `HxGet` and `HxConfirm` are not among them — they say where to ask,
+are a closed set: `ButtonProps.YpyTarget`, `ButtonProps.YpySwap` and
+`MenuItem.YpyTarget` are every field there that renders one of the two.
+`YpyPost`, `YpyGet` and `YpyConfirm` are not among them — they say where to ask,
 not what comes back.
 
 **Who owns which state, and what will fail if you get it wrong.** Four things in

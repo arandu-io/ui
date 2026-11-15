@@ -303,11 +303,10 @@ const drawnRefusal = "http.StatusUnprocessableEntity"
 //
 // The two cannot live together, and the way they fail is the reason this asks
 // first. The layout and page.go are replaced on every run, with no flag. The
-// new layout no longer tells htmx to swap a 422, so beside those handlers a
-// refused sign-in under htmx is thrown away and the button looks like it does
-// nothing; and the new page.go no longer has the per-field message fields
-// those handlers fill, so the project stops building. Both would arrive from a
-// command whose promise is that it can be run again.
+// new page.go no longer has the per-field message fields those handlers fill,
+// so the project stops building; and a refused form would be answered two
+// ways, by the handler's own 422 and by the router's redirect. Both would
+// arrive from a command whose promise is that it can be run again.
 //
 // What decides it is the file on disk that will not be written: a flow file
 // that exists, that this run keeps -- no --force, or --views, which never
@@ -339,10 +338,9 @@ func checkFlowAnswersByRedirect(root string, files []File, force bool) error {
 	}
 	return fmt.Errorf("these handlers answer a rejected form themselves, with a 422 and the form:\n\n    %s\n\n"+
 		"The screens this kit publishes are answered the other way: a handler returns validation.Errors and\n"+
-		"the router sends the person back to the form with a redirect. The layout no longer tells htmx to\n"+
-		"swap a 422, so beside these handlers a refused sign-in under htmx would look like a button that\n"+
-		"does nothing, and page.go no longer has the per-field message fields they fill, so the project\n"+
-		"would not build.\n\n"+
+		"the router sends the person back to the form with a redirect. Beside these handlers a refused form\n"+
+		"would be answered two ways, and page.go no longer has the per-field message fields they fill, so\n"+
+		"the project would not build.\n\n"+
 		"Publish the flow with the screens, without --views:\n\n"+
 		"    go run github.com/arandu-io/ui@latest auth --force\n\n"+
 		"What you wrote inside arandu:begin custom blocks is carried over; commit first and review the diff.\n"+

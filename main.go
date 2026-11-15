@@ -18,7 +18,7 @@
 //
 // # Why there is no preset
 //
-// Arandu has one stack: kyse for the markup, HTMX for the interaction, Tailwind
+// Arandu has one stack: kyse for the markup, YPY for the interaction, Tailwind
 // v4 for the styling, and Go for everything else -- including the state, which
 // lives on the server and reaches the browser as the answer to a request. An
 // argument with a single legal value is a dimension that does not exist, so the

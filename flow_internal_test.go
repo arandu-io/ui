@@ -698,9 +698,9 @@ func TestBothMessagesAreBuiltTheSameWay(t *testing.T) {
 // A handler that refuses a form returns validation.Errors, and the router
 // answers: a page is sent back where it came from with the messages and what
 // was typed, a client that asked for JSON gets a 422 problem document. The kit
-// used to draw the refusal itself, with a 422 and the form, and htmx throws a
-// 422 away unless the layout teaches it otherwise -- which is the second way of
-// answering one rejection, and a reload of that answer posted the form again.
+// used to draw the refusal itself, with a 422 and the form, and the old
+// library threw a 422 away unless the layout taught it otherwise -- which was
+// a second way of answering one rejection, and a reload of that answer posted the form again.
 //
 // So no published Go writes a refusal status, and the screens are drawn at one
 // status only. TestEveryScreenTheKitMountsCarriesTheNameItIsLinkedBy holds the
@@ -1844,7 +1844,7 @@ func main() {
 //
 // A browser posting the form gets a 303 back to the form, marked no-store, with
 // the message and the address in the flash and the password nowhere -- and the
-// screen it lands on draws them. htmx gets the same redirect as HX-Redirect with
+// screen it lands on draws them. YPY gets the same redirect as YPY-Redirect with
 // no body, which it follows as a navigation. A client that asked for JSON gets a
 // 422 problem document with the message by field, because it has no form to go
 // back to.
@@ -1859,7 +1859,7 @@ func TestARejectedSignInGoesBackToTheFormInEveryTransport(t *testing.T) {
 	for _, want := range []string{
 		"page: status=303 location=/auth/login cache=no-store, private",
 		"page then: message=invalid email or password email=a@example.test password=",
-		"htmx: status=204 hx-redirect=/auth/login body=0",
+		"ypy: status=204 ypy-redirect=/auth/login body=0",
 		"json: status=422 type=application/problem+json message=true",
 		"send: status=303 location=/auth/password/reset",
 		"reset then: status=If that address is registered, a code is on its way. email=a@example.test",
@@ -1870,7 +1870,7 @@ func TestARejectedSignInGoesBackToTheFormInEveryTransport(t *testing.T) {
 	}
 }
 
-// transportProbe posts one refused sign-in as a page, as htmx and as JSON, and
+// transportProbe posts one refused sign-in as a page, as YPY and as JSON, and
 // asks for a reset code.
 const transportProbe = `package main
 
@@ -1963,9 +1963,9 @@ func main() {
 		page.Header().Get("Cache-Control"))
 	fmt.Printf("page then: %s\n", follow(page))
 
-	htmx := post("/auth/login", refused, map[string]string{"HX-Request": "true"})
-	fmt.Printf("htmx: status=%d hx-redirect=%s body=%d\n", htmx.Code, htmx.Header().Get("HX-Redirect"),
-		htmx.Body.Len())
+	ypy := post("/auth/login", refused, map[string]string{"YPY-Request": "true"})
+	fmt.Printf("ypy: status=%d ypy-redirect=%s body=%d\n", ypy.Code, ypy.Header().Get("YPY-Redirect"),
+		ypy.Body.Len())
 
 	json := post("/auth/login", refused, map[string]string{"Accept": "application/json"})
 	fmt.Printf("json: status=%d type=%s message=%t\n", json.Code, json.Header().Get("Content-Type"),

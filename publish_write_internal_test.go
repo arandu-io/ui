@@ -468,9 +468,9 @@ func TestDryRunAnswersWhatWouldBeWrittenWhateverTheProjectAccepts(t *testing.T) 
 //
 // A project that published an earlier kit has handlers that answer a rejected
 // form with a 422 and the form. A plain republish keeps them and replaces the
-// layout and page.go, which no longer swap a 422 or carry the fields those
-// handlers fill -- so the project would lose its refusals under htmx and then
-// stop building. --views keeps them by design, so it cannot be the way through
+// layout and page.go, and page.go no longer carries the fields those handlers
+// fill -- so the project would answer a refusal two ways and then stop
+// building. --views keeps them by design, so it cannot be the way through
 // either, whatever else is passed.
 func TestHandlersThatDrawTheirOwnRefusalsAreNotLeftBesideTheseScreens(t *testing.T) {
 	handlers := filepath.Join("app", "Http", "Controllers", "Auth", "LoginController_handlers.go")

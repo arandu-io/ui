@@ -177,41 +177,41 @@ func TestEveryPageNamesItsDataAndTheLayoutNamesNone(t *testing.T) {
 	}
 }
 
-// TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault.
+// TestTheLayoutLeavesYPYResponseHandlingAtItsDefault.
 //
-// The layout once taught htmx to swap a 422, so that a sign-in refused with the
+// The layout once taught the old library to swap a 422, so that a sign-in refused with the
 // form in the body would be drawn. That was a second way to answer a rejected
 // form beside the router's, and the worse one: a reload of the answer posted the
-// form again. A rejection is now a redirect, which htmx follows as a
-// navigation, so the table of response handling stays the one htmx ships.
+// form again. A rejection is now a redirect, which YPY follows as a
+// navigation, so the table of response handling stays the one YPY ships.
 //
-// What does stay is includeIndicatorStyles:false. Without it htmx injects a
+// What does stay is includeIndicatorCSS:false. Without it YPY injects a
 // <style> element on the first request, and the policy is style-src 'self'
 // with no unsafe-inline, so the browser refuses it on every page.
-func TestTheLayoutLeavesHtmxResponseHandlingAtItsDefault(t *testing.T) {
+func TestTheLayoutLeavesYPYResponseHandlingAtItsDefault(t *testing.T) {
 	// The comments explain the history in prose, 422 included, and are stripped
 	// before anything reaches a page.
 	layout := viewBody([]byte(authView(t, "layouts/app.kyse.go")))
 
-	meta := elementCarrying(t, layout, `name="htmx-config"`)
+	meta := elementCarrying(t, layout, `name="ypy-config"`)
 	start := strings.Index(meta, `content='`)
 	if start < 0 {
-		t.Fatalf("the htmx-config has no single-quoted content:\n%s", meta)
+		t.Fatalf("the ypy-config has no single-quoted content:\n%s", meta)
 	}
 	content := meta[start+len(`content='`):]
 	content = content[:strings.IndexByte(content, '\'')]
 
 	var config map[string]any
 	if err := json.Unmarshal([]byte(content), &config); err != nil {
-		t.Fatalf("the htmx-config is not JSON: %v\n%s", err, content)
+		t.Fatalf("the ypy-config is not JSON: %v\n%s", err, content)
 	}
-	if value, ok := config["includeIndicatorStyles"]; !ok || value != false {
-		t.Errorf("includeIndicatorStyles is %v: htmx would inject a <style> the policy refuses", value)
+	if value, ok := config["includeIndicatorCSS"]; !ok || value != false {
+		t.Errorf("includeIndicatorCSS is %v: YPY would inject a <style> the policy refuses", value)
 	}
 	for key := range config {
-		if key != "includeIndicatorStyles" {
-			t.Errorf("the htmx-config sets %q: a rejected form is a redirect, and the layout leaves the rest of "+
-				"htmx's configuration at its default\n%s", key, content)
+		if key != "includeIndicatorCSS" {
+			t.Errorf("the ypy-config sets %q: a rejected form is a redirect, and the layout leaves the rest of "+
+				"YPY's configuration at its default\n%s", key, content)
 		}
 	}
 	if strings.Contains(layout, "422") {
@@ -254,14 +254,38 @@ func TestTheLayoutDrawsTheFlashedStatusInItsToaster(t *testing.T) {
 	}
 }
 
-// TestTheLayoutWiresTheTokenIntoHTMX is the regression guard for the single line
-// that breaks every write in an application when it goes missing -- and breaks it
-// in a way that reads like a session problem rather than a missing attribute.
-func TestTheLayoutWiresTheTokenIntoHTMX(t *testing.T) {
-	layout := authView(t, "layouts/app.kyse.go")
+// TestTheLayoutWiresTheTokenIntoYPY is the regression guard for the lines that
+// break every write in an application when one goes missing -- and break it in a
+// way that reads like a session problem rather than a missing tag.
+//
+// The token reaches YPY through a meta tag, and the ypy-csrf extension sends it
+// as X-CSRF-Token on every same-origin request that is not a GET. Both halves
+// have to be there, the extension has to load after the core it extends, and
+// ui.js after the extension, because ui.js renews the token into the tag.
+func TestTheLayoutWiresTheTokenIntoYPY(t *testing.T) {
+	layout := viewBody([]byte(authView(t, "layouts/app.kyse.go")))
 
-	if !strings.Contains(layout, "hx-headers=") || !strings.Contains(layout, "X-CSRF-Token") {
-		t.Error("the layout has no hx-headers with the CSRF token: every hx-post would fail the check")
+	meta := elementCarrying(t, layout, `name="ypy-csrf"`)
+	if !strings.Contains(meta, `content="{{ .CSRFToken() }}"`) {
+		t.Errorf("the ypy-csrf meta tag does not carry the page's token: every request YPY sends that changes "+
+			"state would fail the check\n%s", meta)
+	}
+	order := []string{`view.Asset("ypy.min.js")`, `view.Asset("ypy-csrf.min.js")`, `view.Asset("ui.js")`}
+	last := -1
+	for _, asset := range order {
+		at := strings.Index(layout, asset)
+		if at < 0 {
+			t.Errorf("the layout does not load %s", asset)
+			continue
+		}
+		if at < last {
+			t.Errorf("the layout loads %s before the script it depends on; the order is %s", asset, strings.Join(order, ", "))
+		}
+		last = at
+	}
+	if !strings.Contains(layout, `<body ypy-boost:inherited="true"`) {
+		t.Error("the layout does not boost from <body> with ypy-boost:inherited: YPY passes an attribute down " +
+			"only when told to, so a bare ypy-boost would boost nothing")
 	}
 	if !strings.Contains(layout, "@yield('content')") {
 		t.Error("the layout yields no content, so nothing that extends it renders")
@@ -286,10 +310,11 @@ func TestTheFormsCarryTheToken(t *testing.T) {
 // request carries its token to the ones the CSRF check reads.
 //
 // The check reads the X-CSRF-Token header first and the _token field of the
-// body after it, from a urlencoded or a multipart body alike. The header is set
-// once, on the layout's <body>, and every hx- request inherits it; a form posted
-// without JavaScript carries the field @csrf writes. An hx-headers on any other
-// element repeating the token is a second copy of one value, drawn by a screen
+// body after it, from a urlencoded or a multipart body alike. The header is
+// sent by the ypy-csrf extension from the meta tag the layout writes once, so
+// no element has to inherit it; a form posted without JavaScript carries the
+// field @csrf writes. A second ypy-csrf tag, or an attribute on any other
+// element repeating the token, is a second copy of one value, drawn by a screen
 // rather than the layout, and the first one a swap leaves stale is a 419 that
 // reads like an expired session.
 //
@@ -301,16 +326,20 @@ func TestTheTokenHeaderIsSentFromTheLayoutAlone(t *testing.T) {
 	for _, f := range kyseOnly(mustAuthViews(t)) {
 		body := markup(f)
 		path := filepath.ToSlash(f.Path)
-		headers := strings.Count(body, "hx-headers")
+		tags := strings.Count(body, `name="ypy-csrf"`)
 		switch {
 		case strings.HasSuffix(path, "layouts/app.kyse.go"):
-			if headers != 1 || !strings.Contains(body, `<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}'`) {
-				t.Errorf("%s does not set the token header exactly once, on <body>", path)
+			if tags != 1 || !strings.Contains(body, `<meta name="ypy-csrf" content="{{ .CSRFToken() }}">`) {
+				t.Errorf("%s does not carry the token in the ypy-csrf meta tag exactly once", path)
 			}
-		case headers != 0:
-			t.Errorf("%s sets hx-headers itself: the layout already sends the token on every hx- request", path)
+		case tags != 0:
+			t.Errorf("%s writes a ypy-csrf tag itself: the layout already sends the token on every YPY request", path)
 		}
-		if strings.Contains(body, "multipart/form-data") || strings.Contains(body, "hx-encoding") {
+		if strings.Contains(body, "ypy-headers") && strings.Contains(body, "X-CSRF-Token") {
+			t.Errorf("%s carries the token in a ypy-headers attribute: the ypy-csrf extension sends it, "+
+				"and an inherited header is a copy a swap leaves stale", path)
+		}
+		if strings.Contains(body, "multipart/form-data") || strings.Contains(body, "ypy-encoding") {
 			t.Logf("%s posts a multipart form: its token travels in the _token field of the body", path)
 		}
 	}
@@ -446,7 +475,7 @@ func TestAttributeNameSitesFindsTheShapeItGuardsAgainst(t *testing.T) {
 		},
 		{
 			name:   "a quoted value holding the other quote does not end early",
-			markup: `<body hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}'>`,
+			markup: `<body data-token='{"t": "{{ .CSRFToken() }}"}'>`,
 			want:   nil,
 		},
 		{

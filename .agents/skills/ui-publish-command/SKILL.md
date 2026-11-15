@@ -197,8 +197,8 @@ so a refusal never leaves a half-published tree:
   never writes the flow — and refuses when one still names
   `http.StatusUnprocessableEntity`. Those are handlers from a kit that drew its
   own refusals with a 422; beside the layout and `page.go` that every run
-  replaces, a refused sign-in under htmx would be thrown away and the project
-  would stop building. The message names the files and `auth --force`.
+  replaces, a refused form would be answered two ways and the project would
+  stop building. The message names the files and `auth --force`.
 - **The page.** `checkKeptFilesNameOnlyWhatPageDeclares` reads every published
   file this run keeps and refuses when one still names something in
   `gonePageNames` — today `TrustedQRCode`, which the setup screen of v0.20.0

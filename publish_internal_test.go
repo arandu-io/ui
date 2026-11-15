@@ -198,7 +198,7 @@ func TestTheFormCarriesAFreshToken(t *testing.T) {
 	if !strings.Contains(views, "@csrf") {
 		t.Error("the form has no CSRF field")
 	}
-	if strings.Contains(views, "hx-target") || strings.Contains(views, "hx-swap") {
+	if strings.Contains(views, "ypy-target") || strings.Contains(views, "ypy-swap") {
 		t.Error("the form asks for a piece of itself back: a refused sign-in is answered with a redirect, " +
 			"and the screen it lands on is drawn whole")
 	}
@@ -351,10 +351,10 @@ func TestTheStarterKitLandsInTheProjectTree(t *testing.T) {
 // page that offered "Login" to somebody who had just signed in.
 //
 // The layout the kit installs draws two halves of a navigation bar and picks by
-// SignedIn(), and it puts the token in hx-headers on <body>. Both come from
+// SignedIn(), and it puts the token in the ypy-csrf meta tag. Both come from
 // view.Page, and the controller that renders home is the only thing that fills
 // them. It filled neither: the login succeeded, the cookie was set, and the page
-// still said Login -- with hx-headers carrying an empty token, so the next write
+// still said Login -- with the ypy-csrf tag carrying an empty token, so the next write
 // from that page was refused with 419 for a reason nothing on screen explained.
 //
 // The three fields are read off the literal rather than grepped for, because
@@ -933,23 +933,23 @@ func TestTheProjectsInThisTreeFitTheConstructorTheKitPublishes(t *testing.T) {
 // TestTheRedirectSurvivesWithoutJavaScript is the regression test for a login
 // that answered 200 with an empty body.
 //
-// The form carries method="post" action="/auth/login" as well as hx-post, and
+// The form carries method="post" action="/auth/login" as well as ypy-post, and
 // that is deliberate: it is the path a browser takes when the scripts have not
-// arrived -- both of them are deferred -- or when they never do. HX-Redirect is
-// a header only HTMX reads, so a plain form post that succeeded got 200, no
+// arrived -- both of them are deferred -- or when they never do. YPY-Redirect is
+// a header only YPY reads, so a plain form post that succeeded got 200, no
 // body, and a blank page.
 //
-// http.Redirect is where the branch lives: HX-Redirect under HTMX, a 303 with
+// http.Redirect is where the branch lives: YPY-Redirect under YPY, a 303 with
 // a Location otherwise. The handler has to go through it, and the two exits --
 // login and logout -- both have to.
 func TestTheRedirectSurvivesWithoutJavaScript(t *testing.T) {
 	source := authFile(t, "LoginController_handlers.go")
 
-	if strings.Contains(source, `"HX-Redirect"`) {
-		t.Error("the handler sets HX-Redirect itself: a form post from a browser without HTMX gets 200 and an empty body")
+	if strings.Contains(source, `"YPY-Redirect"`) {
+		t.Error("the handler sets YPY-Redirect itself: a form post from a browser without YPY gets 200 and an empty body")
 	}
 	if !strings.Contains(source, "http.Redirect(w, r, to)") {
-		t.Error("the redirect does not go through http.Redirect, which is what answers 303 to a request that is not HTMX")
+		t.Error("the redirect does not go through http.Redirect, which is what answers 303 to a request that is not YPY")
 	}
 
 	file, err := parser.ParseFile(token.NewFileSet(), "LoginController_handlers.go", source, parser.AllErrors)
@@ -1395,12 +1395,12 @@ func runAgainstPublishedKit(t *testing.T, probe string, requires ...string) stri
 // Context.View and Context.Fragment are the same three lines around the same
 // renderer -- the status differs and nothing else does -- so naming a full page
 // where a fragment was wanted compiles, runs, answers the right status, and
-// hands htmx a whole document for a hole the size of a form. htmx strips the
-// <head> and swaps the <body>'s children in, so what lands inside the card is
+// hands the old library a whole document for a hole the size of a form. It
+// strips the <head> and swaps the <body>'s children in, so what landed inside the card was
 // the header, the navigation and a second toaster: a page inside the page.
 //
 // This kit shipped exactly that. auth/login.kyse.go carried the form with
-// hx-target="this" hx-swap="outerHTML", and Module.rejected answered "auth.login"
+// ypy-target="this" ypy-swap="outerHTML", and Module.rejected answered "auth.login"
 // -- the whole screen -- on every mistyped password.
 //
 // # What makes a view a fragment, mechanically
@@ -1423,8 +1423,8 @@ func runAgainstPublishedKit(t *testing.T, probe string, requires ...string) stri
 //
 // # And the rule that catches the defect above
 //
-// A narrowed swap belongs only in a fragment. An element carrying hx-target or
-// hx-swap is asking for its own markup back rather than a document, and the view
+// A narrowed swap belongs only in a fragment. An element carrying ypy-target or
+// ypy-swap is asking for its own markup back rather than a document, and the view
 // that draws that element is the view the server has to answer with. Written on
 // a screen, it is a request no published view can satisfy -- which is exactly
 // what auth/login.kyse.go was asking for.
@@ -1493,24 +1493,24 @@ func TestAFragmentThisKitPublishesHasNoLayoutAndAPageHasOne(t *testing.T) {
 // Two spellings, and the second is the one this gate was blind to. The first is
 // the attribute a view writes itself. The second is a prop of a kyse component:
 //
-//	{!! components.Button(components.ButtonProps{HxPost: ..., HxTarget: "#form"}) !!}
+//	{!! components.Button(components.ButtonProps{YpyPost: ..., YpyTarget: "#form"}) !!}
 //
-// renders hx-target= into the served document and puts neither literal string
+// renders ypy-target= into the served document and puts neither literal string
 // in this file. The gate read the source for the attribute alone, so a screen
 // that narrowed its swap through a component passed -- and passed silently,
 // because the attribute exists only in a rendered page and nothing here renders
 // one.
 //
 // The props are a closed set, read off the component library rather than
-// guessed: ButtonProps.HxTarget, ButtonProps.HxSwap and MenuItem.HxTarget are
-// every field there that renders one of the two attributes. HxPost, HxGet and
-// HxConfirm are deliberately not here -- they say where to ask and what to
+// guessed: ButtonProps.YpyTarget, ButtonProps.YpySwap and MenuItem.YpyTarget are
+// every field there that renders one of the two attributes. YpyPost, YpyGet and
+// YpyConfirm are deliberately not here -- they say where to ask and what to
 // confirm first, and neither narrows what comes back.
 //
 // The prop names carry no colon, so no amount of space between the name and the
 // value gets a screen past this. Nothing else in a published view can hold one:
 // a kyse comment and an @go block are both cut before this reads anything.
-var narrowedSwap = []string{"hx-target=", "hx-swap=", "HxTarget", "HxSwap"}
+var narrowedSwap = []string{"ypy-target=", "ypy-swap=", "YpyTarget", "YpySwap"}
 
 // viewKind says what a published view is, from where the kit publishes it, and
 // what the source has to look like to be that.
@@ -1621,8 +1621,8 @@ func TestTheKitPublishesNoFragmentAndAsksForNone(t *testing.T) {
 // State on this stack is the server's. A handler reads the form, decides, and
 // answers markup that is already correct, so there is no second copy in the
 // browser to keep in step and nothing to reconcile when the two disagree. An
-// hx- attribute is not a counter-example and cannot become one: hx-post,
-// hx-target and hx-swap say where to ask and what to replace, and nothing reads
+// ypy- attribute is not a counter-example and cannot become one: ypy-post,
+// ypy-target and ypy-swap say where to ask and what to replace, and nothing reads
 // a value back out of one.
 //
 // What the browser does own is what dies with the tab and the server never
@@ -1675,7 +1675,7 @@ func TestNoPublishedViewKeepsStateInTheBrowser(t *testing.T) {
 //
 // A dot opens one only when what precedes it is not part of an identifier:
 // `{{ .PageTitle() }}` and `@if(!.SignedIn())` are the page, and view.URL,
-// components.FieldProps and "htmx.min.js" are not. That is why this is one scan
+// components.FieldProps and "ypy.min.js" are not. That is why this is one scan
 // rather than a search per name -- searching for Email finds it inside
 // EmailError, and a field then reads as drawn because a different one is.
 func fieldsRead(body string) []string {
@@ -1705,7 +1705,7 @@ func fieldsRead(body string) []string {
 // attributeIn reports whether the markup carries this attribute, rather than a
 // longer one ending in its name.
 //
-// The character before it is the whole check: without it hx-data would report
+// The character before it is the whole check: without it ypy-data would report
 // x-data, and the difference between an attribute that routes a swap and one
 // that holds a value is the subject of the test that calls this.
 func attributeIn(body, name string) bool {
@@ -1743,7 +1743,9 @@ func isNamePart(c byte) bool {
 //   - ui.js, which is where every client behaviour on this stack lives. Without
 //     it a menu does not open and a copy button does not copy, on every screen
 //     of every project that published the kit.
-//   - includeIndicatorStyles, without which htmx injects a <style> element the
+//   - the ypy-csrf meta tag and its extension, without which every request YPY
+//     sends that changes state fails the CSRF check.
+//   - includeIndicatorCSS, without which YPY injects a <style> element the
 //     policy refuses -- style-src 'self', no unsafe-inline -- once per page.
 //   - the second icon, which is the hazard the layout's own doc comment names.
 //
@@ -1833,8 +1835,8 @@ func headElements(layout string) []string {
 				}
 				// The content joins the key when it is a constant, which
 				// catches a setting that changed as well as a tag that went.
-				// htmx-config is the one that matters -- it decides which
-				// answers htmx swaps and whether it injects a stylesheet the
+				// ypy-config is the one that matters -- it decides which
+				// answers YPY swaps and whether it injects a stylesheet the
 				// policy refuses -- and it is a setting, not a design choice, so the
 				// two files have no business differing on it. A content the
 				// page fills in is left out: og:title is the title, and the
@@ -1910,7 +1912,8 @@ func TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters(t *testing.T) {
 	embedded := map[string]bool{
 		"app.css":            true,
 		"basecoat.bundle.js": true,
-		"htmx.min.js":        true,
+		"ypy.min.js":         true,
+		"ypy-csrf.min.js":    true,
 		"theme.js":           true,
 		"ui.js":              true,
 	}
@@ -2067,7 +2070,7 @@ func attributeValue(element, name string) (string, bool) {
 //
 // The pairs that matter are the last two of each: .Email must not be found
 // inside .EmailError, because a field would then read as drawn when a different
-// one is; and x-data must not be found inside hx-data, because the whole subject
+// one is; and x-data must not be found inside ypy-data, because the whole subject
 // here is the difference between an attribute that routes a swap and one that
 // holds a value.
 func TestTheStateScannersFindTheShapesTheyGuardAgainst(t *testing.T) {
@@ -2078,7 +2081,7 @@ func TestTheStateScannersFindTheShapesTheyGuardAgainst(t *testing.T) {
 		}{
 			{"an interpolated method is the page", "<title>{{ .PageTitle() }}</title>", []string{"PageTitle"}},
 			{"so is a field in a directive", "@if(!.SignedIn())", []string{"SignedIn"}},
-			{"a selector on a package is not", `<link href="{{ view.Asset("htmx.min.js") }}">`, nil},
+			{"a selector on a package is not", `<link href="{{ view.Asset("ypy.min.js") }}">`, nil},
 			{"and neither is the page handed on as a whole", "{!! components.Field(components.FieldProps{Page: .}) !!}", nil},
 			{"a longer name does not hide inside a shorter one", "{{ .EmailError }}", []string{"EmailError"}},
 			{"nor a shorter one inside a longer", "{{ .Email }}{{ .EmailError }}", []string{"Email", "EmailError"}},
@@ -2099,7 +2102,7 @@ func TestTheStateScannersFindTheShapesTheyGuardAgainst(t *testing.T) {
 		}{
 			{"the attribute itself", `<div x-data="{ open: false }">`, "x-data", true},
 			{"written on a line of its own", "<div\n\tx-show=\"open\">", "x-show", true},
-			{"an htmx attribute is not it", `<form hx-swap="outerHTML" hx-data="">`, "x-data", false},
+			{"an YPY attribute is not it", `<form ypy-swap="outerHTML" ypy-data="">`, "x-data", false},
 			{"and neither is a longer name ending in it", `<div data-x-data="">`, "x-data", false},
 		} {
 			t.Run(c.name, func(t *testing.T) {

@@ -181,7 +181,7 @@ because the policy's length rule passes a value that is absent.
 returns `validation.Errors` — `return validation.Errors{"email": {"…"}}`, or the
 `errs` it built when `errs.Any()` — and the router answers it: a 303 back to the
 Referer for a page, marked `no-store`, with the messages and what was typed in
-the flash and every secret dropped; `HX-Redirect` with no body for htmx, which
+the flash and every secret dropped; `YPY-Redirect` with no body for YPY, which
 follows it as a navigation; a 422 problem document with the messages by field
 for a client that asked for JSON. The handler writes no status and renders
 nothing. The screen it lands on is drawn whole by `Module.screen`, which puts
@@ -220,10 +220,10 @@ redirect — it would have to travel in a cookie — so the screen offers to sta
 again, and starting again issues a new one.
 
 **The redirect survives without JavaScript.** Every form carries `method="post"`
-and `action=`, and the body's `hx-boost` is all the htmx a form here needs; both
+and `action=`, and the body's `ypy-boost:inherited` is all the YPY a form here needs; both
 scripts are deferred and may never arrive. A handler must go through
 `redirect(w, r, to)`, which calls `http.Redirect` from hesape and answers
-`HX-Redirect` under HTMX and a 303 with a `Location` otherwise. Setting the
+`YPY-Redirect` under YPY and a 303 with a `Location` otherwise. Setting the
 header directly gives a plain browser form post 200 and an empty body — a blank
 page. `TestTheRedirectSurvivesWithoutJavaScript` at
 `publish_internal_test.go:806` checks both exits.

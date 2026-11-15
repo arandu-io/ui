@@ -200,10 +200,10 @@ fragment is what is inside one swap target.
 This kit publishes no fragment. A direct visit, a boosted link and a history
 restore each get the whole screen, and so does a rejected form: it goes back
 through a redirect and the screen is drawn again, message and typed input
-included. So no form here carries `hx-target` or `hx-swap` — the body's
-`hx-boost` is all the htmx a form needs — and the layout leaves htmx's response
-handling at its default, with `includeIndicatorStyles:false` because the policy
-refuses the `<style>` htmx would inject. Teaching it to swap a 422 would be a
+included. So no form here carries `ypy-target` or `ypy-swap` — the body's
+`ypy-boost:inherited` is all the YPY a form needs — and the layout leaves YPY's response
+handling at its default, with `includeIndicatorCSS:false` because the policy
+refuses the `<style>` YPY would inject. Teaching it to swap a 422 would be a
 second way to answer the same rejection.
 `TestTheKitPublishesNoFragmentAndAsksForNone` refuses a view under `partials/`
 and published Go that calls `.Fragment(`, and
@@ -232,7 +232,7 @@ element by element and skips when `../arandu` is not checked out.
 `view.URL` panics on a name nothing registered — deliberately, because a
 plausible URL for a file the binary does not carry is a 404 on every page that
 nobody reads. Five names are embedded by the runtime and need nothing:
-`app.css`, `htmx.min.js`, `ui.js`, `basecoat.bundle.js` and `theme.js`. Any
+`app.css`, `ypy.min.js`, `ui.js`, `basecoat.bundle.js` and `theme.js`. Any
 other name has to be published by this kit with the package that registers it,
 the way `custom.js` is published with `resources/js/js.go`.
 `TestEveryAssetAPublishedViewAsksForIsOneSomethingRegisters` reads every

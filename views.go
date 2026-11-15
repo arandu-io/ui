@@ -94,7 +94,7 @@ import (
 // direct visit, a boosted link and a history restore each get the whole screen,
 // and so does a rejected form: it is answered with a redirect back to the
 // screen, which is then drawn like any other. A fragment is something an element
-// asks for by name, with its own hx-target, and nothing on these screens needs a
+// asks for by name, with its own ypy-target, and nothing on these screens needs a
 // piece of itself back. TestTheKitPublishesNoFragmentAndAsksForNone keeps it so.
 //
 // Two of the seams that remain have a compiler behind them. A layout renders
@@ -460,9 +460,12 @@ func (p AuthPage) LogValue() slog.Value {
 //
 // Five things here are load-bearing and easy to delete by accident:
 //
-//   - hx-headers on <body>: without it every hx-post fails the CSRF check, and
-//     the failure reads like a broken session rather than a missing attribute;
-//   - hx-boost on <body>: without it every link is a full page load;
+//   - the ypy-csrf meta tag and the extension that reads it: without them every
+//     request YPY sends that changes state fails the CSRF check, and the failure
+//     reads like a broken session rather than a missing tag;
+//   - ypy-boost:inherited on <body>: without it every link is a full page load,
+//     and a bare ypy-boost would boost nothing, because YPY passes an attribute
+//     down only when it is told to;
 //   - the asset list, which is content-addressed and same-origin, because the
 //     CSP is script-src 'self' and a CDN would mean loosening it;
 //   - the icon. This file replaces the skeleton's layout outright, so an element
@@ -484,7 +487,7 @@ func (p AuthPage) LogValue() slog.Value {
 // layout, so every value here is the one the server gave when the document was
 // fetched, for as long as the tab stays open.
 //
-// The token in hx-headers is the case worth reading, because it looks like a
+// The token in the ypy-csrf meta tag is the case worth reading, because it looks like a
 // counter-example and is not. It is frozen with the rest, and it keeps working
 // because the issuer signs a nonce and an expiry against the session id rather
 // than recording one token per session -- any token issued for that session
@@ -507,18 +510,23 @@ import "github.com/arandu-io/kyse/components"
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 
-	{{-- htmx writes a <style> element for its request indicators unless told
-	     not to, and the policy is style-src 'self' with no unsafe-inline: the
-	     browser refuses it, once per page, in a console nobody has open. The
-	     classes it would have written are in the stylesheet already.
+	{{-- YPY writes a stylesheet for its request indicators unless told not to,
+	     and the policy is style-src 'self' with no unsafe-inline: the browser
+	     refuses it, once per page, in a console nobody has open. The classes it
+	     would have written are in the stylesheet already.
 
-	     Its table of response handling is left at the default on purpose. A
+	     The rest of its configuration is left at the default on purpose. A
 	     rejected form is not answered with a 422 to swap: the router sends it
-	     back with a redirect, which htmx follows as a navigation, so the page
+	     back with a redirect, which YPY follows as a navigation, so the page
 	     after it is a page and a reload asks for that page rather than posting
-	     the form again. A layout that taught htmx to swap a 422 would be a
-	     second way to answer the same rejection. --}}
-	<meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
+	     the form again. A layout that configured YPY to swap a refusal in place
+	     would be a second way to answer the same rejection. --}}
+	<meta name="ypy-config" content='{"includeIndicatorCSS":false}'>
+	{{-- The token the ypy-csrf extension sends as X-CSRF-Token on every
+	     same-origin request that is not a GET, whatever element started it. It
+	     renews the token from the YPY-CSRF header of a response, and a form
+	     posted without scripts carries the hidden _token field instead. --}}
+	<meta name="ypy-csrf" content="{{ .CSRFToken() }}">
 	<title>{{ .PageTitle() }}</title>
 	{{-- Both icons, because a browser picks by what it is given: the .ico is the
 	     one asked for by address and sizes="any" is what stops a modern browser
@@ -543,23 +551,24 @@ import "github.com/arandu-io/kyse/components"
 	<meta name="twitter:card" content="summary_large_image">
 
 	<link rel="stylesheet" href="{{ view.Asset("app.css") }}">
-	<script src="{{ view.Asset("htmx.min.js") }}" defer></script>
-	{{-- These four, and no client framework beside them. State on this stack
+	<script src="{{ view.Asset("ypy.min.js") }}" defer></script>
+	<script src="{{ view.Asset("ypy-csrf.min.js") }}" defer></script>
+	{{-- These five, and no client framework beside them. State on this stack
 	     lives on the server: a handler decides and answers markup that is already
-	     correct, so there is no second copy of it here to keep in step. The hx-
+	     correct, so there is no second copy of it here to keep in step. The ypy-
 	     attributes below say only where to ask and what to replace, and nothing
 	     reads a value back out of one.
 
 	     What is left is what dies with the tab and the server never needs to hear
 	     about -- a menu that is open, a row that is selected -- and ui.js is where
 	     it lives. It binds once on document and dispatches on data- attributes,
-	     so markup htmx swaps in is live the moment it lands and there is nothing
+	     so markup YPY swaps in is live the moment it lands and there is nothing
 	     to initialise; open and selected are kept in the ARIA the markup already
 	     carries, which makes the DOM the only copy. It reads no expression, and
 	     it could not: the policy is script-src 'self' with no unsafe-eval, so
 	     anything compiling a directive out of a string throws before it runs.
 
-	     A fifth tag would also have to have something to serve, and view.URL is
+	     A sixth tag would also have to have something to serve, and view.URL is
 	     what decides: it panics on a name nothing registered, naming the ones
 	     that are, so a tag for an asset that does not exist takes the request
 	     down rather than 404ing quietly on every page. Register it with
@@ -577,7 +586,7 @@ import "github.com/arandu-io/kyse/components"
 	<script src="{{ view.Asset("custom.js") }}" defer></script>
 	<script src="{{ view.Asset("theme.js") }}"></script>
 </head>
-<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ .CSRFToken() }}"}' class="bg-background text-foreground min-h-full antialiased">
+<body ypy-boost:inherited="true" class="bg-background text-foreground min-h-full antialiased">
 	<div class="flex min-h-full flex-col">
 		<header class="border-b">
 			<nav class="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-6">
@@ -619,7 +628,7 @@ import "github.com/arandu-io/kyse/components"
 		     lands on -- a direct visit and a boosted navigation alike, since both
 		     get this whole document. With nothing flashed it draws nothing. An
 		     endpoint that answers in place returns a toast fragment with
-		     hx-swap="beforeend" on this element; the vendored script arms
+		     ypy-swap="beforeend" on this element; the vendored script arms
 		     whatever appears inside it.
 
 		     The status line a screen of this kit draws is not here: another
@@ -830,8 +839,8 @@ type WelcomeData = authui.AuthPage
 //
 // The form is a plain form. A rejected sign-in is answered with a redirect back
 // to this screen, and the screen is drawn whole with the message on the field,
-// so nothing here asks for a piece of itself back -- the body's hx-boost is the
-// only htmx the form needs.
+// so nothing here asks for a piece of itself back -- the body's ypy-boost is the
+// only YPY the form needs.
 const authLoginViewTemplate = `//go:build kyse
 
 package auth
