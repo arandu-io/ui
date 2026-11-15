@@ -396,8 +396,8 @@ func TestTheAruFloorGuardRefusesOnlyAProjectThatWouldAcceptAnOlderCLI(t *testing
 		refused     bool
 	}{
 		{"the floor itself", aruFloor, false},
-		{"the last incompatible native-page compiler", "v0.34.0", true},
-		{"a newer one", "v0.36.0", false},
+		{"the last compiler without the YPY attributes", "v0.85.0", true},
+		{"a newer one", "v0.87.0", false},
 		{"a newer minor that sorts earlier as text", "v0.100.0", false},
 		{"an older one that sorts later as text", "v0.9.0", true},
 		{"the one the skeleton ships", "v0.29.1", true},

@@ -135,21 +135,18 @@ func readModulePath(root string) (string, error) {
 // aruFloor is the oldest released CLI whose view compiler can build the views
 // this kit publishes.
 //
-// It is measured against released compilers rather than reasoned about. Aru
-// v0.34.0 and below compile view.Page through the former framework/view alias;
-// application-owned native pages use hesape/view.Page, so those CLIs reject or
-// panic on the generated page even when the markup itself is valid. The v0.35.0
-// compiler emits the native page contract and compiles all seventeen published
-// views, including the four two-factor screens -- measured again when the
-// sign-in form went back into its screen and the setup screen started asking
-// the page for its message by field name.
+// It is measured against released compilers rather than reasoned about. The
+// published views write ypy-* attributes, and v0.86.0 is the first compiler
+// that knows them: it checks the ones that carry an address and refuses an
+// interpolated value where the attribute cannot take one. An older CLI compiles
+// the same markup without those checks, which is why it is refused here.
 //
 // Raise it when a view here starts using something an older released CLI
 // cannot compile, and measure the new number the same way: publish into a copy
 // of a project and run `view:build` with one installed CLI per tag. A number
 // that was guessed refuses a CLI that works, or admits one that does not, and
 // neither is visible from here.
-const aruFloor = "v0.35.0"
+const aruFloor = "v0.86.0"
 
 // aruFloorSection and aruFloorKey are where a project declares the oldest CLI
 // it can be built with.

@@ -1101,9 +1101,9 @@ func authFile(t *testing.T, name string) string {
 // skeleton has been released.
 const (
 	publishedSkeleton  = "v0.42.0"
-	publishedFramework = "v0.66.0"
-	publishedKyse      = "v0.44.0"
-	publishedHesape    = "v0.85.0"
+	publishedFramework = "v0.69.0"
+	publishedKyse      = "v0.53.0"
+	publishedHesape    = "v0.107.0"
 )
 
 // ahead are the modules whose pin is newer than the one publishedSkeleton
