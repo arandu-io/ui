@@ -2,6 +2,21 @@
 
 ## [v0.31.0](https://github.com/arandu-io/ui/compare/v0.30.0...v0.31.0) - 2026-11-17
 
+The password reset request now tells when an address has no account. Decision of Paulo R. Lima, 17/11/2026.
+
+- An address with no account is refused under the email field with "we couldn't find an account with that address.", and a "Create an account" link sits beside the button when the layout knows a register address. Only `account.ErrUserNotFound` is told as a missing account; any other failure still reads as a code that could not be sent.
+- A sent code is answered with "We sent a six-digit code to your email." and the request no longer waits a fixed second.
+- The sign-up form already said an address was taken, and the verification resend still answers the same either way.
+
+The risk is accepted and bounded: the forms' limit, counted before the lookup, allows ten requests an hour per address and thirty per fifteen minutes per client. Put a challenge such as Turnstile in front of the form to bound automated requests too.
+
+**For projects that copied the kit**
+
+- `go run github.com/arandu-io/ui@latest auth --views` replaces `resources/views/auth/passwords/email.kyse.go`; `PasswordController.go` is replaced only by `auth --force`, which carries its custom blocks over.
+- A project that republishes the view alone keeps the old controller and its uniform answer; nothing breaks, and the link shows only beside a refusal of the field's format.
+- A project that edited `PasswordController.go` copies `sendPasswordCode` by hand: look the account up in the request, tell `account.ErrUserNotFound` as a missing account and any other failure as a code that could not be sent.
+- Details are in `UPGRADE.md`, section v0.31.0.
+
 **Full Changelog**: https://github.com/arandu-io/ui/compare/v0.30.0...v0.31.0
 
 ## [v0.30.0](https://github.com/arandu-io/ui/compare/v0.29.0...v0.30.0) - 2026-11-16
