@@ -191,7 +191,7 @@ func TestPasswordCodeResponseDrawsTheFormThatConsumesIt(t *testing.T) {
 		t.Error("a sent reset code leaves the user on a screen with nowhere to type it")
 	}
 	if !strings.Contains(authFile(t, "reset.kyse.go"), ".Status") {
-		t.Error("the reset form drops the anti-enumerated send outcome")
+		t.Error("the reset form drops the send outcome")
 	}
 }
 

@@ -607,7 +607,14 @@ import (
 
 const (
 	resetPurpose = "reset-password"
-	codeSent = "If that address is registered, a code is on its way."
+	codeSent = "We sent a six-digit code to your email."
+	// noAccountForAddress is what the request form says about an address no
+	// account owns. The reset is the one form here that says so, by decision:
+	// see the reset section of the starter kit's AGENTS.md.
+	noAccountForAddress = "we couldn't find an account with that address."
+	// codeNotSent is what it says when the lookup or the mailer failed, which
+	// is not the address's doing.
+	codeNotSent = "we could not send the code right now, try again in a minute"
 )
 
 // passwordEmailRequest is what the form asking for a reset code sends.
@@ -654,8 +661,13 @@ func (m *Module) showPasswordRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendPasswordCode mails a reset code to the address when it has an account,
-// and answers with the same sentence, in the same time, when it has none: see
-// codeRequestTime.
+// and refuses the form under the email field when it has none.
+//
+// Saying so lets whoever mistyped an address notice, and it gives a request per
+// address a way to learn which addresses have accounts. That cost is accepted
+// here and bounded by throttleCodeForm: ten requests an hour per address and
+// thirty per quarter of an hour per client, counted before the lookup. The
+// sign-up form says an address is taken for the same reason.
 func (m *Module) sendPasswordCode(ctx *hhttp.Context) error {
 	w, r := ctx.Response, ctx.Request
 	var in passwordEmailRequest
@@ -665,16 +677,18 @@ func (m *Module) sendPasswordCode(ctx *hhttp.Context) error {
 	if err := m.throttleCodeForm(w, r, "password.email", "email", in.Email); err != nil {
 		return err
 	}
-	tenant := m.tenant(r)
-	answerAfter(r.Context(), codeRequestTime, func(detached context.Context) {
-		u, err := m.users.Lookup(detached, tenant, in.Email)
-		if err != nil {
-			return
-		}
-		if err := m.sendPasswordReset(detached, u); err != nil {
-			log.For(detached).Error("sending the password reset code", "error", err)
-		}
-	})
+	u, err := m.users.Lookup(r.Context(), m.tenant(r), in.Email)
+	if errors.Is(err, account.ErrUserNotFound) {
+		return validation.Errors{"email": {noAccountForAddress}}
+	}
+	if err != nil {
+		log.For(r.Context()).Error("looking the account up for a reset code", "error", err)
+		return validation.Errors{"email": {codeNotSent}}
+	}
+	if err := m.sendPasswordReset(r.Context(), u); err != nil {
+		log.For(r.Context()).Error("sending the password reset code", "error", err)
+		return validation.Errors{"email": {codeNotSent}}
+	}
 	m.notify(w, r, "/auth/password/reset", codeSent, url.Values{"email": {in.Email}})
 	return nil
 }

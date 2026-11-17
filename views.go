@@ -1128,12 +1128,15 @@ type EmailData = authui.AuthPage
 				{!! components.Field(components.FieldProps{
 					Name: "email", Label: "Email", Type: "email",
 					Value: .Email, Page: .,
-					Hint: "We will send a code if the address is registered.",
+					Hint: "We will send the code to this address.",
 					Autocomplete: "email", Required: true, Autofocus: true,
 				}) !!}
 
-				<div>
+				<div class="flex items-center justify-between gap-3">
 					<button type="submit" class="btn">Send the code</button>
+					@if(.RegisterURL != "" && .First("email") != "")
+						<a class="text-muted-foreground text-sm hover:underline" href="{{ .RegisterURL }}">Create an account</a>
+					@endif
 				</div>
 			</form>
 		</section>

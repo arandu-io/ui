@@ -414,40 +414,47 @@ func TestNothingIsConsumedUntilThePasswordIsAcceptable(t *testing.T) {
 	}
 }
 
-// TestTheResetSaysTheSameThingWhetherTheAddressIsRegisteredOrNot.
+// TestTheResetSaysWhenTheAddressHasNoAccount.
 //
-// The anti-enumeration property is that the two answers are the same bytes. A
-// sentence naming the account is one request per address and no guessing left in
-// it -- which is a better oracle than the sign-in form, and the sign-in form has
-// a whole comment about not being one.
+// Decision of Paulo R. Lima, 17/11/2026: the reset request tells a person that
+// no account has the address they typed, so a mistyped address is noticed at
+// once instead of waiting for a mail that never comes. It replaces the earlier
+// rule that both answers were the same bytes, and only for the reset: the
+// sign-up form says an address is taken, and the resend of the verification
+// still answers the same either way.
 //
-// Registration is the deliberate exception and is not read here: somebody who
-// cannot continue has to be told why, and the answer is the same one they would
-// get by trying to sign in.
-func TestTheResetSaysTheSameThingWhetherTheAddressIsRegisteredOrNot(t *testing.T) {
-	enumerating := []string{
-		"no such account", "that address is not registered", "we have no account",
-		"unknown address", "no account with that address",
-	}
-
-	for _, f := range mustGenerateAuth(t) {
-		path := filepath.ToSlash(f.Path)
-		if !strings.Contains(path, "PasswordController.go") && !strings.Contains(path, "views/auth/passwords/") {
-			continue
-		}
-		body := strings.ToLower(string(f.Content))
-		for _, leak := range enumerating {
-			if strings.Contains(body, leak) {
-				t.Errorf("%s says %q, which confirms which addresses exist one request at a time", f.Path, leak)
-			}
-		}
-	}
-
-	// And the one sentence it does answer with is written once, so the two
-	// branches cannot drift apart the first time somebody rewords one of them.
+// The accepted risk is that the form names which addresses have accounts, one
+// request each. It is bounded by throttleCodeForm, counted before the lookup:
+// TestAskingForACodeIsLimitedPerAddressAndPerClient holds that. The sentence is
+// written once, so the refusal and the status cannot drift apart, and only a
+// missing account is told that way: any other failure of the lookup says the
+// code could not be sent, never that the account does not exist.
+func TestTheResetSaysWhenTheAddressHasNoAccount(t *testing.T) {
 	source := authFile(t, "PasswordController.go")
-	if strings.Count(source, `"If that address is registered, a code is on its way."`) != 1 {
-		t.Error("the answer is spelled more than once: two literals a hundred lines apart are two answers")
+
+	if strings.Count(source, `"we couldn't find an account with that address."`) != 1 {
+		t.Error("the refusal for an address without an account is not spelled exactly once")
+	}
+	send := bodyOf(t, source, "sendPasswordCode")
+	if !strings.Contains(send, "errors.Is(err, account.ErrUserNotFound)") ||
+		!strings.Contains(send, `validation.Errors{"email": {noAccountForAddress}}`) {
+		t.Error("an address with no account is not refused under the email field, or any lookup failure is told as one")
+	}
+	if strings.Contains(send, "answerAfter") {
+		t.Error("the reset still waits a fixed time: it has nothing left to hide, and the wait only slows the answer")
+	}
+	if strings.Count(source, `"We sent a six-digit code to your email."`) != 1 {
+		t.Error("the status of a sent code is not spelled exactly once")
+	}
+	for _, f := range mustGenerateAuth(t) {
+		if path := filepath.ToSlash(f.Path); strings.Contains(path, "views/auth/passwords/") &&
+			strings.Contains(strings.ToLower(string(f.Content)), "if the address is registered") {
+			t.Errorf("%s still says the code is sent only if the address is registered", f.Path)
+		}
+	}
+	email := authFile(t, "email.kyse.go")
+	if !strings.Contains(email, `.First("email") != ""`) || !strings.Contains(email, `href="{{ .RegisterURL }}"`) {
+		t.Error("the request screen offers no way to create an account beside the refusal")
 	}
 }
 
@@ -1862,7 +1869,7 @@ func TestARejectedSignInGoesBackToTheFormInEveryTransport(t *testing.T) {
 		"ypy: status=204 ypy-redirect=/auth/login body=0",
 		"json: status=422 type=application/problem+json message=true",
 		"send: status=303 location=/auth/password/reset",
-		"reset then: status=If that address is registered, a code is on its way. email=a@example.test",
+		"reset then: status=We sent a six-digit code to your email. email=a@example.test",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
@@ -1887,6 +1894,7 @@ import (
 
 	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/security"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/session"
@@ -1894,6 +1902,7 @@ import (
 	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
 )
 
 type users struct{ authui.Users }
@@ -1904,8 +1913,29 @@ func (users) VerifyCredentials(context.Context, string, string, string, string) 
 
 // Lookup finds nobody, so nothing is mailed and the answer is the one an
 // address nobody registered gets.
+// Lookup finds the owner, so a reset code is issued and mailed.
 func (users) Lookup(context.Context, string, string) (account.Account, error) {
-	return nil, errors.New("no such account")
+	return owner, nil
+}
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+type codes struct{}
+
+func (codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (codes) Consume(context.Context, string, string, string) error  { return errors.New("unused") }
+
+type outbox struct{}
+
+func (outbox) Name() string                           { return "probe" }
+func (outbox) Send(context.Context, mail.Message) error { return nil }
+
+type bodies struct{}
+
+func (bodies) RenderToString(string, any) (string, error) { return "body", nil }
+
+func newMailer() *mail.Mailer {
+	return mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
 }
 
 func main() {
@@ -1924,7 +1954,7 @@ func main() {
 	appKey := []byte("0123456789abcdef0123456789abcdef")
 	sessions := security.NewSessionStore(appKey, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
-	module := authui.New(users{}, nil, nil, sessions, session.NewCSRF(appKey, time.Hour), nil,
+	module := authui.New(users{}, nil, codes{}, sessions, session.NewCSRF(appKey, time.Hour), newMailer(),
 		nil, appKey, authui.FixedTenant("tenant-a"), false)
 	router := fhttp.NewRouter()
 	module.Routes(router)
@@ -1997,11 +2027,11 @@ func TestTheKitWritesItsNoticesWithTheRoutersFlash(t *testing.T) {
 
 	for _, want := range []string{
 		"router notice: status=303 secure=true",
-		"router then: status=If that address is registered, a code is on its way. email=a@example.test",
+		"router then: status=We sent a six-digit code to your email. email=a@example.test",
 		"router refusal: status=303 secure=true",
 		"router refusal then: message=invalid email or password",
 		"fallback notice: status=303 secure=true",
-		"fallback then: status=If that address is registered, a code is on its way. email=a@example.test",
+		"fallback then: status=We sent a six-digit code to your email. email=a@example.test",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
@@ -2026,6 +2056,7 @@ import (
 
 	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/security"
 	nativeauth "github.com/arandu-io/hesape/auth"
 	"github.com/arandu-io/hesape/session"
@@ -2033,6 +2064,7 @@ import (
 	"github.com/arandu-io/hesape/auth/account"
 
 	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
 )
 
 type users struct{ authui.Users }
@@ -2041,8 +2073,29 @@ func (users) VerifyCredentials(context.Context, string, string, string, string) 
 	return nil, nativeauth.ErrInvalidCredentials
 }
 
+// Lookup finds the owner, so a reset code is issued and mailed.
 func (users) Lookup(context.Context, string, string) (account.Account, error) {
-	return nil, errors.New("no such account")
+	return owner, nil
+}
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+type codes struct{}
+
+func (codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (codes) Consume(context.Context, string, string, string) error  { return errors.New("unused") }
+
+type outbox struct{}
+
+func (outbox) Name() string                           { return "probe" }
+func (outbox) Send(context.Context, mail.Message) error { return nil }
+
+type bodies struct{}
+
+func (bodies) RenderToString(string, any) (string, error) { return "body", nil }
+
+func newMailer() *mail.Mailer {
+	return mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
 }
 
 func main() {
@@ -2061,7 +2114,7 @@ func main() {
 	build := func(secure bool) *authui.Module {
 		sessions := security.NewSessionStore(moduleKey, time.Hour, false,
 			security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
-		return authui.New(users{}, nil, nil, sessions, session.NewCSRF(moduleKey, time.Hour), nil,
+		return authui.New(users{}, nil, codes{}, sessions, session.NewCSRF(moduleKey, time.Hour), newMailer(),
 			nil, moduleKey, authui.FixedTenant("tenant-a"), secure)
 	}
 
@@ -2142,7 +2195,7 @@ func TestASentenceAnActionFlashedReachesThePageTheKitDraws(t *testing.T) {
 		"to landing: status=303",
 		"landing then: flashed=Profile saved.",
 		"kit notice: status=303",
-		"kit notice then: flashed= status=If that address is registered, a code is on its way.",
+		"kit notice then: flashed= status=We sent a six-digit code to your email.",
 	} {
 		if !strings.Contains(out, want+"\n") {
 			t.Errorf("the published kit did not answer %q; it printed:\n%s", want, out)
@@ -2169,6 +2222,7 @@ import (
 
 	fhttp "github.com/arandu-io/framework/http"
 	"github.com/arandu-io/framework/http/middleware"
+	"github.com/arandu-io/framework/mail"
 	"github.com/arandu-io/framework/security"
 	"github.com/arandu-io/hesape/auth/account"
 	hhttp "github.com/arandu-io/hesape/http"
@@ -2177,12 +2231,34 @@ import (
 
 	controllers "example.test/project/app/Http/Controllers"
 	authui "example.test/project/app/Http/Controllers/Auth"
+	models "example.test/project/app/Models"
 )
 
 type users struct{ authui.Users }
 
+// Lookup finds the owner, so a reset code is issued and mailed.
 func (users) Lookup(context.Context, string, string) (account.Account, error) {
-	return nil, errors.New("no such account")
+	return owner, nil
+}
+
+var owner = &models.User{ID: "user-a", TenantID: "tenant-a", Name: "Ada", Email: "a@example.test", Password: "stored"}
+
+type codes struct{}
+
+func (codes) Issue(context.Context, string, string) (string, error) { return "123456", nil }
+func (codes) Consume(context.Context, string, string, string) error  { return errors.New("unused") }
+
+type outbox struct{}
+
+func (outbox) Name() string                           { return "probe" }
+func (outbox) Send(context.Context, mail.Message) error { return nil }
+
+type bodies struct{}
+
+func (bodies) RenderToString(string, any) (string, error) { return "body", nil }
+
+func newMailer() *mail.Mailer {
+	return mail.New(outbox{}, bodies{}, mail.Address{Email: "noreply@example.test"})
 }
 
 func main() {
@@ -2201,7 +2277,7 @@ func main() {
 	key := []byte("0123456789abcdef0123456789abcdef")
 	sessions := security.NewSessionStore(key, time.Hour, false,
 		security.NewSessionBackend(session.NewArrayHandler[security.Subject]()))
-	module := authui.New(users{}, nil, nil, sessions, session.NewCSRF(key, time.Hour), nil,
+	module := authui.New(users{}, nil, codes{}, sessions, session.NewCSRF(key, time.Hour), newMailer(),
 		nil, key, authui.FixedTenant("tenant-a"), false)
 
 	flash := session.NewFlash(key, false)
@@ -2914,6 +2990,8 @@ func TestTheFlowRunsOnTheAccountPackage(t *testing.T) {
 		"login wrong: status=303 location=/auth/login",
 		"login wrong screen: errors=email",
 		"reset request: status=303 location=/auth/password/reset code=true",
+		"reset unknown: status=303 location=/auth/password mailed=false",
+		"reset unknown screen: errors=email message=we couldn't find an account with that address.",
 		"reset: status=303 location=/auth/login",
 		"login old password: status=303 location=/auth/login",
 		"login new password: status=303 location=/",
@@ -3085,7 +3163,8 @@ func main() {
 				fields = append(fields, field)
 			}
 			sort.Strings(fields)
-			_, err := fmt.Fprintf(w, "status=%s|errors=%s|offers-remember=%t", page.Status, strings.Join(fields, ","), page.OffersRemember())
+			_, err := fmt.Fprintf(w, "status=%s|errors=%s|email-message=%s|offers-remember=%t", page.Status,
+				strings.Join(fields, ","), page.FieldError("email"), page.OffersRemember())
 			return err
 		})
 	}
@@ -3151,6 +3230,10 @@ func main() {
 		r := httptest.NewRequest(method, path, body)
 		r.Header.Set("Accept", "text/html")
 		r.Header.Set("Referer", path)
+		if path == "/auth/password/email" {
+			// The form is posted from the screen that draws it.
+			r.Header.Set("Referer", "/auth/password")
+		}
 		if form != nil {
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		}
@@ -3239,6 +3322,14 @@ func main() {
 	b = fresh()
 	res = send(kit, b, "POST", "/auth/password/email", url.Values{"email": {email}})
 	fmt.Printf("reset request: %s code=%t\n", at(res), issued.last["reset-password"] != "")
+
+	// An address nobody owns is refused under its field, and nothing is mailed.
+	issuedBefore := issued.last["reset-password"]
+	unknown := fresh()
+	res = send(kit, unknown, "POST", "/auth/password/email", url.Values{"email": {"nobody@example.test"}})
+	fmt.Printf("reset unknown: %s mailed=%t\n", at(res), issued.last["reset-password"] != issuedBefore)
+	refused := screen(kit, unknown, "/auth/password")
+	fmt.Printf("reset unknown screen: errors=%s message=%s\n", field(refused, "errors"), field(refused, "email-message"))
 	res = send(kit, b, "POST", "/auth/password/update", url.Values{"email": {email},
 		"email_code": {issued.last["reset-password"]}, "password": {second}, "password_confirmation": {second}})
 	fmt.Printf("reset: %s\n", at(res))
@@ -3375,7 +3466,7 @@ func (users) Lookup(_ context.Context, _, email string) (account.Account, error)
 	if account.NormalizeEmail(email) == owner.Email {
 		return owner, nil
 	}
-	return nil, errors.New("no such account")
+	return nil, account.ErrUserNotFound
 }
 
 type codes struct{ consumed int }
@@ -3527,7 +3618,7 @@ func (users) Lookup(_ context.Context, _, email string) (account.Account, error)
 	if account.NormalizeEmail(email) == owner.Email {
 		return owner, nil
 	}
-	return nil, errors.New("no such account")
+	return nil, account.ErrUserNotFound
 }
 
 type codes struct{}
@@ -3624,11 +3715,13 @@ func main() {
 }
 `
 
-// TestAskingForACodeSaysNothingAboutTheAddressInItsTime runs the two forms that
-// mail a code for an address with an account and one without, and with a
-// mailer that is quick and one that is slow.
+// TestAskingForACodeSaysNothingAboutTheAddressInItsTime runs the verification
+// resend for an address with an account and one without, and with a mailer that
+// is quick and one that is slow. The password reset is not here: it says when an
+// address has no account (TestTheResetSaysWhenTheAddressHasNoAccount), so its
+// time has nothing left to hide.
 //
-// Both answer with the same sentence, and the sentence was never the leak: the
+// The resend answers with the same sentence, and the sentence was never the leak: the
 // address with an account is issued a code and mailed before the answer, the
 // one without is not, and the difference is the time. Each answer has to take
 // as long as the others, the quick message has to be out before its answer and
@@ -3636,7 +3729,7 @@ func main() {
 func TestAskingForACodeSaysNothingAboutTheAddressInItsTime(t *testing.T) {
 	out := runAgainstPublishedKit(t, askForCodeTimeProbe)
 
-	for _, form := range []string{"password.email", "verify.resend"} {
+	for _, form := range []string{"verify.resend"} {
 		line := regexp.MustCompile(form + ` time: registered=(\d+) unregistered=(\d+) slow=(\d+) ` +
 			`sent-before-answer=(\w+) slow-sent-after=(\w+)`).FindStringSubmatch(out)
 		if line == nil {
@@ -3704,7 +3797,7 @@ func (users) Lookup(_ context.Context, _, email string) (account.Account, error)
 	if account.NormalizeEmail(email) == owner.Email {
 		return owner, nil
 	}
-	return nil, errors.New("no such account")
+	return nil, account.ErrUserNotFound
 }
 
 type codes struct{}
@@ -3764,7 +3857,7 @@ func main() {
 	}
 
 	for _, f := range []struct{ name, path string }{
-		{"password.email", "/auth/password/email"}, {"verify.resend", "/auth/verify/resend"},
+		{"verify.resend", "/auth/verify/resend"},
 	} {
 		before := sentSoFar()
 		registered := post(f.path, owner.Email)
