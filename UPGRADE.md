@@ -11,7 +11,7 @@ project receives, not about this repository's code.
 
 ---
 
-## Unreleased -- the password reset says when an address has no account
+## v0.31.0 — the password reset says when an address has no account
 
 Decision of Paulo R. Lima, 17/11/2026. The reset request no longer answers the
 same for every address: an address with no account is refused under the email
