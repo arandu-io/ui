@@ -234,7 +234,8 @@ handler at once.
 | `TestTheFlowRunsOnTheAccountPackage` | runs the published module on `account.NewUsers` and `account.NewFactors` over SQLite: sign-up, verification, sign-in with and without remember-me, reset, confirmation, two-factor setup, challenge and recovery, the `WithRegistration` seam and `WithRemember(false)` |
 | `TestACodeIsGuessedAgainstOneBudgetPerAddressAndOnePerClient` | runs the published module: a wrong code offered to `/auth/password/update` or `/auth/verify/confirm` past ten per address, whatever client sends it and however the address is spelled, or past thirty per client, or a refused guess that reaches the code store |
 | `TestAskingForACodeIsLimitedPerAddressAndPerClient` | runs the published module: a reset request or a resend not counted per address and per client, an address counted apart from its other spelling, or a spent budget or a store that cannot count that still looks the address up or mails it |
-| `TestAskingForACodeSaysNothingAboutTheAddressInItsTime` | runs the published module: a reset request or a resend whose answer takes longer or shorter for an address with an account than for one without, a quick message not sent before the answer, or a slow one not sent after it |
+| `TestAskingForACodeSaysNothingAboutTheAddressInItsTime` | runs the published module: a verification resend whose answer takes longer or shorter for an address with an account than for one without, a quick message not sent before the answer, or a slow one not sent after it |
+| `TestTheResetSaysWhenTheAddressHasNoAccount` | the reset request that answers an address without an account as it answers one with an account, that tells a failing lookup as a missing account, that waits a fixed time again, or a request screen with no way to create an account beside the refusal; the flow probe runs the refusal on the account package and checks nothing is mailed |
 | `TestTheScreensThatShowASecondFactorSecretAreNeverCached` | runs the published module: the setup screen or the recovery codes, after a confirmation or a regeneration, answered without `Cache-Control: no-store` |
 | `TestTheSignedInSubjectIsTheOneTheAccountBuilds` | runs the published sign-in over a session backend that records what it is given: a session written with a subject other than the one the account's `Subject()` answers, or an account that answers none signed in instead of refused |
 | `TestAScreenSaysWhyItCouldNotReadTheSessionAndDrawsAVisitor` | runs the published module with a session resolver that fails: a screen that draws the signed-in header for that session, that says nothing in the log about it, or that logs a visitor who has no session |
@@ -246,6 +247,23 @@ handler at once.
 | `TestAScreenThatCallsWhatPageNoLongerDeclaresIsNotKeptBesideIt` | a run that keeps a file calling what `page.go` dropped |
 | `TestALandingBlockThatNamesWhatHomeControllerDroppedIsNotCarriedIntoIt` | a run that carries a custom block naming what the new `HomeController.go` dropped |
 | `TestForceRemovesOnlyWhatThisKitPublishedAndNoLongerDoes` | `--force` keeping a retired file the kit wrote, or removing an edited one or one it never wrote |
+
+**The reset request says when an address has no account.** Decision of Paulo R. Lima,
+17/11/2026: a person who mistyped an address has to be told, so `sendPasswordCode`
+refuses the form under the email field with *we couldn't find an account with
+that address.* and the request screen draws a *Create an account* link beside the
+button when the field has an error. It revokes the earlier rule that the reset
+answered the same, in the same time, for every address, and only for the reset:
+the sign-up form already says an address is taken, and the verification resend
+still answers the same sentence in the same time (`answerAfter`,
+`codeRequestTime`). The risk is accepted: one request tells whether one address
+has an account. It is bounded by `throttleCodeForm`, counted before the lookup:
+ten requests an hour per address and thirty per fifteen minutes per client, and
+an application that draws a challenge in front of the form (Turnstile) bounds
+automated requests as well. Only `account.ErrUserNotFound` is told as a missing
+account; a lookup or a send that failed says the code could not be sent.
+A sent code is answered with *We sent a six-digit code to your email.*, since a
+person only reaches the reset form with an account.
 
 **The pins answer the same on every day.** `publishedSkeleton` names the
 skeleton release the pins come from, and

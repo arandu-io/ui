@@ -11,6 +11,37 @@ project receives, not about this repository's code.
 
 ---
 
+## v0.31.0 — the password reset says when an address has no account
+
+Decision of Paulo R. Lima, 17/11/2026. The reset request no longer answers the
+same for every address: an address with no account is refused under the email
+field with *we couldn't find an account with that address.*, so a person who
+mistyped it notices at once. The sign-up form already said an address was
+taken; the verification resend still answers the same either way.
+
+- `PasswordController.go`: `sendPasswordCode` looks the account up in the
+  request, tells `account.ErrUserNotFound` as a missing account and any other
+  failure as a code that could not be sent, and no longer waits a fixed second.
+  A sent code is answered with *We sent a six-digit code to your email.*
+- `resources/views/auth/passwords/email.kyse.go`: the hint says where the code
+  goes, and a *Create an account* link sits beside the button when the email
+  field has an error and the layout knows a register address.
+
+**The risk, accepted:** one request tells whether one address has an account.
+The forms' limit, counted before the lookup, bounds it: ten requests an hour per
+address and thirty per fifteen minutes per client. Put a challenge such as
+Turnstile in front of the form to bound automated requests too.
+
+### What a republish does on its own
+
+The view is replaced by `auth --views` and the controller only by `auth
+--force`, which carries the custom blocks over. A project that republishes the
+view alone keeps the old controller and its uniform answer, and the link then shows
+only beside a refusal of the field's format; nothing breaks. A project that
+edited the controller copies the function by hand.
+
+---
+
 ## Unreleased -- the published screens speak YPY
 
 The layout and the screens this kit publishes use YPY as their request library:

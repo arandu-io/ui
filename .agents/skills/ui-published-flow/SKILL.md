@@ -311,25 +311,34 @@ refused on every try.
 `TestALockedChallengeSendsThePersonBackToSignIn` runs both challenge screens
 against a fake service returning a lock and a wrong code.
 
-**The reset says the same thing either way.** *If that address is registered, a
-code is on its way.* — whether it is or not, and nothing is mailed to an address
-nobody looked up.
-`TestTheResetSaysTheSameThingWhetherTheAddressIsRegisteredOrNot` at
-`flow_internal_test.go:427` and `TestNothingIsMailedToAnAddressNobodyLookedUp` at
-`flow_internal_test.go:358`.
+**The reset says when an address has no account.** Decision of Paulo R. Lima,
+17/11/2026, which revokes the earlier rule that it answered the same either way.
+`sendPasswordCode` looks the address up after `throttleCodeForm`; an
+`account.ErrUserNotFound` refuses the form under the email field with
+*we couldn't find an account with that address.*, a failing lookup or mailer
+refuses it with *we could not send the code right now, try again in a minute*,
+and an account is issued a code and mailed in the request, answered with
+*We sent a six-digit code to your email.* Nothing is mailed to an address nobody
+looked up: `TestNothingIsMailedToAnAddressNobodyLookedUp`. The request screen
+draws a *Create an account* link beside the button when its field has an error.
+`TestTheResetSaysWhenTheAddressHasNoAccount` reads the sentences and the probe
+on the account package runs the refusal. The accepted risk is that one request
+tells whether one address has an account; the per-address and per-client limit
+below, counted before the lookup, bounds it.
 
-**And it says it in the same time.** `sendPasswordCode` and
-`resendVerification` run the lookup, the issue and the send inside
+**The verification resend still says the same thing, in the same time.**
+*If that address is registered, a code is on its way.* -- whether it is or not.
+`resendVerification` runs the lookup, the issue and the send inside
 `answerAfter(r.Context(), codeRequestTime, …)`, in `LoginController_handlers.go`:
 the answer comes when a second has passed, not before when the work was quick
 and not later when the mailer is slow, because a send that outlasts the box
 goes on after the answer under `context.WithoutCancel`. So the work inside
-takes the detached context and never the request: `sendPasswordReset` and
-`sendVerification` take a `context.Context` for that reason. A queue would be
-the other way to do it, and it is not one here: the framework's `mail.Mailer`
-has none, and a guest request has no Grant to push a job with.
-`TestAskingForACodeSaysNothingAboutTheAddressInItsTime` times both forms with a
-quick and a slow mailer.
+takes the detached context and never the request: `sendVerification` takes a
+`context.Context` for that reason. A queue would be the other way to do it, and
+it is not one here: the framework's `mail.Mailer` has none, and a guest request
+has no Grant to push a job with.
+`TestAskingForACodeSaysNothingAboutTheAddressInItsTime` times it with a quick
+and a slow mailer.
 
 **Every form that sends or checks a code is limited per address and per
 client.** `throttleCodeForm` in `LoginController_handlers.go` is called right
@@ -351,8 +360,8 @@ it bounds the forms, whoever answers them.
 real; `TestAskingForACodeIsLimitedPerAddressAndPerClient` reads the keys, the
 spent budget and the unreachable store on the two forms that mail.
 
-**Registration still says an address is taken**, and that is a decision rather
-than an oversight: a sign-up form that answered the same either way would have
+**Registration still says an address is taken**, and so does the reset now, and
+that is a decision rather than an oversight: a sign-up form that answered the same either way would have
 to mail the owner of a taken address instead, which is a new message and a new
 screen state, and somebody who cannot continue has to be told why. It is the
 one form here that enumerates.
